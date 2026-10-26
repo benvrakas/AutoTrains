@@ -71,3 +71,21 @@ train, then a row per train every 0.2 s:
   short conditional jump. Don't hook it.)
 - Routes are chains of track connections, built by the mod's own shortest-path search and given to the train with
   `FTrainAtcData::SetPath`.
+
+### Fixed before 1.0.0 (from the 0.5.5 session log)
+
+- Deadlock, Rubber SNK and at test 2 each standing on the other's crossing. at test 2 planned with 3.65 m/s2 but
+  managed 2.4 at 100 km/h, so it overran its stop at 60 km/h onto a switch set the other way; the game re-pathed it
+  across Rubber SNK's claim. Braking is speed dependent (2.4 m/s2 at 100 km/h, 3.5 at 60 km/h for that train) and
+  the single running average picked up the low-speed end of every stop. Now braking is measured per 10 m/s band, as
+  force (deceleration x consist mass) so loading cargo counts, weaker samples weigh more, and a stop plans with the
+  weakest band at or below its speed (75% of the weakest for an unmeasured band above all measured ones). Samples
+  need full brake at both ends of the interval, and the interval is the real time since the last update, not the
+  nominal 0.25 s (frame hitches inflated the measurement).
+- The catch never armed for that train: it only armed with the authority track under the MU master, and on a long
+  train the front reaches the stop point first. It now arms whenever the stop point lies before the master's next
+  connection, with the stop offset set to put the stop there.
+- at test 3 waited ~7 s twice for trains crossing in front with full speed up to its stop point. A train blocked by
+  a moving train that will clear (GetBlockerClearSeconds) now caps its speed at the one that reaches the braking
+  point as the blocker clears: v = a (sqrt(T^2 + 2D/a) - T).
+

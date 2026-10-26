@@ -4,6 +4,7 @@
 #include "AutoTrains.h"
 #include "Command/CommandSender.h"
 #include "FGPlayerController.h"
+#include "FGPlayerState.h"
 #include "FGTrain.h"
 
 AATChatCommand::AATChatCommand()
@@ -13,6 +14,17 @@ AATChatCommand::AATChatCommand()
 	MinNumberOfArguments = 1;
 	bOnlyUsableByPlayer = true;
 	Usage = NSLOCTEXT("AutoTrains", "ChatUsage", "/at traffic on|off|status | reroute on|off | list | speed <train> <km/h> | stopat <train> <m> | release <train|all> | signals <train> ignore|obey | route <train> check|via | autopilot <train|all> on|off | removesignals confirm | session <new name> | log on|off   (<train> = number from /at list, or part of its name)");
+}
+
+bool AATChatCommand::MayChangeWorld(UCommandSender* Sender)
+{
+	const APlayerController* Player = Sender ? Sender->GetPlayer() : nullptr;
+	if (!Player)
+	{
+		return false;
+	}
+	const AFGPlayerState* State = Player->GetPlayerState<AFGPlayerState>();
+	return Player->IsLocalController() || (State && State->IsServerAdmin());
 }
 
 EExecutionStatus AATChatCommand::ExecuteCommand_Implementation(UCommandSender* Sender, const TArray<FString>& Arguments, const FString& Label)
@@ -27,6 +39,13 @@ EExecutionStatus AATChatCommand::ExecuteCommand_Implementation(UCommandSender* S
 	UE_LOG(LogAutoTrains, Log, TEXT("/at %s"), *FString::Join(Arguments, TEXT(" ")));
 
 	const FString Verb = Arguments[0].ToLower();
+	const bool bReadOnly = Verb == TEXT("list") || (Verb == TEXT("traffic") && Arguments.Num() == 2 && Arguments[1].Equals(TEXT("status"), ESearchCase::IgnoreCase));
+	if (!bReadOnly && !MayChangeWorld(Sender))
+	{
+		Sender->SendChatMessage(TEXT("Auto Trains: only the host or a server admin can use this /at command."), FLinearColor::Red);
+		UE_LOG(LogAutoTrains, Log, TEXT("/at %s refused: the sender isn't the host or a server admin"), *Verb);
+		return EExecutionStatus::INSUFFICIENT_PERMISSIONS;
+	}
 	if (Verb == TEXT("list"))
 	{
 		for (const FString& Line : Control->ListTrains())

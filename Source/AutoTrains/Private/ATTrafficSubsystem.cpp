@@ -36,6 +36,8 @@ namespace
 	// were measured braking at 2/3 of their rating, light ones at 1.4x.
 	float MeasuredBrakeShare() { return GAggressive ? 0.95f : 0.85f; }
 	float RatedBrakeShare() { return GAggressive ? 0.8f : 0.6f; }
+	// Braking is weaker at higher speed; a speed band above every measured one plans with this share of the weakest.
+	constexpr float UnmeasuredBandShare = 0.75f;
 	// A train over its braking curve by more than this gets full brake. [cm/s]
 	constexpr float OverspeedTolerance = 100.f;
 	constexpr double ConflictRebuildSeconds = 30.0;
@@ -78,6 +80,16 @@ namespace
 	constexpr float RerouteMinGainShare = 0.15f;
 	// A train that rerouted doesn't reroute again for this long, so it can't flip between two routes. [s]
 	constexpr float RerouteCooldownSeconds = 30.f;
+
+	float GetMass(const AFGTrain* Train)
+	{
+		return Train ? FMath::Max(Train->mConsistData.Mass, 1.f) : 1.f;
+	}
+
+	int32 GetBrakeBand(float Speed)
+	{
+		return FMath::Clamp(FMath::FloorToInt(Speed / ATBrakeBandWidth), 0, ATBrakeBands - 1);
+	}
 
 	FString TrackName(const AFGBuildableRailroadTrack* Track)
 	{
@@ -134,10 +146,12 @@ void AATTrafficSubsystem::Tick(float DeltaSeconds)
 		return;
 	}
 	mUpdateTimer -= DeltaSeconds;
+	mSinceUpdate += DeltaSeconds;
 	if (mUpdateTimer <= 0.f)
 	{
-		mUpdateTimer += TrafficUpdateInterval;
-		UpdateTraffic(TrafficUpdateInterval);
+		mUpdateTimer = TrafficUpdateInterval;
+		UpdateTraffic(mSinceUpdate);
+		mSinceUpdate = 0.f;
 	}
 	mPhaseReportTimer -= DeltaSeconds;
 	if (mPhaseReportTimer <= 0.f)
@@ -210,6 +224,7 @@ FString AATTrafficSubsystem::SetEnabled(bool bEnabled)
 	}
 	mTrains.Reset();
 	mUpdateTimer = 0.f;
+	mSinceUpdate = 0.f;
 	mLastDeadlock.Reset();
 	if (bEnabled)
 	{
@@ -259,21 +274,28 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 		FATTrafficTrain& State = mTrains.FindOrAdd(Train);
 		ReadTrain(State, Train);
 
-		// Measure full-brake deceleration between updates; docking catches and crashes are far above 20 m/s^2.
-		if (State.bFullBrake && State.LastSpeed > 500.f && State.Speed > 300.f)
+		// Measure full-brake deceleration per speed band between updates with full brake on at both; a catch ends at
+		// standstill, and docking catches and crashes are far above 20 m/s^2.
+		if (State.bFullBrake && State.bWasFullBrake && State.LastSpeed > 500.f && State.Speed > 300.f && DeltaSeconds > 0.f)
 		{
 			const float Deceleration = (State.LastSpeed - State.Speed) / DeltaSeconds;
 			if (Deceleration > 50.f && Deceleration < 2000.f)
 			{
-				const float Previous = State.MeasuredBrake;
-				State.MeasuredBrake = Previous > 0.f ? Previous * 0.7f + Deceleration * 0.3f : Deceleration;
-				if (Previous <= 0.f)
+				const int32 Band = GetBrakeBand((State.LastSpeed + State.Speed) * 0.5f);
+				const float Force = Deceleration * GetMass(Train);
+				float& Stored = State.BrakeForce[Band];
+				const bool bFirst = Stored <= 0.f;
+				// Weaker samples count more, so the plan errs on the safe side.
+				Stored = bFirst ? Force : Force < Stored ? Stored * 0.5f + Force * 0.5f : Stored * 0.85f + Force * 0.15f;
+				if (bFirst)
 				{
-					UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s brakes at %.2f m/s2 (rated %.2f); planning with %.2f"), *TrainName(Train),
-						State.MeasuredBrake / 100.f, Train->mConsistData.MaxBrakeDeceleration / 100.f, GetPlanningDeceleration(State) / 100.f);
+					UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s brakes at %.2f m/s2 at %.0f-%.0f km/h (rated %.2f, %.0f t); planning with %.2f"), *TrainName(Train),
+						Deceleration / 100.f, Band * ATBrakeBandWidth * 0.036f, (Band + 1) * ATBrakeBandWidth * 0.036f, Train->mConsistData.MaxBrakeDeceleration / 100.f,
+						GetMass(Train) / 1000.f, GetPlanningDeceleration(State) / 100.f);
 				}
 			}
 		}
+		State.bWasFullBrake = State.bFullBrake;
 		State.LastSpeed = State.Speed;
 		State.StoppedSeconds = State.Speed < 100.f ? State.StoppedSeconds + DeltaSeconds : 0.f;
 		State.RerouteCooldown = FMath::Max(0.f, State.RerouteCooldown - DeltaSeconds);
@@ -321,6 +343,7 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 		ExtendClaims(*State);
 		UpdateAuthority(*State);
 		UpdateFollowLeaders(*State);
+		State->ClearSeconds = State->BlockedBy.IsValid() ? GetBlockerClearSeconds(*State) : -1.f;
 		if (State->BlockedReason != PreviousReason && !State->BlockedReason.IsEmpty())
 		{
 			UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s: %s"), *TrainName(State->Train.Get()), *State->BlockedReason);
@@ -441,6 +464,7 @@ void AATTrafficSubsystem::ReadTrain(FATTrafficTrain& State, AFGTrain* Train) con
 		State.WaitingSeconds = 0.f;
 		State.bFullBrake = false;
 		State.bCatchArmed = false;
+		State.ClearSeconds = -1.f;
 	}
 }
 
@@ -1009,17 +1033,7 @@ bool AATTrafficSubsystem::IsClearingInTime(const FATTrafficTrain& Self, const FA
 		return false;
 	}
 
-	// How far the holder still has to go until its tail is clear: past the end of the track or the switch's zone.
-	float ClearDistance = Holder.Length + JointFoulDistance;
-	for (const FATRouteStep& Step : Holder.Route)
-	{
-		const bool bThere = Joint != INDEX_NONE ? GetJoint(Step.Exit) == Joint : Step.Track == Track;
-		if (bThere)
-		{
-			ClearDistance = Step.EndDistance - Holder.FrontAhead + Holder.Length + (Joint != INDEX_NONE ? JointFoulDistance : 0.f);
-			break;
-		}
-	}
+	const float ClearDistance = GetClearDistance(Holder, Track, Joint);
 	// A holder that reaches its station first stops there instead of clearing.
 	if (Holder.bAuthorityToGoal && Holder.Route.Num() > 0 && Holder.Route.Last().EndDistance - Holder.FrontAhead < ClearDistance + HolderBrake)
 	{
@@ -1028,6 +1042,69 @@ bool AATTrafficSubsystem::IsClearingInTime(const FATTrafficTrain& Self, const FA
 	const float ClearTime = ClearDistance / Holder.Speed;
 	const float Arrival = TimeToCover(FMath::Max(0.f, SelfDistance), Self.Speed, GetAcceleration(Self, 1.f), SelfTrain->mConsistData.MaxSpeed);
 	return ClearTime + FollowTimeMargin() < Arrival;
+}
+
+float AATTrafficSubsystem::GetClearDistance(const FATTrafficTrain& Holder, const AFGBuildableRailroadTrack* Track, int32 Joint) const
+{
+	// Past the end of the track or the switch's zone; a track behind the holder's route is one its tail is on.
+	for (const FATRouteStep& Step : Holder.Route)
+	{
+		const bool bThere = Joint != INDEX_NONE ? GetJoint(Step.Exit) == Joint : Step.Track == Track;
+		if (bThere)
+		{
+			return Step.EndDistance - Holder.FrontAhead + Holder.Length + (Joint != INDEX_NONE ? JointFoulDistance : 0.f);
+		}
+	}
+	return Holder.Length + JointFoulDistance;
+}
+
+float AATTrafficSubsystem::GetBlockerClearSeconds(const FATTrafficTrain& State) const
+{
+	const FATTrafficTrain* Blocker = mTrains.Find(State.BlockedBy);
+	const AFGTrain* BlockerTrain = Blocker ? Blocker->Train.Get() : nullptr;
+	if (!BlockerTrain || !Blocker->bManaged || Blocker->StoppedSeconds >= LeaderStopSeconds || Blocker->Route.Num() == 0)
+	{
+		return -1.f;
+	}
+	// Where State meets the blocker: the first track beyond its claims the blocker holds or crosses, or the switch
+	// before it.
+	float ClearDistance = -1.f;
+	bool bPastClaims = false;
+	for (int32 Index = 0; Index < State.Route.Num() && ClearDistance < 0.f; ++Index)
+	{
+		const FATRouteStep& Step = State.Route[Index];
+		if (!bPastClaims && HoldsTrack(State, Step.Track))
+		{
+			continue;
+		}
+		bPastClaims = true;
+		const int32 Joint = Index > 0 ? GetJoint(State.Route[Index - 1].Exit) : INDEX_NONE;
+		if (Joint != INDEX_NONE && HoldsJoint(*Blocker, Joint))
+		{
+			ClearDistance = GetClearDistance(*Blocker, nullptr, Joint);
+			break;
+		}
+		for (const AFGBuildableRailroadTrack* Conflict : GetConflicts(Step.Track))
+		{
+			if (HoldsTrack(*Blocker, Conflict))
+			{
+				ClearDistance = GetClearDistance(*Blocker, Conflict, INDEX_NONE);
+				break;
+			}
+		}
+	}
+	if (ClearDistance < 0.f)
+	{
+		return -1.f;
+	}
+	// The blocker must be able to get that far without stopping, and not stop at its station first.
+	const float Reach = Blocker->bAuthorityToGoal ? Blocker->Route.Last().EndDistance - Blocker->FrontAhead
+		: GetAuthorityDistance(BlockerTrain) - Blocker->StopMargin;
+	if (Reach < ClearDistance)
+	{
+		return -1.f;
+	}
+	return TimeToCover(ClearDistance, Blocker->Speed, GetAcceleration(*Blocker, 1.f), BlockerTrain->mConsistData.MaxSpeed);
 }
 
 bool AATTrafficSubsystem::IsLeaderOf(const FATTrafficTrain& Self, const FATTrafficTrain& Other) const
@@ -1609,12 +1686,52 @@ bool AATTrafficSubsystem::HoldsJoint(const FATTrafficTrain& State, int32 Joint)
 	return State.OccupiedJoints.Contains(Joint) || State.ClaimedJoints.Contains(Joint);
 }
 
-float AATTrafficSubsystem::GetPlanningDeceleration(const FATTrafficTrain& State)
+float AATTrafficSubsystem::GetPlanningDeceleration(const FATTrafficTrain& State, float Speed)
 {
 	const AFGTrain* Train = State.Train.Get();
-	const float Rated = Train ? Train->mConsistData.MaxBrakeDeceleration : 100.f;
-	const float Planning = State.MeasuredBrake > 0.f ? State.MeasuredBrake * MeasuredBrakeShare() : Rated * RatedBrakeShare();
-	return FMath::Clamp(Planning, 50.f, 800.f);
+	const float Mass = GetMass(Train);
+	const int32 Top = GetBrakeBand(Speed >= 0.f ? Speed : State.Speed);
+	// A stop from this speed brakes through every band below it. Braking is weaker at higher speed, so a measured
+	// band above this one bounds it too.
+	float Lower = MAX_flt;
+	float Higher = MAX_flt;
+	bool bTopMeasured = false;
+	for (int32 Band = 0; Band < ATBrakeBands; ++Band)
+	{
+		if (State.BrakeForce[Band] <= 0.f)
+		{
+			continue;
+		}
+		const float Deceleration = State.BrakeForce[Band] / Mass;
+		if (Band <= Top)
+		{
+			Lower = FMath::Min(Lower, Deceleration);
+			bTopMeasured = bTopMeasured || Band == Top;
+		}
+		else
+		{
+			Higher = FMath::Min(Higher, Deceleration);
+		}
+	}
+	float Measured;
+	if (bTopMeasured)
+	{
+		Measured = Lower;
+	}
+	else if (Higher < MAX_flt)
+	{
+		Measured = FMath::Min(Lower, Higher);
+	}
+	else if (Lower < MAX_flt)
+	{
+		Measured = Lower * UnmeasuredBandShare;
+	}
+	else
+	{
+		const float Rated = Train ? Train->mConsistData.MaxBrakeDeceleration : 100.f;
+		return FMath::Clamp(Rated * RatedBrakeShare(), 50.f, 800.f);
+	}
+	return FMath::Clamp(Measured * MeasuredBrakeShare(), 50.f, 800.f);
 }
 
 float AATTrafficSubsystem::GetClaimPriority(const FATTrafficTrain& State) const
@@ -1713,24 +1830,48 @@ void AATTrafficSubsystem::ApplyAuthority(AFGTrain* Train)
 
 	FTrainAtcData& Atc = Train->mAtcData;
 	const float Speed = FMath::Abs(Train->mSimulationData.Velocity);
-	const float Deceleration = GetPlanningDeceleration(*State);
-	float Allowed = MAX_flt;
+	const float Usable = Distance - State->StopMargin;
+	const float FollowUsable = FollowLimit - AuthorityStopMargin;
+	auto GetAllowed = [Distance, FollowLimit, Usable, FollowUsable](float Deceleration)
+	{
+		float Result = MAX_flt;
+		if (Distance >= 0.f)
+		{
+			Result = Usable > 0.f ? FMath::Sqrt(2.f * Deceleration * Usable) : 0.f;
+		}
+		if (FollowLimit >= 0.f)
+		{
+			Result = FMath::Min(Result, FollowUsable > 0.f ? FMath::Sqrt(2.f * Deceleration * FollowUsable) : 0.f);
+		}
+		return Result;
+	};
+	const float Deceleration = GetPlanningDeceleration(*State, Speed);
+	const float Allowed = GetAllowed(Deceleration);
 	float Limit = MAX_flt;
 	if (Distance >= 0.f)
 	{
-		const float Usable = Distance - State->StopMargin;
-		Allowed = Usable > 0.f ? FMath::Sqrt(2.f * Deceleration * Usable) : 0.f;
 		Limit = Distance;
 	}
 	if (FollowLimit >= 0.f)
 	{
-		const float FollowUsable = FollowLimit - AuthorityStopMargin;
-		Allowed = FMath::Min(Allowed, FollowUsable > 0.f ? FMath::Sqrt(2.f * Deceleration * FollowUsable) : 0.f);
 		Limit = FMath::Min(Limit, FollowLimit);
+	}
+	// Braking is weaker at higher speed: the speed it may still reach is planned with that speed's braking.
+	float Target = Allowed;
+	if (Allowed > Speed && Allowed < MAX_flt)
+	{
+		Target = FMath::Min(Allowed, GetAllowed(FMath::Min(Deceleration, GetPlanningDeceleration(*State, Allowed))));
+	}
+	// Waiting for a train that will clear: drive at the speed that reaches the braking point as it clears, so the
+	// train rolls on instead of stopping.
+	if (Distance >= 0.f && Usable > 0.f && State->ClearSeconds > 0.f)
+	{
+		const float Seconds = State->ClearSeconds;
+		Target = FMath::Min(Target, Deceleration * (FMath::Sqrt(FMath::Square(Seconds) + 2.f * Usable / Deceleration) - Seconds));
 	}
 	const bool bWasFullBrake = State->bFullBrake;
 	State->bFullBrake = Speed > Allowed + OverspeedTolerance;
-	Atc.TargetSpeed = State->bFullBrake ? 0.f : FMath::Min(Atc.TargetSpeed, Allowed);
+	Atc.TargetSpeed = State->bFullBrake ? 0.f : FMath::Min(Atc.TargetSpeed, Target);
 	if (State->bFullBrake && !bWasFullBrake && Speed > Allowed + 500.f)
 	{
 		UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s over its braking curve (%.0f km/h, allowed %.0f, %.0f m to go%s): full brake"), *TrainName(Train),
@@ -1742,11 +1883,13 @@ void AATTrafficSubsystem::ApplyAuthority(AFGTrain* Train)
 		return;
 	}
 
-	// Backstop: when the authority ends at the master's next connection, point the restrictive point at it, so the
-	// game's catch holds the train at the stop point whatever its speed. Clear keeps the wait timer and docking out.
+	// Backstop: when the stop point lies before the master's next connection, point the restrictive point at that
+	// connection with the stop offset that puts the stop there, so the game's catch holds the train at the stop point
+	// whatever its speed. Clear keeps the wait timer and docking out.
 	const UFGRailroadTrackConnectionComponent* Next = Atc.CurrentConnection.Get();
-	const float StopOffset = State->FrontAhead + State->StopMargin;
-	const bool bArm = Next && Next->GetTrack() == State->AuthorityTrack.Get() && Atc.CurrentConnectionDistance > StopOffset
+	const float ToStop = Distance - State->StopMargin;
+	const float StopOffset = Atc.CurrentConnectionDistance - ToStop;
+	const bool bArm = Next && ToStop > 0.f && StopOffset >= 0.f
 		&& (!Atc.NextRestrictiveSignalConnection.IsValid() || Atc.NextRestrictiveSignalDistance > Atc.CurrentConnectionDistance);
 	if (bArm)
 	{
@@ -1794,10 +1937,11 @@ TArray<FString> AATTrafficSubsystem::DescribeAll() const
 			continue;
 		}
 		const float Distance = GetAuthorityDistance(State.Train.Get());
-		Lines.Add(FString::Printf(TEXT("%s: %.0f km/h, %d claims, may drive %s, brakes at %.1f m/s2, waited %.0f s, rerouted %d times%s%s"), *TrainName(State.Train.Get()),
+		Lines.Add(FString::Printf(TEXT("%s: %.0f km/h, %d claims, may drive %s, brakes at %.1f m/s2, waited %.0f s, rerouted %d times%s%s%s"), *TrainName(State.Train.Get()),
 			State.Speed * 0.036f, State.Claims.Num(),
 			Distance < 0.f ? TEXT("to its stop") : *FString::Printf(TEXT("%.0f m"), FMath::Max(0.f, Distance - State.StopMargin) / 100.f),
-			GetPlanningDeceleration(State) / 100.f, State.WaitingSeconds, State.Reroutes, State.BlockedReason.IsEmpty() ? TEXT("") : TEXT(", "), *State.BlockedReason));
+			GetPlanningDeceleration(State) / 100.f, State.WaitingSeconds, State.Reroutes, State.BlockedReason.IsEmpty() ? TEXT("") : TEXT(", "), *State.BlockedReason,
+			State.ClearSeconds > 0.f ? *FString::Printf(TEXT(" (clears in %.0f s)"), State.ClearSeconds) : TEXT("")));
 	}
 	if (Lines.Num() == 0)
 	{

@@ -8,6 +8,10 @@ class AFGBuildableRailroadTrack;
 class AFGTrain;
 class UFGRailroadTrackConnectionComponent;
 
+// Full-brake braking is measured per speed band of this width, up to ATBrakeBands bands. [cm/s]
+constexpr float ATBrakeBandWidth = 1000.f;
+constexpr int32 ATBrakeBands = 8;
+
 // One track on a train's route, from the track its front is on to its goal.
 struct FATRouteStep
 {
@@ -39,11 +43,16 @@ struct FATTrafficTrain
 	// How far the train's front is ahead of its MU master, which the ATC distances are measured from. [cm]
 	float FrontAhead = 0.f;
 	float WaitingSeconds = 0.f;
-	// Full-brake deceleration measured on this train, 0 until measured. [cm/s^2]
-	float MeasuredBrake = 0.f;
-	// Speed at the previous update, and whether the train was on full brake since. [cm/s]
+	// Full-brake braking force measured on this train per speed band, as deceleration times mass so a train that
+	// takes on cargo plans with less; 0 where not measured. [cm/s^2 kg]
+	float BrakeForce[ATBrakeBands] = {};
+	// Speed at the previous update. [cm/s]
 	float LastSpeed = 0.f;
+	// Whether the train is on full brake, and whether it was at the previous update.
 	bool bFullBrake = false;
+	bool bWasFullBrake = false;
+	// Seconds until the moving train that blocks this one has cleared where it blocks; -1 if unknown.
+	float ClearSeconds = -1.f;
 	// Seconds the train has stood still.
 	float StoppedSeconds = 0.f;
 	// Whether the game's catch is set to hold the train at its stop point.
@@ -155,6 +164,13 @@ private:
 	bool IsClearingInTime(const FATTrafficTrain& Self, const FATTrafficTrain& Holder, const AFGBuildableRailroadTrack* Track, int32 Joint,
 		float SelfDistance) const;
 
+	// Returns how far Holder's front still travels until its tail has cleared Track (or Joint's fouling zone). [cm]
+	float GetClearDistance(const FATTrafficTrain& Holder, const AFGBuildableRailroadTrack* Track, int32 Joint) const;
+
+	// Returns the seconds until the train blocking State has cleared the first track (or switch) beyond State's
+	// claims that it holds, or -1 if it may stop before then.
+	float GetBlockerClearSeconds(const FATTrafficTrain& State) const;
+
 	// Returns true if Other leads Self: it's ahead on Self's route going the same way, or it's crossing traffic that
 	// isn't coming up behind Self on its path. A train following Self is never its leader.
 	bool IsLeaderOf(const FATTrafficTrain& Self, const FATTrafficTrain& Other) const;
@@ -218,9 +234,10 @@ private:
 	// congestion is counted, and switches to it.
 	void ConsiderReroute(FATTrafficTrain& State);
 
-	// Deceleration to plan stops with: 85% of the measured full-brake deceleration, or 60% of the consist's rating
-	// until measured. [cm/s^2]
-	static float GetPlanningDeceleration(const FATTrafficTrain& State);
+	// Deceleration to plan a stop from Speed (the train's own speed if negative) with: a share of the weakest
+	// full-brake deceleration measured at or below that speed, or a share of the consist's rating until measured.
+	// [cm/s^2]
+	static float GetPlanningDeceleration(const FATTrafficTrain& State, float Speed = -1.f);
 
 	// Claim order score, lower first: seconds until the train's tail has passed the first track it still needs, minus
 	// a share of the time it has waited.
@@ -235,6 +252,8 @@ private:
 	bool mEnabled = false;
 	bool mRerouteEnabled = true;
 	float mUpdateTimer = 0.f;
+	// Seconds since the last traffic update.
+	float mSinceUpdate = 0.f;
 	float mSettingsTimer = 0.f;
 	float mPhaseReportTimer = 0.f;
 	// Settings as last read, to notice changes; unset until first read.

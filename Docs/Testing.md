@@ -1,15 +1,19 @@
-# Test build 0.5.5: traffic without signals
+# How the traffic works, and how to test it
 
-This build adds the first traffic control. With it on, every self-driving train ignores signals and claims the
-track ahead of it:
+With traffic control on (the default), every self-driving train ignores signals and claims the track ahead of it:
 
 - A track is free only if no other train stands on it, has claimed it, or holds a track crossing it. A switch or
   merge is free only if no other train has a vehicle within 20 m of the switch point or holds track through it.
   Trains stop 25 m before a switch (10 m elsewhere), so a waiting train never fouls one.
 - A train always keeps the speed at which it can stop before the end of its claims, so it slows down and stops for
   traffic ahead and speeds up as track frees. It plans with 80% of its rated braking until it has braked hard once,
-  then with 95% of what it actually managed (60% and 85% when not aggressive). If it's ever over that curve it gets full brake, and at the last
-  connection the game's own catch stops it dead at its stop point, whatever its speed.
+  then with 95% of what it actually managed (60% and 85% when not aggressive). Braking is measured per 36 km/h
+  speed band and per tonne, because trains brake weaker at high speed and when loaded; a stop from a given speed
+  plans with the weakest band at or below it. If it's ever over that curve it gets full brake, and once its stop
+  point lies before the lead locomotive's next track end, the game's own catch stops it dead there, whatever its
+  speed.
+- When a moving train blocks it and will clear in time, a train slows early so it reaches its braking point just as
+  the way frees, and rolls on instead of stopping (`/at traffic status` shows `clears in N s`).
 - A claim may only end where the whole train stands clear of crossings and switches that another train's route
   passes within 1.5 km (3 km when not aggressive), and where no other train needs to come the other way. So a
   train never stops inside a junction someone needs, or halfway along single track that another train needs, but
@@ -39,8 +43,7 @@ track ahead of it:
   from the end of its claims is at least 15% and 300 m cheaper, it switches to it, even when that route is longer.
   The log says `rerouted` with the costs and lengths. After a reroute a train waits 30 s before it reroutes again.
 
-Trains don't yet adjust their speed ahead of time to arrive just as track frees; they brake when they must. Player
-driven trains aren't controlled; the others treat them as obstacles.
+Player driven trains aren't controlled; the others treat them as obstacles.
 
 ## Mods menu settings (all on by default)
 
@@ -60,10 +63,10 @@ Back up the save first.
 
 ## Setup
 
-1. Load the copy of your world ("Bens CSE No Signals"). In game it's still named after the original session, because
-   the game keeps the session name inside the save data.
-2. `/at session Bens CSE No Signals`: renames the running session, so this and later saves and autosaves stop going
-   to your main world's session.
+1. Load a copy of your world. A copied save file is still named after the original session in game, because the
+   game keeps the session name inside the save data.
+2. `/at session <new name>`: renames the running session, so this and later saves and autosaves stop going to the
+   original world's session.
 3. `/at autopilot all off`, then `/at removesignals confirm`.
 4. Save, and check the save list shows it under the new session.
 5. `/at log on`, then `/at traffic on`.
@@ -88,11 +91,12 @@ Back up the save first.
 `/at traffic status` lists every moving self-driving train with its claims, how far it may drive and what it's
 waiting for. The log also gets a `traffic:` line whenever a train's reason for waiting changes.
 
-When you're done: `/at log off`, then tell me. I read the telemetry CSV and `FactoryGame.log` myself.
+When you're done: `/at log off`. The telemetry CSV and `FactoryGame.log` (`LogAutoTrains` lines) show what happened.
 
 ## All commands
 
-`<train>` is the number from `/at list`, or part of the train's name.
+`<train>` is the number from `/at list`, or part of the train's name. In multiplayer only the host (or a dedicated
+server admin) can use them, except `/at list` and `/at traffic status`.
 
 - `/at traffic on|off|status`
 - `/at reroute on|off`

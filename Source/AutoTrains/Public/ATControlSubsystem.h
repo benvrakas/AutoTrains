@@ -70,6 +70,9 @@ public:
 	FString CheckRoute(AFGTrain* Train);
 	FString RouteVia(AFGTrain* Train, const FVector& Location);
 	FString SetLogging(bool bLog);
+	FString SetAutopilot(AFGTrain* Train, bool bEnabled);
+	FString SetAutopilotAll(bool bEnabled);
+	FString RemoveAllSignals();
 
 private:
 	// Clears the train's signal stops and recomputes its restrictive point and target speed without them.

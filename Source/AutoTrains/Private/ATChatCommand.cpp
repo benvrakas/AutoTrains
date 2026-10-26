@@ -11,7 +11,7 @@ AATChatCommand::AATChatCommand()
 	Aliases.Add(TEXT("autotrains"));
 	MinNumberOfArguments = 1;
 	bOnlyUsableByPlayer = true;
-	Usage = NSLOCTEXT("AutoTrains", "ChatUsage", "/at list | speed <train> <km/h> | stopat <train> <m> | release <train|all> | signals <train> ignore|obey | route <train> check|via | log on|off   (<train> = number from /at list, or part of its name)");
+	Usage = NSLOCTEXT("AutoTrains", "ChatUsage", "/at list | speed <train> <km/h> | stopat <train> <m> | release <train|all> | signals <train> ignore|obey | route <train> check|via | autopilot <train|all> on|off | removesignals confirm | log on|off   (<train> = number from /at list, or part of its name)");
 }
 
 EExecutionStatus AATChatCommand::ExecuteCommand_Implementation(UCommandSender* Sender, const TArray<FString>& Arguments, const FString& Label)
@@ -44,6 +44,23 @@ EExecutionStatus AATChatCommand::ExecuteCommand_Implementation(UCommandSender* S
 		Sender->SendChatMessage(Control->ReleaseAll());
 		return EExecutionStatus::COMPLETED;
 	}
+	if (Verb == TEXT("removesignals"))
+	{
+		if (Arguments.Num() != 2 || !Arguments[1].Equals(TEXT("confirm"), ESearchCase::IgnoreCase))
+		{
+			Sender->SendChatMessage(TEXT("This dismantles every block and path signal in the world. Type /at removesignals confirm to do it."));
+			return EExecutionStatus::BAD_ARGUMENTS;
+		}
+		Sender->SendChatMessage(Control->RemoveAllSignals());
+		return EExecutionStatus::COMPLETED;
+	}
+	const bool bAutopilotOn = Arguments.Num() == 3 && Arguments[2].Equals(TEXT("on"), ESearchCase::IgnoreCase);
+	const bool bAutopilotArgs = Verb == TEXT("autopilot") && Arguments.Num() == 3 && (bAutopilotOn || Arguments[2].Equals(TEXT("off"), ESearchCase::IgnoreCase));
+	if (bAutopilotArgs && Arguments[1].Equals(TEXT("all"), ESearchCase::IgnoreCase))
+	{
+		Sender->SendChatMessage(Control->SetAutopilotAll(bAutopilotOn));
+		return EExecutionStatus::COMPLETED;
+	}
 
 	AFGTrain* Train = Arguments.Num() >= 2 ? Control->FindTrain(Arguments[1]) : nullptr;
 	if (!Train)
@@ -60,6 +77,11 @@ EExecutionStatus AATChatCommand::ExecuteCommand_Implementation(UCommandSender* S
 	if (Verb == TEXT("stopat") && Arguments.Num() == 3 && Arguments[2].IsNumeric())
 	{
 		Sender->SendChatMessage(Control->SetStopAhead(Train, FCString::Atof(*Arguments[2])));
+		return EExecutionStatus::COMPLETED;
+	}
+	if (bAutopilotArgs)
+	{
+		Sender->SendChatMessage(Control->SetAutopilot(Train, bAutopilotOn));
 		return EExecutionStatus::COMPLETED;
 	}
 	if (Verb == TEXT("release") && Arguments.Num() == 2)

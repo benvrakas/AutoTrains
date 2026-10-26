@@ -1,4 +1,4 @@
-# Test build 0.2.1: can the mod drive trains itself?
+# Test build 0.2.2: can the mod drive trains itself?
 
 The finished mod plans every train's speed along its route so trains never meet, without signals. That needs the
 mod to command speed and stop points precisely, ignore signals, choose routes, and know where every train is. This
@@ -6,6 +6,13 @@ build tests those controls on their own; there's no automatic traffic planning i
 
 Back up the save first. Only command trains on track where nothing else is in their way: a train told to ignore
 signals, or routed somewhere new, has no collision protection from this build.
+
+## Setup: a world without signals
+
+1. Load the copy of your world that has its own session (for example "Bens CSE No Signals").
+2. `/at autopilot all off`, so the game's own trains can't run into each other once the signals are gone.
+3. `/at removesignals confirm`: dismantles every block and path signal; chat says how many.
+4. Save. Turn autopilot on for one train at a time for the steps below (`/at autopilot <train> on`).
 
 ## Commands
 
@@ -18,6 +25,8 @@ signals, or routed somewhere new, has no collision protection from this build.
 - `/at signals <train> ignore|obey`
 - `/at route <train> check`: this mod's router against the game's route to the train's current stop
 - `/at route <train> via`: send the train to its stop through the track nearest you
+- `/at autopilot <train> on|off` or `/at autopilot all on|off`
+- `/at removesignals confirm`: dismantles every block and path signal in the loaded world
 - `/at log on|off`: telemetry every 0.2 s to `%LOCALAPPDATA%\FactoryGame\Saved\AutoTrains\telemetry-<time>.csv`
 
 ## Steps

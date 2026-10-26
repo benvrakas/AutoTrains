@@ -1,8 +1,10 @@
 #include "ATControlSubsystem.h"
 #include "ATRouter.h"
 #include "AutoTrains.h"
+#include "Buildables/FGBuildableRailroadSignal.h"
 #include "Buildables/FGBuildableRailroadTrack.h"
 #include "EngineUtils.h"
+#include "FGDismantleInterface.h"
 #include "FGLocomotive.h"
 #include "FGRailroadSubsystem.h"
 #include "FGRailroadTrackConnectionComponent.h"
@@ -470,6 +472,57 @@ FString AATControlSubsystem::SetLogging(bool bLog)
 	FlushTelemetry();
 	UE_LOG(LogAutoTrains, Log, TEXT("Telemetry started: %s"), *mTelemetryPath);
 	return FString::Printf(TEXT("Logging telemetry to %s"), *mTelemetryPath);
+}
+
+FString AATControlSubsystem::SetAutopilot(AFGTrain* Train, bool bEnabled)
+{
+	Train->SetSelfDrivingEnabled(bEnabled);
+	const FString Message = FString::Printf(TEXT("%s: autopilot %s."), *Train->GetTrainName().ToString(), Train->IsSelfDrivingEnabled() ? TEXT("on") : TEXT("off"));
+	UE_LOG(LogAutoTrains, Log, TEXT("%s"), *Message);
+	return Message;
+}
+
+FString AATControlSubsystem::SetAutopilotAll(bool bEnabled)
+{
+	int32 Changed = 0;
+	for (AFGTrain* Train : GetSortedTrains())
+	{
+		if (Train->IsSelfDrivingEnabled() != bEnabled)
+		{
+			Train->SetSelfDrivingEnabled(bEnabled);
+			Changed += Train->IsSelfDrivingEnabled() == bEnabled ? 1 : 0;
+		}
+	}
+	const FString Message = FString::Printf(TEXT("Autopilot turned %s on %d trains."), bEnabled ? TEXT("on") : TEXT("off"), Changed);
+	UE_LOG(LogAutoTrains, Log, TEXT("%s"), *Message);
+	return Message;
+}
+
+FString AATControlSubsystem::RemoveAllSignals()
+{
+	TArray<AFGBuildableRailroadSignal*> Signals;
+	for (TActorIterator<AFGBuildableRailroadSignal> It(GetWorld()); It; ++It)
+	{
+		if (IsValid(*It))
+		{
+			Signals.Add(*It);
+		}
+	}
+	int32 PathSignals = 0;
+	for (AFGBuildableRailroadSignal* Signal : Signals)
+	{
+		PathSignals += Signal->IsPathSignal() ? 1 : 0;
+		IFGDismantleInterface::Execute_Dismantle(Signal);
+	}
+	int32 Remaining = 0;
+	for (TActorIterator<AFGBuildableRailroadSignal> It(GetWorld()); It; ++It)
+	{
+		Remaining += IsValid(*It) ? 1 : 0;
+	}
+	const FString Message = FString::Printf(TEXT("Removed %d signals (%d path, %d block); %d left."), Signals.Num(), PathSignals,
+		Signals.Num() - PathSignals, Remaining);
+	UE_LOG(LogAutoTrains, Log, TEXT("%s"), *Message);
+	return Message;
 }
 
 TArray<AFGTrain*> AATControlSubsystem::GetSortedTrains() const

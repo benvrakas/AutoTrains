@@ -77,6 +77,7 @@ public:
 	FString SetAutopilot(AFGTrain* Train, bool bEnabled);
 	FString SetAutopilotAll(bool bEnabled);
 	FString RemoveAllSignals();
+	FString SetSessionName(const FString& Name);
 
 private:
 	// Returns the number of block and path signals in the world that aren't being destroyed.

@@ -1,4 +1,4 @@
-# Test build 0.3.0: traffic without signals
+# Test build 0.3.1: traffic without signals
 
 This build adds the first traffic control. With it on, every self-driving train ignores signals and claims the
 track ahead of it:
@@ -19,10 +19,14 @@ Back up the save first.
 
 ## Setup
 
-1. Load the signal-free copy of your world ("Bens CSE No Signals"). It should still have every train's autopilot off.
-2. `/at log on`
-3. `/at traffic on`
-4. Turn autopilot on for two trains whose routes cross or share track: `/at autopilot <train> on`. Add more once those
+1. Load the copy of your world ("Bens CSE No Signals"). In game it's still named after the original session, because
+   the game keeps the session name inside the save data.
+2. `/at session Bens CSE No Signals`: renames the running session, so this and later saves and autosaves stop going
+   to your main world's session.
+3. `/at autopilot all off`, then `/at removesignals confirm`.
+4. Save, and check the save list shows it under the new session.
+5. `/at log on`, then `/at traffic on`.
+6. Turn autopilot on for two trains whose routes cross or share track: `/at autopilot <train> on`. Add more once those
    behave.
 
 ## Watch for
@@ -51,6 +55,7 @@ When you're done: `/at log off`, then tell me. I read the telemetry CSV and `Fac
 - `/at list`: every train with its number, speed, length, command and distance to its goal
 - `/at autopilot <train> on|off` or `/at autopilot all on|off`
 - `/at removesignals confirm`: dismantles every block and path signal in the loaded world
+- `/at session <new name>`: renames the running session; saves and autosaves go to the new name
 - `/at log on|off`: telemetry every 0.2 s to `%LOCALAPPDATA%\FactoryGame\Saved\AutoTrains\telemetry-<time>.csv`
 - Control tests from 0.2: `/at speed <train> <km/h>`, `/at stopat <train> <m>`, `/at release <train>|all`,
   `/at signals <train> ignore|obey`, `/at route <train> check|via`

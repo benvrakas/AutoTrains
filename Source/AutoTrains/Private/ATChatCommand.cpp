@@ -12,7 +12,7 @@ AATChatCommand::AATChatCommand()
 	Aliases.Add(TEXT("autotrains"));
 	MinNumberOfArguments = 1;
 	bOnlyUsableByPlayer = true;
-	Usage = NSLOCTEXT("AutoTrains", "ChatUsage", "/at traffic on|off|status | list | speed <train> <km/h> | stopat <train> <m> | release <train|all> | signals <train> ignore|obey | route <train> check|via | autopilot <train|all> on|off | removesignals confirm | log on|off   (<train> = number from /at list, or part of its name)");
+	Usage = NSLOCTEXT("AutoTrains", "ChatUsage", "/at traffic on|off|status | list | speed <train> <km/h> | stopat <train> <m> | release <train|all> | signals <train> ignore|obey | route <train> check|via | autopilot <train|all> on|off | removesignals confirm | session <new name> | log on|off   (<train> = number from /at list, or part of its name)");
 }
 
 EExecutionStatus AATChatCommand::ExecuteCommand_Implementation(UCommandSender* Sender, const TArray<FString>& Arguments, const FString& Label)
@@ -67,6 +67,13 @@ EExecutionStatus AATChatCommand::ExecuteCommand_Implementation(UCommandSender* S
 			}
 			return EExecutionStatus::COMPLETED;
 		}
+	}
+	if (Verb == TEXT("session") && Arguments.Num() >= 2)
+	{
+		TArray<FString> Words(Arguments);
+		Words.RemoveAt(0);
+		Sender->SendChatMessage(Control->SetSessionName(FString::Join(Words, TEXT(" "))));
+		return EExecutionStatus::COMPLETED;
 	}
 	if (Verb == TEXT("removesignals"))
 	{

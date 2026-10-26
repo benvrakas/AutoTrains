@@ -26,6 +26,27 @@ The game log is `%LOCALAPPDATA%\FactoryGame\Saved\Logs\FactoryGame.log`. Filter 
 - Distances from the game's ATC are from the MU master locomotive; the mod corrects them by how far the train's
   front is ahead of it (`FrontAhead`).
 
+### Fixed in 0.5.5 (from the 0.5.4 session log)
+
+- 240 of 241 `over its braking curve` lines said `behind a leader`. Two causes: leaders had no direction, so a
+  train coming up behind (or a follower) counted as a leader, and the follower capped itself on track the "leader"
+  stood on behind it; and a follower already on its leader's track was capped at the leader's braking distance
+  alone, not the gap to its tail, so the cap collapsed whenever the leader slowed. Now only a train ahead going the
+  same way is a leader (`IsLeaderOf`), and the cap is the gap to its tail plus its braking distance.
+- Mutual `gives up` pairs (each train treating the other as its stopped leader) came from the same directionless
+  leaders.
+- `goes first ... gives up 0 claims` repeated: the cut didn't remove anything (claims under the holder's own
+  vehicles stay). It's logged only when claims are actually given up. A switch spanned by a train's vehicles on
+  both sides now counts as occupied, so it can't be preempted at all.
+- Going first used to take the other trains' claims before checking the rest of the track the train needed; when
+  that check failed, the other trains had lost their claims for nothing and had to stop and reclaim. Preemptions
+  are now applied tentatively and rolled back if the check fails.
+- A train rerouted back and forth every 5 s between two near-equal routes (`at test1`); reroutes now have a 30 s
+  cooldown.
+- A train following a moving train the same way (AI Limiter RSC behind Heavy Oil Residue) waited for the leader's
+  timing check; with aggressive timing a same-way leader on the route is followed directly, with the moving-block
+  cap keeping the distance.
+
 ## Telemetry
 
 `/at log on` writes `%LOCALAPPDATA%\FactoryGame\Saved\AutoTrains\telemetry-<time>.csv`: one `# consist` line per

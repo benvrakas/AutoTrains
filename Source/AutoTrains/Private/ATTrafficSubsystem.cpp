@@ -76,6 +76,8 @@ namespace
 	// A new route must be cheaper than the current one by this much and this share to be taken.
 	constexpr float RerouteMinGain = 30000.f;
 	constexpr float RerouteMinGainShare = 0.15f;
+	// A train that rerouted doesn't reroute again for this long, so it can't flip between two routes. [s]
+	constexpr float RerouteCooldownSeconds = 30.f;
 
 	FString TrackName(const AFGBuildableRailroadTrack* Track)
 	{
@@ -274,6 +276,7 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 		}
 		State.LastSpeed = State.Speed;
 		State.StoppedSeconds = State.Speed < 100.f ? State.StoppedSeconds + DeltaSeconds : 0.f;
+		State.RerouteCooldown = FMath::Max(0.f, State.RerouteCooldown - DeltaSeconds);
 	}
 	for (auto It = mTrains.CreateIterator(); It; ++It)
 	{
@@ -469,9 +472,14 @@ void AATTrafficSubsystem::RefreshClaimedJoints(FATTrafficTrain& State) const
 	for (int32 Index = 0; Index + 1 < State.Route.Num() && HoldsTrack(State, State.Route[Index].Track) && HoldsTrack(State, State.Route[Index + 1].Track); ++Index)
 	{
 		const int32 Joint = GetJoint(State.Route[Index].Exit);
-		if (Joint != INDEX_NONE)
+		if (Joint == INDEX_NONE)
 		{
-			State.ClaimedJoints.Add(Joint);
+			continue;
+		}
+		State.ClaimedJoints.Add(Joint);
+		if (State.Occupied.Contains(State.Route[Index].Track) && State.Occupied.Contains(State.Route[Index + 1].Track))
+		{
+			State.OccupiedJoints.Add(Joint);
 		}
 	}
 }
@@ -532,7 +540,8 @@ void AATTrafficSubsystem::ExtendClaims(FATTrafficTrain& State)
 		while (Joint != INDEX_NONE && !IsJointFree(Joint, State, Holder, bStands, &Leaving))
 		{
 			What = FString::Printf(TEXT("the switch before %s"), *TrackName(Step.Track));
-			if (!IsPreempted(Holder) && IsClearingInTime(State, *Holder, nullptr, Joint, StepStart - JointFoulDistance))
+			if (!IsPreempted(Holder) && ((GAggressive && IsSameWayLeader(State, *Holder, Index - 1))
+				|| IsClearingInTime(State, *Holder, nullptr, Joint, StepStart - JointFoulDistance)))
 			{
 				Leaving.Add(Holder);
 				Followed.Add(Holder);
@@ -561,7 +570,8 @@ void AATTrafficSubsystem::ExtendClaims(FATTrafficTrain& State)
 		while (!IsTrackFree(Step.Track, State, Holder, Conflict, bStands, &Leaving))
 		{
 			What = Conflict == Step.Track ? TrackName(Conflict) : FString::Printf(TEXT("%s (crossing %s on this train's route)"), *TrackName(Conflict), *TrackName(Step.Track));
-			if (!IsPreempted(Holder) && IsClearingInTime(State, *Holder, Conflict, INDEX_NONE, StepStart))
+			if (!IsPreempted(Holder) && ((GAggressive && IsSameWayLeader(State, *Holder, Index))
+				|| IsClearingInTime(State, *Holder, Conflict, INDEX_NONE, StepStart)))
 			{
 				Leaving.Add(Holder);
 				Followed.Add(Holder);
@@ -635,10 +645,17 @@ void AATTrafficSubsystem::ExtendClaims(FATTrafficTrain& State)
 				Pending.Reset();
 				break;
 			}
-			ApplyPreemptions(State, Preemptions);
-			Preemptions.Reset();
-			ClearDistance = 0.f;
-			// Another train may hold the same track or switch as the one that gave way.
+			// Give way tentatively and check everything this train would take is then free; if not, the other trains get
+			// their claims back, so a failed attempt costs nobody anything.
+			TMap<FATTrafficTrain*, FATTrafficTrain> Before;
+			for (const FPreemption& Preemption : Preemptions)
+			{
+				if (!Before.Contains(Preemption.Holder))
+				{
+					Before.Add(Preemption.Holder, *Preemption.Holder);
+				}
+			}
+			ApplyPreemptions(Preemptions);
 			bool bAllFree = true;
 			for (const int32 PendingIndex : Pending)
 			{
@@ -652,7 +669,7 @@ void AATTrafficSubsystem::ExtendClaims(FATTrafficTrain& State)
 				bool bFree = true;
 				while (PendingJoint != INDEX_NONE && !IsJointFree(PendingJoint, State, Other, bOtherStands, &PendingLeaving))
 				{
-					if (IsClearingInTime(State, *Other, nullptr, PendingJoint, PendingStart - JointFoulDistance))
+					if ((GAggressive && IsSameWayLeader(State, *Other, PendingIndex - 1)) || IsClearingInTime(State, *Other, nullptr, PendingJoint, PendingStart - JointFoulDistance))
 					{
 						PendingLeaving.Add(Other);
 						continue;
@@ -662,7 +679,7 @@ void AATTrafficSubsystem::ExtendClaims(FATTrafficTrain& State)
 				}
 				while (bFree && !IsTrackFree(PendingStep.Track, State, Other, OtherConflict, bOtherStands, &PendingLeaving))
 				{
-					if (IsClearingInTime(State, *Other, OtherConflict, INDEX_NONE, PendingStart))
+					if ((GAggressive && IsSameWayLeader(State, *Other, PendingIndex)) || IsClearingInTime(State, *Other, OtherConflict, INDEX_NONE, PendingStart))
 					{
 						PendingLeaving.Add(Other);
 						continue;
@@ -673,16 +690,34 @@ void AATTrafficSubsystem::ExtendClaims(FATTrafficTrain& State)
 				{
 					bAllFree = false;
 					State.BlockedBy = Other ? Other->Train : nullptr;
-					State.BlockedReason = FString::Printf(TEXT("waits for %s after another train gave way at %s"), *TrainName(Other ? Other->Train.Get() : nullptr),
+					State.BlockedReason = FString::Printf(TEXT("waits for %s at %s, which another train would give way at"), *TrainName(Other ? Other->Train.Get() : nullptr),
 						*TrackName(PendingStep.Track));
 					break;
 				}
 			}
 			if (!bAllFree)
 			{
+				for (TPair<FATTrafficTrain*, FATTrafficTrain>& Pair : Before)
+				{
+					*Pair.Key = MoveTemp(Pair.Value);
+				}
 				Pending.Reset();
 				break;
 			}
+			for (const FPreemption& Preemption : Preemptions)
+			{
+				const FATTrafficTrain* Old = Before.Find(Preemption.Holder);
+				const int32 GivenUp = Old ? Old->Claims.Num() - Preemption.Holder->Claims.Num() : 0;
+				// A train listed for several tracks or switches is logged once, at the first.
+				if (GivenUp > 0)
+				{
+					UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s goes first over %s; %s gives up %d claims"), *TrainName(State.Train.Get()),
+						Preemption.Joint != INDEX_NONE ? TEXT("a switch") : *TrackName(Preemption.Track), *TrainName(Preemption.Holder->Train.Get()), GivenUp);
+					Before.Remove(Preemption.Holder);
+				}
+			}
+			Preemptions.Reset();
+			ClearDistance = 0.f;
 		}
 		for (const int32 PendingIndex : Pending)
 		{
@@ -829,7 +864,7 @@ bool AATTrafficSubsystem::CanPreempt(const FATTrafficTrain& Self, const TArray<F
 	return true;
 }
 
-void AATTrafficSubsystem::ApplyPreemptions(const FATTrafficTrain& Self, const TArray<FPreemption>& Preemptions)
+void AATTrafficSubsystem::ApplyPreemptions(const TArray<FPreemption>& Preemptions)
 {
 	for (const FPreemption& Preemption : Preemptions)
 	{
@@ -849,11 +884,8 @@ void AATTrafficSubsystem::ApplyPreemptions(const FATTrafficTrain& Self, const TA
 				Dropped.Add(Holder.Route[Index].Track);
 			}
 		}
-		const int32 Before = Holder.Claims.Num();
 		Holder.Claims.RemoveAll([&Dropped](const TWeakObjectPtr<AFGBuildableRailroadTrack>& Claim) { return Dropped.Contains(Claim.Get()); });
 		UpdateAuthority(Holder);
-		UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s goes first over %s; %s gives up %d claims"), *TrainName(Self.Train.Get()),
-			Preemption.Joint != INDEX_NONE ? TEXT("a switch") : *TrackName(Preemption.Track), *TrainName(Holder.Train.Get()), Before - Holder.Claims.Num());
 	}
 }
 
@@ -998,6 +1030,48 @@ bool AATTrafficSubsystem::IsClearingInTime(const FATTrafficTrain& Self, const FA
 	return ClearTime + FollowTimeMargin() < Arrival;
 }
 
+bool AATTrafficSubsystem::IsLeaderOf(const FATTrafficTrain& Self, const FATTrafficTrain& Other) const
+{
+	if (!Other.bManaged || Other.Route.Num() == 0 || Self.Route.Num() == 0)
+	{
+		return false;
+	}
+	const FATRouteStep& OtherStep = Other.Route[0];
+	for (int32 Index = 0; Index < Self.Route.Num(); ++Index)
+	{
+		if (Self.Route[Index].Track != OtherStep.Track)
+		{
+			continue;
+		}
+		if (Self.Route[Index].Exit != OtherStep.Exit)
+		{
+			return false;
+		}
+		// On the same track: the one nearer its end is ahead.
+		return Index > 0 || OtherStep.EndDistance - Other.FrontAhead < Self.Route[0].EndDistance - Self.FrontAhead;
+	}
+	// A train whose route runs over the track Self is on now comes up behind it.
+	const AFGBuildableRailroadTrack* SelfTrack = Self.Route[0].Track;
+	return !Other.Route.ContainsByPredicate([SelfTrack](const FATRouteStep& Step) { return Step.Track == SelfTrack; });
+}
+
+bool AATTrafficSubsystem::IsSameWayLeader(const FATTrafficTrain& Self, const FATTrafficTrain& Holder, int32 FromIndex) const
+{
+	if (!Holder.bManaged || Holder.Route.Num() == 0 || Holder.StoppedSeconds >= LeaderStopSeconds)
+	{
+		return false;
+	}
+	const FATRouteStep& HolderStep = Holder.Route[0];
+	for (int32 Index = FMath::Max(FromIndex, 0); Index < Self.Route.Num(); ++Index)
+	{
+		if (Self.Route[Index].Track == HolderStep.Track)
+		{
+			return Self.Route[Index].Exit == HolderStep.Exit;
+		}
+	}
+	return false;
+}
+
 void AATTrafficSubsystem::RevalidateFollowClaims(FATTrafficTrain& State)
 {
 	for (int32 Index = 0; Index < State.Route.Num(); ++Index)
@@ -1018,7 +1092,7 @@ void AATTrafficSubsystem::RevalidateFollowClaims(FATTrafficTrain& State)
 		for (const TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Pair : mTrains)
 		{
 			const FATTrafficTrain& Other = Pair.Value;
-			if (&Other == &State || Other.StoppedSeconds < LeaderStopSeconds)
+			if (&Other == &State || Other.StoppedSeconds < LeaderStopSeconds || !IsLeaderOf(State, Other))
 			{
 				continue;
 			}
@@ -1061,6 +1135,10 @@ void AATTrafficSubsystem::UpdateFollowLeaders(FATTrafficTrain& State) const
 	{
 		const FATTrafficTrain& Other = Pair.Value;
 		if (&Other == &State)
+		{
+			continue;
+		}
+		if (!IsLeaderOf(State, Other))
 		{
 			continue;
 		}
@@ -1121,12 +1199,27 @@ float AATTrafficSubsystem::GetFollowLimit(const AFGTrain* Train, const FATTraffi
 	for (const TWeakObjectPtr<AFGTrain>& LeaderTrain : State.FollowLeaders)
 	{
 		const FATTrafficTrain* Leader = mTrains.Find(LeaderTrain);
-		if (!Leader)
+		if (!Leader || Leader->Route.Num() == 0)
 		{
 			continue;
 		}
-		// The first track along this train's route the leader holds (or crosses); stop before it, allowing for the
-		// distance the leader itself needs to stop.
+		const float LeaderBrake = FMath::Square(Leader->Speed) / (2.f * GetPlanningDeceleration(*Leader));
+		// A leader ahead on this train's route: stop behind its tail, allowing for the distance the leader itself
+		// needs to stop.
+		const FATRouteStep& LeaderStep = Leader->Route[0];
+		const bool bOnRoute = State.Route.ContainsByPredicate([&LeaderStep](const FATRouteStep& Step)
+		{
+			return Step.Track == LeaderStep.Track && Step.Exit == LeaderStep.Exit;
+		});
+		const float LeaderTrackStart = bOnRoute ? GetDistanceToTrackStart(Train, State, LeaderStep.Track) : TrackNotOnPath;
+		if (LeaderTrackStart > TrackNotOnPath)
+		{
+			const float Tail = LeaderTrackStart + LeaderStep.Track->GetLength() - (LeaderStep.EndDistance - Leader->FrontAhead + Leader->Length);
+			const float LeaderLimit = FMath::Max(Tail, 0.f) + LeaderBrake;
+			Limit = Limit < 0.f ? LeaderLimit : FMath::Min(Limit, LeaderLimit);
+			continue;
+		}
+		// A leader merging in ahead: stop before the first track along this train's route it holds (or crosses).
 		for (const FATRouteStep& Step : State.Route)
 		{
 			bool bHeld = false;
@@ -1143,8 +1236,6 @@ float AATTrafficSubsystem::GetFollowLimit(const AFGTrain* Train, const FATTraffi
 			{
 				break;
 			}
-			// Already on that track behind the leader's tail: only the leader's own braking distance remains.
-			const float LeaderBrake = FMath::Square(Leader->Speed) / (2.f * GetPlanningDeceleration(*Leader));
 			const float LeaderLimit = FMath::Max(Start, 0.f) + LeaderBrake;
 			Limit = Limit < 0.f ? LeaderLimit : FMath::Min(Limit, LeaderLimit);
 			break;
@@ -1287,7 +1378,7 @@ float AATTrafficSubsystem::GetCongestionCost(const TMap<const AFGBuildableRailro
 void AATTrafficSubsystem::ConsiderReroute(FATTrafficTrain& State)
 {
 	AFGTrain* Train = State.Train.Get();
-	if (!Train || State.bAuthorityToGoal || State.Route.Num() < 3 || !Train->mAtcData.Path.IsValid())
+	if (!Train || State.bAuthorityToGoal || State.Route.Num() < 3 || !Train->mAtcData.Path.IsValid() || State.RerouteCooldown > 0.f)
 	{
 		return;
 	}
@@ -1347,6 +1438,7 @@ void AATTrafficSubsystem::ConsiderReroute(FATTrafficTrain& State)
 	const FRailroadPathSharedPtr Path = FATRouter::BuildPath(Connections, Train->mAtcData.Path->Station.Get());
 	const bool bApplied = FATRouter::ApplyPath(Train, Path, Goal);
 	++State.Reroutes;
+	State.RerouteCooldown = RerouteCooldownSeconds;
 	UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s rerouted after %s: cost %.0f -> %.0f m, length %.0f -> %.0f m, applied %s (%.2f ms)"),
 		*TrainName(Train), *TrackName(State.Route[Commit].Track), CurrentCost / 100.f, NewCost / 100.f, CurrentLength / 100.f,
 		FATRouter::GetRouteLength(Alternative) / 100.f, bApplied ? TEXT("yes") : TEXT("NO"), (FPlatformTime::Seconds() - Begin) * 1000.0);

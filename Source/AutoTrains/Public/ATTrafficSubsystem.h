@@ -51,6 +51,8 @@ struct FATTrafficTrain
 	// Seconds until this train's route is next checked for congestion, and how often it was rerouted.
 	float RerouteTimer = -1.f;
 	int32 Reroutes = 0;
+	// Seconds before this train may reroute again after a reroute.
+	float RerouteCooldown = 0.f;
 	// Last track the train may drive to the end of; null means no limit beyond its route.
 	TWeakObjectPtr<AFGBuildableRailroadTrack> AuthorityTrack;
 	bool bAuthorityToGoal = false;
@@ -138,7 +140,7 @@ private:
 	// Returns true if every preemption can be done safely with Self clearing the conflicts within ClearDistance;
 	// sets OutReason otherwise.
 	bool CanPreempt(const FATTrafficTrain& Self, const TArray<FPreemption>& Preemptions, float ClearDistance, FString& OutReason) const;
-	void ApplyPreemptions(const FATTrafficTrain& Self, const TArray<FPreemption>& Preemptions);
+	void ApplyPreemptions(const TArray<FPreemption>& Preemptions);
 
 	// Returns the route index at which Holder's claims meet the preempted item, or INDEX_NONE; for a switch it's the
 	// step whose exit is the switch.
@@ -152,6 +154,14 @@ private:
 	// away, could get there; Self may then count it as free and start moving early.
 	bool IsClearingInTime(const FATTrafficTrain& Self, const FATTrafficTrain& Holder, const AFGBuildableRailroadTrack* Track, int32 Joint,
 		float SelfDistance) const;
+
+	// Returns true if Other leads Self: it's ahead on Self's route going the same way, or it's crossing traffic that
+	// isn't coming up behind Self on its path. A train following Self is never its leader.
+	bool IsLeaderOf(const FATTrafficTrain& Self, const FATTrafficTrain& Other) const;
+
+	// Returns true if Holder runs ahead of Self the same way: the track Holder's master is on lies on Self's route at
+	// or after FromIndex, left through the same connection, and Holder hasn't stood still for long.
+	bool IsSameWayLeader(const FATTrafficTrain& Self, const FATTrafficTrain& Holder, int32 FromIndex) const;
 
 	// Drops Self's claims from the first one shared with a train that has stopped.
 	void RevalidateFollowClaims(FATTrafficTrain& State);

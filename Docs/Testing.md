@@ -1,4 +1,4 @@
-# Test build 0.5.4: traffic without signals
+# Test build 0.5.5: traffic without signals
 
 This build adds the first traffic control. With it on, every self-driving train ignores signals and claims the
 track ahead of it:
@@ -7,8 +7,8 @@ track ahead of it:
   merge is free only if no other train has a vehicle within 20 m of the switch point or holds track through it.
   Trains stop 25 m before a switch (10 m elsewhere), so a waiting train never fouls one.
 - A train always keeps the speed at which it can stop before the end of its claims, so it slows down and stops for
-  traffic ahead and speeds up as track frees. It plans with 60% of its rated braking until it has braked hard once,
-  then with 85% of what it actually managed. If it's ever over that curve it gets full brake, and at the last
+  traffic ahead and speeds up as track frees. It plans with 80% of its rated braking until it has braked hard once,
+  then with 95% of what it actually managed (60% and 85% when not aggressive). If it's ever over that curve it gets full brake, and at the last
   connection the game's own catch stops it dead at its stop point, whatever its speed.
 - A claim may only end where the whole train stands clear of crossings and switches that another train's route
   passes within 1.5 km (3 km when not aggressive), and where no other train needs to come the other way. So a
@@ -18,23 +18,26 @@ track ahead of it:
   moving at 5 m/s or more, isn't held up itself, and clears it before this train could get there at full
   acceleration, plus the safety margin setting (0 s by default). So a train follows another through a roundabout instead of waiting until it has left
   the whole path. A follower never takes track its leader still needs and hasn't claimed (`follows X, which still
-  needs`). While following, its speed is capped every tick so it can stop before the first track its leader
-  still holds plus the leader's own braking distance (moving block), so it slows with the leader instead of braking
-  hard. Shared claims are given back only once the leader has stood still for 2 s (`gives up ... has stopped`). A
+  needs`). While following, its speed is capped every tick so it can stop behind the leader's tail plus the
+  leader's own braking distance (moving block), so it slows with the leader instead of braking hard. For a leader
+  merging in ahead, it stops before the first track the leader holds instead. Only a train ahead going the same way
+  counts as a leader, never one coming up behind. With aggressive timing, a train may also follow a moving train
+  going the same way on its route without the timing check. Shared claims are given back only once the leader has stood still for 2 s (`gives up ... has stopped`). A
   train never both follows and goes first ahead of the same train.
 - Claims run unbroken from the train's position; a claim left past a gap (after a reroute or giving way) is dropped.
 - Claim order: the train that would get through the next track it needs soonest claims first; each second waited
   counts as half a second sooner (a full second when not aggressive), so no train waits forever.
 - Going first: a train may take a track or switch that another train has only claimed if it clears it before the other
   train could get there at full acceleration, plus the safety margin, and the other train can still stop short of it.
-  Every train with a claim there must be able to give way. The other train gives up its claims from there on.
-  The log says `goes first`.
+  Every train with a claim there must be able to give way, and everything else this train needs up to its next
+  stop must be free once they have. Only then do the other trains give up their claims from there on; the log says
+  `goes first`.
 - Deadlocks: if trains wait for each other in a circle for 20 s, the log says `DEADLOCK` with each train's reason.
 - Congestion rerouting (`/at reroute on|off`, on by default): every 5 s each moving train prices its route as track
   length plus congestion: +1.5 km for a track with a standing train, +400 m for a moving one, +300 m for track
   another train has claimed, +800 m for track another train will cross the other way, +50 m the same way. If a route
   from the end of its claims is at least 15% and 300 m cheaper, it switches to it, even when that route is longer.
-  The log says `rerouted` with the costs and lengths.
+  The log says `rerouted` with the costs and lengths. After a reroute a train waits 30 s before it reroutes again.
 
 Trains don't yet adjust their speed ahead of time to arrive just as track frees; they brake when they must. Player
 driven trains aren't controlled; the others treat them as obstacles.

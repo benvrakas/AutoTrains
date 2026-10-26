@@ -88,4 +88,14 @@ train, then a row per train every 0.2 s:
 - at test 3 waited ~7 s twice for trains crossing in front with full speed up to its stop point. A train blocked by
   a moving train that will clear (GetBlockerClearSeconds) now caps its speed at the one that reaches the braking
   point as the blocker clears: v = a (sqrt(T^2 + 2D/a) - T).
+- Full brakes "behind a leader" at 0 m with the path clear (Circuit Board Gather Train at 121 km/h): crossing
+  traffic counted as a leader whenever its route didn't run over the follower's track, so a train queued behind at
+  a crossing (Heavy Oil Residue, which had started because Circuit Board was clearing in time) became the leader of
+  the train it was waiting for, and the follow cap stopped Circuit Board on the crossing. The same made AI Limiter
+  RSC give up its claims and go first again four times a second. Now a train leads another only if it's ahead the
+  same way, or the other recorded following it when it claimed (`FollowedTrains`, dropped once nothing is shared);
+  two trains never follow each other; and a crossing leader caps the follower at the crossing, without adding the
+  leader's braking distance (that only applies to a leader moving on ahead the same way).
+- Brake samples up to 12.65 m/s2 against a rating of 2.6 (catches, contact with other trains): a sample now counts
+  for at most 1.25x the rating.
 

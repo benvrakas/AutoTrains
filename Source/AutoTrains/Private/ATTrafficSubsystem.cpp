@@ -38,6 +38,9 @@ namespace
 	float RatedBrakeShare() { return GAggressive ? 0.8f : 0.6f; }
 	// Braking is weaker at higher speed; a speed band above every measured one plans with this share of the weakest.
 	constexpr float UnmeasuredBandShare = 0.75f;
+	// A brake sample counts for at most this multiple of the consist's rating; stronger ones came from catches or
+	// contact with another train.
+	constexpr float MaxRatedBrakeMultiple = 1.25f;
 	// A train over its braking curve by more than this gets full brake. [cm/s]
 	constexpr float OverspeedTolerance = 100.f;
 	constexpr double ConflictRebuildSeconds = 30.0;
@@ -278,9 +281,10 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 		// standstill, and docking catches and crashes are far above 20 m/s^2.
 		if (State.bFullBrake && State.bWasFullBrake && State.LastSpeed > 500.f && State.Speed > 300.f && DeltaSeconds > 0.f)
 		{
-			const float Deceleration = (State.LastSpeed - State.Speed) / DeltaSeconds;
-			if (Deceleration > 50.f && Deceleration < 2000.f)
+			const float Raw = (State.LastSpeed - State.Speed) / DeltaSeconds;
+			if (Raw > 50.f && Raw < 2000.f)
 			{
+				const float Deceleration = FMath::Min(Raw, Train->mConsistData.MaxBrakeDeceleration * MaxRatedBrakeMultiple);
 				const int32 Band = GetBrakeBand((State.LastSpeed + State.Speed) * 0.5f);
 				const float Force = Deceleration * GetMass(Train);
 				float& Stored = State.BrakeForce[Band];
@@ -457,6 +461,7 @@ void AATTrafficSubsystem::ReadTrain(FATTrafficTrain& State, AFGTrain* Train) con
 		State.Claims.Reset();
 		State.ClaimedJoints.Reset();
 		State.FollowLeaders.Reset();
+		State.FollowedTrains.Reset();
 		State.AuthorityTrack = nullptr;
 		State.bAuthorityToGoal = false;
 		State.BlockedReason.Reset();
@@ -543,6 +548,11 @@ void AATTrafficSubsystem::ExtendClaims(FATTrafficTrain& State)
 	{
 		return Preemptions.ContainsByPredicate([Holder](const FPreemption& Preemption) { return Preemption.Holder == Holder; });
 	};
+	// Two trains never follow each other.
+	auto FollowsThis = [&State](const FATTrafficTrain* Holder)
+	{
+		return Holder->FollowedTrains.Contains(State.Train);
+	};
 	// Distance from the front at which this train has cleared everything it would take over. [cm]
 	float ClearDistance = 0.f;
 	FString StopReason;
@@ -564,7 +574,7 @@ void AATTrafficSubsystem::ExtendClaims(FATTrafficTrain& State)
 		while (Joint != INDEX_NONE && !IsJointFree(Joint, State, Holder, bStands, &Leaving))
 		{
 			What = FString::Printf(TEXT("the switch before %s"), *TrackName(Step.Track));
-			if (!IsPreempted(Holder) && ((GAggressive && IsSameWayLeader(State, *Holder, Index - 1))
+			if (!IsPreempted(Holder) && !FollowsThis(Holder) && ((GAggressive && IsSameWayLeader(State, *Holder, Index - 1))
 				|| IsClearingInTime(State, *Holder, nullptr, Joint, StepStart - JointFoulDistance)))
 			{
 				Leaving.Add(Holder);
@@ -594,7 +604,7 @@ void AATTrafficSubsystem::ExtendClaims(FATTrafficTrain& State)
 		while (!IsTrackFree(Step.Track, State, Holder, Conflict, bStands, &Leaving))
 		{
 			What = Conflict == Step.Track ? TrackName(Conflict) : FString::Printf(TEXT("%s (crossing %s on this train's route)"), *TrackName(Conflict), *TrackName(Step.Track));
-			if (!IsPreempted(Holder) && ((GAggressive && IsSameWayLeader(State, *Holder, Index))
+			if (!IsPreempted(Holder) && !FollowsThis(Holder) && ((GAggressive && IsSameWayLeader(State, *Holder, Index))
 				|| IsClearingInTime(State, *Holder, Conflict, INDEX_NONE, StepStart)))
 			{
 				Leaving.Add(Holder);
@@ -693,9 +703,11 @@ void AATTrafficSubsystem::ExtendClaims(FATTrafficTrain& State)
 				bool bFree = true;
 				while (PendingJoint != INDEX_NONE && !IsJointFree(PendingJoint, State, Other, bOtherStands, &PendingLeaving))
 				{
-					if ((GAggressive && IsSameWayLeader(State, *Other, PendingIndex - 1)) || IsClearingInTime(State, *Other, nullptr, PendingJoint, PendingStart - JointFoulDistance))
+					if (!FollowsThis(Other) && ((GAggressive && IsSameWayLeader(State, *Other, PendingIndex - 1))
+						|| IsClearingInTime(State, *Other, nullptr, PendingJoint, PendingStart - JointFoulDistance)))
 					{
 						PendingLeaving.Add(Other);
+						Followed.Add(Other);
 						continue;
 					}
 					bFree = false;
@@ -703,9 +715,11 @@ void AATTrafficSubsystem::ExtendClaims(FATTrafficTrain& State)
 				}
 				while (bFree && !IsTrackFree(PendingStep.Track, State, Other, OtherConflict, bOtherStands, &PendingLeaving))
 				{
-					if ((GAggressive && IsSameWayLeader(State, *Other, PendingIndex)) || IsClearingInTime(State, *Other, OtherConflict, INDEX_NONE, PendingStart))
+					if (!FollowsThis(Other) && ((GAggressive && IsSameWayLeader(State, *Other, PendingIndex))
+						|| IsClearingInTime(State, *Other, OtherConflict, INDEX_NONE, PendingStart)))
 					{
 						PendingLeaving.Add(Other);
+						Followed.Add(Other);
 						continue;
 					}
 					bFree = false;
@@ -746,6 +760,10 @@ void AATTrafficSubsystem::ExtendClaims(FATTrafficTrain& State)
 		for (const int32 PendingIndex : Pending)
 		{
 			State.Claims.Add(State.Route[PendingIndex].Track);
+		}
+		for (const FATTrafficTrain* Leader : Followed)
+		{
+			State.FollowedTrains.Add(Leader->Train);
 		}
 		Pending.Reset();
 		RefreshClaimedJoints(State);
@@ -1127,9 +1145,8 @@ bool AATTrafficSubsystem::IsLeaderOf(const FATTrafficTrain& Self, const FATTraff
 		// On the same track: the one nearer its end is ahead.
 		return Index > 0 || OtherStep.EndDistance - Other.FrontAhead < Self.Route[0].EndDistance - Self.FrontAhead;
 	}
-	// A train whose route runs over the track Self is on now comes up behind it.
-	const AFGBuildableRailroadTrack* SelfTrack = Self.Route[0].Track;
-	return !Other.Route.ContainsByPredicate([SelfTrack](const FATRouteStep& Step) { return Step.Track == SelfTrack; });
+	// Merging or crossing traffic leads only if Self chose to follow it.
+	return Self.FollowedTrains.Contains(Other.Train);
 }
 
 bool AATTrafficSubsystem::IsSameWayLeader(const FATTrafficTrain& Self, const FATTrafficTrain& Holder, int32 FromIndex) const
@@ -1240,6 +1257,13 @@ void AATTrafficSubsystem::UpdateFollowLeaders(FATTrafficTrain& State) const
 			State.FollowLeaders.Add(Other.Train);
 		}
 	}
+	for (auto It = State.FollowedTrains.CreateIterator(); It; ++It)
+	{
+		if (!State.FollowLeaders.Contains(*It))
+		{
+			It.RemoveCurrent();
+		}
+	}
 }
 
 float AATTrafficSubsystem::GetDistanceToTrackStart(const AFGTrain* Train, const FATTrafficTrain& State, const AFGBuildableRailroadTrack* Track) const
@@ -1313,7 +1337,12 @@ float AATTrafficSubsystem::GetFollowLimit(const AFGTrain* Train, const FATTraffi
 			{
 				break;
 			}
-			const float LeaderLimit = FMath::Max(Start, 0.f) + LeaderBrake;
+			// A leader merging the same way moves on ahead; one crossing leaves the conflict only once it has passed.
+			const bool bSameWay = Leader->Route.ContainsByPredicate([&Step](const FATRouteStep& LeaderStep)
+			{
+				return LeaderStep.Track == Step.Track && LeaderStep.Exit == Step.Exit;
+			});
+			const float LeaderLimit = FMath::Max(Start, 0.f) + (bSameWay ? LeaderBrake : 0.f);
 			Limit = Limit < 0.f ? LeaderLimit : FMath::Min(Limit, LeaderLimit);
 			break;
 		}

@@ -38,6 +38,9 @@ struct FATTrafficTrain
 	TSet<int32> ClaimedJoints;
 	// Trains holding track this train has claimed too: it follows them and keeps its distance from them.
 	TArray<TWeakObjectPtr<AFGTrain>> FollowLeaders;
+	// Trains this one counted as moving out of its way when it claimed track they hold. Apart from trains ahead of it
+	// the same way, only these lead it.
+	TSet<TWeakObjectPtr<AFGTrain>> FollowedTrains;
 	float Length = 0.f;
 	float Speed = 0.f;
 	// How far the train's front is ahead of its MU master, which the ATC distances are measured from. [cm]
@@ -171,8 +174,8 @@ private:
 	// claims that it holds, or -1 if it may stop before then.
 	float GetBlockerClearSeconds(const FATTrafficTrain& State) const;
 
-	// Returns true if Other leads Self: it's ahead on Self's route going the same way, or it's crossing traffic that
-	// isn't coming up behind Self on its path. A train following Self is never its leader.
+	// Returns true if Other leads Self: it's ahead on Self's route going the same way, or Self followed it when
+	// claiming. A train following Self is never its leader.
 	bool IsLeaderOf(const FATTrafficTrain& Self, const FATTrafficTrain& Other) const;
 
 	// Returns true if Holder runs ahead of Self the same way: the track Holder's master is on lies on Self's route at

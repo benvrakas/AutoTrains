@@ -476,7 +476,7 @@ FString AATControlSubsystem::SetLogging(bool bLog)
 			Consist.MaxTractiveEffort / 100000.f, Consist.MaxAirBrakingEffort / 100000.f, Consist.MaxDynamicBrakingEffort / 100000.f,
 			Consist.MaxBrakeDeceleration / 100.f, Consist.MaxBrakeDistance / 100.f));
 	}
-	mPendingRows.Add(TEXT("time_s,train,self_driving,status,command,ignore_signals,speed_kmh,game_target_kmh,final_target_kmh,accel_ms2,odometer_m,stop_remaining_m,goal_distance_m,restrictive_aspect,restrictive_distance_m,next_signal_aspect,next_signal_distance_m,front_track,front_offset_m,rear_track,rear_offset_m,docking,error,traffic_managed,authority_m,claims,waiting_s,blocked_by"));
+	mPendingRows.Add(TEXT("time_s,train,self_driving,status,command,ignore_signals,speed_kmh,game_target_kmh,final_target_kmh,accel_ms2,odometer_m,stop_remaining_m,goal_distance_m,restrictive_aspect,restrictive_distance_m,next_signal_aspect,next_signal_distance_m,front_track,front_offset_m,rear_track,rear_offset_m,docking,error,traffic_managed,authority_m,claims,waiting_s,blocked_by,full_brake,catch_armed,plan_brake_ms2"));
 	FlushTelemetry();
 	UE_LOG(LogAutoTrains, Log, TEXT("Telemetry started: %s"), *mTelemetryPath);
 	return FString::Printf(TEXT("Logging telemetry to %s"), *mTelemetryPath);
@@ -603,7 +603,7 @@ void AATControlSubsystem::SampleTelemetry(float SampleSeconds)
 			*EnumName(Atc.NextSignalAspect), Atc.NextSignalDistance / 100.f,
 			*DescribePosition(Train->GetFirstVehicle()), *DescribePosition(Train->GetLastVehicle()),
 			*EnumName(Train->GetDockingState()), *EnumName(Train->GetSelfDrivingError()),
-			Traffic ? *Traffic->DescribeForTelemetry(Train) : TEXT("0,-1,0,0,")));
+			Traffic ? *Traffic->DescribeForTelemetry(Train) : TEXT("0,-1,0,0,,0,0,0")));
 	}
 }
 

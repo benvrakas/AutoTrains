@@ -1,12 +1,14 @@
-# Test build 0.3.1: traffic without signals
+# Test build 0.3.2: traffic without signals
 
 This build adds the first traffic control. With it on, every self-driving train ignores signals and claims the
 track ahead of it:
 
-- A track is free only if no other train stands on it or has claimed it, or a track overlapping it (switch branches,
-  crossings).
+- A track is free only if no other train stands on it or has claimed it, or a conflicting track: one overlapping it
+  (crossings), or one meeting it at a switch or merge.
 - A train always keeps the speed at which it can stop before the end of its claims, so it slows down and stops for
-  traffic ahead and speeds up as track frees.
+  traffic ahead and speeds up as track frees. It plans with 60% of its rated braking until it has braked hard once,
+  then with 85% of what it actually managed. If it's ever over that curve it gets full brake, and at the last
+  connection the game's own catch stops it dead at its stop point, whatever its speed.
 - A claim may only end where the whole train stands off junctions and where no other train needs to come the other
   way. So a train never stops inside a junction or halfway along single track that another train needs. It waits
   before the junction, or goes on until it's clear of it.

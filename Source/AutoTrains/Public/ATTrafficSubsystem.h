@@ -33,6 +33,13 @@ struct FATTrafficTrain
 	// How far the train's front is ahead of its MU master, which the ATC distances are measured from. [cm]
 	float FrontAhead = 0.f;
 	float WaitingSeconds = 0.f;
+	// Full-brake deceleration measured on this train, 0 until measured. [cm/s^2]
+	float MeasuredBrake = 0.f;
+	// Speed at the previous update, and whether the train was on full brake since. [cm/s]
+	float LastSpeed = 0.f;
+	bool bFullBrake = false;
+	// Whether the game's catch is set to hold the train at its stop point.
+	bool bCatchArmed = false;
 	// Last track the train may drive to the end of; null means no limit beyond its route.
 	TWeakObjectPtr<AFGBuildableRailroadTrack> AuthorityTrack;
 	bool bAuthorityToGoal = false;
@@ -42,9 +49,10 @@ struct FATTrafficTrain
 };
 
 // Server only. Train traffic without signals: every self-driving train claims the track ahead of it, a track is
-// free only if no other train occupies or claims it or a track overlapping it, and a claim may only end where the
-// whole train stands off junctions and out of the way of trains coming the other way or across. Each train's
-// speed is limited so it can always stop before the end of its claims.
+// free only if no other train occupies or claims it or a conflicting track (overlapping it, or meeting it at a
+// switch), and a claim may only end where the whole train stands off junctions and out of the way of trains coming
+// the other way. Each train's speed is limited so it can always stop before the end of its claims, with the game's
+// catch as the backstop at the last connection.
 UCLASS()
 class AUTOTRAINS_API AATTrafficSubsystem : public AModSubsystem
 {
@@ -82,8 +90,10 @@ private:
 	void ExtendClaims(FATTrafficTrain& State);
 	void UpdateAuthority(FATTrafficTrain& State) const;
 
-	// Returns false and sets OutBlocker if another train occupies or claims Track or a track overlapping it.
-	bool IsTrackFree(const AFGBuildableRailroadTrack* Track, const FATTrafficTrain& Self, const FATTrafficTrain*& OutBlocker) const;
+	// Returns false if another train occupies or claims Track or a track conflicting with it; sets OutBlocker, the
+	// conflicting track it holds, and whether it stands on it.
+	bool IsTrackFree(const AFGBuildableRailroadTrack* Track, const FATTrafficTrain& Self, const FATTrafficTrain*& OutBlocker,
+		AFGBuildableRailroadTrack*& OutConflict, bool& bOutStandsOnIt) const;
 
 	// Returns true if Self may stop with its front at the end of route step EndIndex.
 	bool IsValidStop(const FATTrafficTrain& Self, int32 EndIndex, FString& OutReason) const;
@@ -92,23 +102,26 @@ private:
 	// moves on; trains behind Self going the same way only queue.
 	bool IsOutOfOthersWay(const FATTrafficTrain& Self, const FATRouteStep& Step, FString& OutReason) const;
 
-	// Returns Track and the tracks overlapping it (switch branches, crossings).
-	const TArray<AFGBuildableRailroadTrack*>& GetConflicts(AFGBuildableRailroadTrack* Track);
-	bool IsJunction(AFGBuildableRailroadTrack* Track);
+	// Returns Track first, then every track conflicting with it.
+	const TArray<AFGBuildableRailroadTrack*>& GetConflicts(const AFGBuildableRailroadTrack* Track) const;
+	bool IsJunction(const AFGBuildableRailroadTrack* Track) const;
+
+	// Rebuilds the conflict graph for every track in the world: the game's overlapping tracks, made symmetric, and
+	// all tracks that meet at a joint of three or more tracks (switches and merges).
+	void RebuildConflicts();
 
 	bool HoldsTrack(const FATTrafficTrain& State, const AFGBuildableRailroadTrack* Track) const;
 
-	// Planning deceleration for Train. [cm/s^2]
-	static float GetPlanningDeceleration(const AFGTrain* Train);
+	// Deceleration to plan stops with: 85% of the measured full-brake deceleration, or 60% of the consist's rating
+	// until measured. [cm/s^2]
+	static float GetPlanningDeceleration(const FATTrafficTrain& State);
 
 	bool mEnabled = false;
 	float mUpdateTimer = 0.f;
 	TMap<TWeakObjectPtr<AFGTrain>, FATTrafficTrain> mTrains;
 
-	struct FTrackConflicts
-	{
-		TArray<AFGBuildableRailroadTrack*> Conflicts;
-		double ReadTime = 0.0;
-	};
-	TMap<TWeakObjectPtr<AFGBuildableRailroadTrack>, FTrackConflicts> mConflictCache;
+	TMap<const AFGBuildableRailroadTrack*, TArray<AFGBuildableRailroadTrack*>> mConflicts;
+	double mConflictsBuiltAt = -1e9;
+	// Set when a track missing from the conflict graph was looked up.
+	mutable bool mConflictsStale = false;
 };

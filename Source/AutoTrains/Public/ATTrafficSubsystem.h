@@ -149,7 +149,8 @@ private:
 	bool IsClearingInTime(const FATTrafficTrain& Self, const FATTrafficTrain& Holder, const AFGBuildableRailroadTrack* Track, int32 Joint,
 		float SelfDistance) const;
 
-	// Drops Self's claims from the first one another train still stands on and no longer clears in time.
+	// Drops Self's claims from the first one another train still holds (stands on or claimed) and no longer clears in
+	// time.
 	void RevalidateFollowClaims(FATTrafficTrain& State);
 
 	// Returns true if Self may stop with its front StopMargin before the end of route step EndIndex.
@@ -196,6 +197,10 @@ private:
 	// Deceleration to plan stops with: 85% of the measured full-brake deceleration, or 60% of the consist's rating
 	// until measured. [cm/s^2]
 	static float GetPlanningDeceleration(const FATTrafficTrain& State);
+
+	// Claim order score, lower first: seconds until the train's tail has passed the first track it still needs, minus
+	// a share of the time it has waited.
+	float GetClaimPriority(const FATTrafficTrain& State) const;
 
 	// Acceleration estimate from the consist's tractive effort and mass, times Share. [cm/s^2]
 	static float GetAcceleration(const FATTrafficTrain& State, float Share);

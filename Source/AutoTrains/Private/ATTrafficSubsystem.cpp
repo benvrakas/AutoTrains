@@ -43,8 +43,11 @@ namespace
 	// the taker must clear it this long before the holder could arrive. Taker time assumes half its acceleration,
 	// holder time its full acceleration. [cm] [s]
 	float PreemptStopBuffer() { return GAggressive ? 1000.f : 3000.f; }
-	float PreemptTimeMargin() { return GAggressive ? 4.f : 8.f; }
-	float PreemptTakerAccelerationShare() { return GAggressive ? 0.75f : 0.5f; }
+	float PreemptTimeMargin() { return GAggressive ? 2.f : 8.f; }
+	float PreemptTakerAccelerationShare() { return GAggressive ? 0.9f : 0.5f; }
+
+	// Claim order: each second waited counts as this many seconds sooner through. [s/s]
+	float WaitingWeight() { return GAggressive ? 0.5f : 1.f; }
 
 	// Following: a train may count track another train stands on as free if that train is moving away at least
 	// FollowMinSpeed and clears it this long before the follower could get there. [s] [cm/s]
@@ -283,12 +286,20 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 		}
 	}
 
-	// The train that has waited longest claims first; ties go by name so the order is stable.
-	Managed.Sort([](const FATTrafficTrain& A, const FATTrafficTrain& B)
+	// The train that would get through its next track soonest claims first, so a quick train isn't held for a slow
+	// one; time already waited counts in a train's favour so none waits forever. Ties go by name.
+	TMap<const FATTrafficTrain*, float> Priority;
+	for (const FATTrafficTrain* State : Managed)
 	{
-		if (A.WaitingSeconds != B.WaitingSeconds)
+		Priority.Add(State, GetClaimPriority(*State));
+	}
+	Managed.Sort([&Priority](const FATTrafficTrain& A, const FATTrafficTrain& B)
+	{
+		const float PriorityA = Priority.FindRef(&A);
+		const float PriorityB = Priority.FindRef(&B);
+		if (PriorityA != PriorityB)
 		{
-			return A.WaitingSeconds > B.WaitingSeconds;
+			return PriorityA < PriorityB;
 		}
 		return TrainName(A.Train.Get()) < TrainName(B.Train.Get());
 	});
@@ -478,6 +489,8 @@ void AATTrafficSubsystem::ExtendClaims(FATTrafficTrain& State)
 	State.BlockedBy = nullptr;
 	TArray<int32> Pending;
 	TArray<FPreemption> Preemptions;
+	// Trains this chunk follows through; it mustn't take track they still need and haven't claimed.
+	TSet<const FATTrafficTrain*> Followed;
 	// Distance from the front at which this train has cleared everything it would take over. [cm]
 	float ClearDistance = 0.f;
 	FString StopReason;
@@ -489,7 +502,8 @@ void AATTrafficSubsystem::ExtendClaims(FATTrafficTrain& State)
 		bool bStands = false;
 		FString What;
 
-		// Trains standing in the way that move off and clear it before this train could get there don't block.
+		// Trains in the way, standing or with a claim, that move on and clear it before this train could get there
+		// don't block.
 		TSet<const FATTrafficTrain*> Leaving;
 		bool bBlocked = false;
 
@@ -498,9 +512,10 @@ void AATTrafficSubsystem::ExtendClaims(FATTrafficTrain& State)
 		while (Joint != INDEX_NONE && !IsJointFree(Joint, State, Holder, bStands, &Leaving))
 		{
 			What = FString::Printf(TEXT("the switch before %s"), *TrackName(Step.Track));
-			if (bStands && IsClearingInTime(State, *Holder, nullptr, Joint, StepStart - JointFoulDistance))
+			if (IsClearingInTime(State, *Holder, nullptr, Joint, StepStart - JointFoulDistance))
 			{
 				Leaving.Add(Holder);
+				Followed.Add(Holder);
 				continue;
 			}
 			if (bStands || !Holder->bManaged)
@@ -524,9 +539,10 @@ void AATTrafficSubsystem::ExtendClaims(FATTrafficTrain& State)
 		while (!IsTrackFree(Step.Track, State, Holder, Conflict, bStands, &Leaving))
 		{
 			What = Conflict == Step.Track ? TrackName(Conflict) : FString::Printf(TEXT("%s (crossing %s on this train's route)"), *TrackName(Conflict), *TrackName(Step.Track));
-			if (bStands && IsClearingInTime(State, *Holder, Conflict, INDEX_NONE, StepStart))
+			if (IsClearingInTime(State, *Holder, Conflict, INDEX_NONE, StepStart))
 			{
 				Leaving.Add(Holder);
+				Followed.Add(Holder);
 				continue;
 			}
 			if (bStands || !Holder->bManaged)
@@ -551,6 +567,41 @@ void AATTrafficSubsystem::ExtendClaims(FATTrafficTrain& State)
 		{
 			continue;
 		}
+		// Following a train through stays behind it: no taking track or a switch on its route it hasn't claimed yet.
+		const FATTrafficTrain* Overtaken = nullptr;
+		const AFGBuildableRailroadTrack* OvertakenAt = nullptr;
+		for (const FATTrafficTrain* Leader : Followed)
+		{
+			for (const int32 PendingIndex : Pending)
+			{
+				const AFGBuildableRailroadTrack* Track = State.Route[PendingIndex].Track;
+				const int32 PendingJoint = PendingIndex > 0 ? GetJoint(State.Route[PendingIndex - 1].Exit) : INDEX_NONE;
+				for (int32 LeaderIndex = 0; LeaderIndex < Leader->Route.Num() && !Overtaken; ++LeaderIndex)
+				{
+					const FATRouteStep& LeaderStep = Leader->Route[LeaderIndex];
+					const bool bNeedsTrack = LeaderStep.Track == Track && !HoldsTrack(*Leader, Track);
+					const bool bNeedsJoint = PendingJoint != INDEX_NONE && LeaderIndex + 1 < Leader->Route.Num() && GetJoint(LeaderStep.Exit) == PendingJoint
+						&& !HoldsJoint(*Leader, PendingJoint);
+					if (bNeedsTrack || bNeedsJoint)
+					{
+						Overtaken = Leader;
+						OvertakenAt = Track;
+					}
+				}
+			}
+			if (Overtaken)
+			{
+				break;
+			}
+		}
+		if (Overtaken)
+		{
+			State.BlockedBy = Overtaken->Train;
+			State.BlockedReason = FString::Printf(TEXT("follows %s, which still needs %s"), *TrainName(Overtaken->Train.Get()), *TrackName(OvertakenAt));
+			Pending.Reset();
+			break;
+		}
+
 		if (Preemptions.Num() > 0)
 		{
 			FString PreemptReason;
@@ -578,7 +629,7 @@ void AATTrafficSubsystem::ExtendClaims(FATTrafficTrain& State)
 				bool bFree = true;
 				while (PendingJoint != INDEX_NONE && !IsJointFree(PendingJoint, State, Other, bOtherStands, &PendingLeaving))
 				{
-					if (bOtherStands && IsClearingInTime(State, *Other, nullptr, PendingJoint, PendingStart - JointFoulDistance))
+					if (IsClearingInTime(State, *Other, nullptr, PendingJoint, PendingStart - JointFoulDistance))
 					{
 						PendingLeaving.Add(Other);
 						continue;
@@ -588,7 +639,7 @@ void AATTrafficSubsystem::ExtendClaims(FATTrafficTrain& State)
 				}
 				while (bFree && !IsTrackFree(PendingStep.Track, State, Other, OtherConflict, bOtherStands, &PendingLeaving))
 				{
-					if (bOtherStands && IsClearingInTime(State, *Other, OtherConflict, INDEX_NONE, PendingStart))
+					if (IsClearingInTime(State, *Other, OtherConflict, INDEX_NONE, PendingStart))
 					{
 						PendingLeaving.Add(Other);
 						continue;
@@ -948,7 +999,7 @@ void AATTrafficSubsystem::RevalidateFollowClaims(FATTrafficTrain& State)
 			{
 				continue;
 			}
-			if (Joint != INDEX_NONE && Other.OccupiedJoints.Contains(Joint) && !IsClearingInTime(State, Other, nullptr, Joint, StepStart - JointFoulDistance))
+			if (Joint != INDEX_NONE && HoldsJoint(Other, Joint) && !IsClearingInTime(State, Other, nullptr, Joint, StepStart - JointFoulDistance))
 			{
 				bStillClearing = false;
 				Late = &Other;
@@ -956,7 +1007,7 @@ void AATTrafficSubsystem::RevalidateFollowClaims(FATTrafficTrain& State)
 			}
 			for (const AFGBuildableRailroadTrack* Conflict : GetConflicts(Step.Track))
 			{
-				if (Other.Occupied.Contains(const_cast<AFGBuildableRailroadTrack*>(Conflict)) && !IsClearingInTime(State, Other, Conflict, INDEX_NONE, StepStart))
+				if (HoldsTrack(Other, Conflict) && !IsClearingInTime(State, Other, Conflict, INDEX_NONE, StepStart))
 				{
 					bStillClearing = false;
 					Late = &Other;
@@ -1360,6 +1411,24 @@ float AATTrafficSubsystem::GetPlanningDeceleration(const FATTrafficTrain& State)
 	const float Rated = Train ? Train->mConsistData.MaxBrakeDeceleration : 100.f;
 	const float Planning = State.MeasuredBrake > 0.f ? State.MeasuredBrake * MeasuredBrakeShare() : Rated * RatedBrakeShare();
 	return FMath::Clamp(Planning, 50.f, 800.f);
+}
+
+float AATTrafficSubsystem::GetClaimPriority(const FATTrafficTrain& State) const
+{
+	const AFGTrain* Train = State.Train.Get();
+	int32 Index = 0;
+	while (Index < State.Route.Num() && HoldsTrack(State, State.Route[Index].Track))
+	{
+		++Index;
+	}
+	if (!Train || Index >= State.Route.Num())
+	{
+		return -1e6f;
+	}
+	// Time until the train's tail has passed the first track it still needs.
+	const float Distance = State.Route[Index].EndDistance - State.FrontAhead + State.Length;
+	const float ClearTime = TimeToCover(Distance, State.Speed, GetAcceleration(State, 1.f), Train->mConsistData.MaxSpeed);
+	return ClearTime - State.WaitingSeconds * WaitingWeight();
 }
 
 float AATTrafficSubsystem::GetAcceleration(const FATTrafficTrain& State, float Share)

@@ -1,4 +1,4 @@
-# Test build 0.5.1: traffic without signals
+# Test build 0.5.2: traffic without signals
 
 This build adds the first traffic control. With it on, every self-driving train ignores signals and claims the
 track ahead of it:
@@ -14,15 +14,18 @@ track ahead of it:
   passes within 1.5 km (3 km when not aggressive), and where no other train needs to come the other way. So a
   train never stops inside a junction someone needs, or halfway along single track that another train needs, but
   it may wait on a crossing or switch nobody is heading for.
-- Following: a train may count track or a switch another train stands on as free if that train is moving away at
-  5 m/s or more, isn't held up itself, and clears it at least 1.5 s (4 s) before this train could get there at full
-  acceleration. So a train waiting at a junction starts moving as the one in front pulls away. It's rechecked every
-  update; if the train in front slows, the follower gives the claim back and brakes (`gives up ... claims`).
+- Following: a train may count track or a switch another train stands on or has claimed as free if that train is
+  moving at 5 m/s or more, isn't held up itself, and clears it at least 1.5 s (4 s) before this train could get
+  there at full acceleration. So a train follows another through a roundabout instead of waiting until it has left
+  the whole path. A follower never takes track its leader still needs and hasn't claimed (`follows X, which still
+  needs`). It's rechecked every update; if the leader slows, the follower gives the claims back and brakes
+  (`gives up ... claims`).
 - Claims run unbroken from the train's position; a claim left past a gap (after a reroute or giving way) is dropped.
-- The train that has waited longest gets to claim first.
-- Going first: a train may take a track or switch that another train has only claimed (not one it stands on) if it
-  clears it at least 8 s before the other train could get there at full acceleration, and the other train can
-  still stop comfortably short of it. The other train gives up its claims from there on. The log says `goes first`.
+- Claim order: the train that would get through the next track it needs soonest claims first; each second waited
+  counts as half a second sooner (a full second when not aggressive), so no train waits forever.
+- Going first: a train may take a track or switch that another train has only claimed if it clears it at least 2 s
+  (8 s) before the other train could get there at full acceleration, and the other train can still stop short of it.
+  The other train gives up its claims from there on. The log says `goes first`.
 - Deadlocks: if trains wait for each other in a circle for 20 s, the log says `DEADLOCK` with each train's reason.
 - Congestion rerouting (`/at reroute on|off`, on by default): every 5 s each moving train prices its route as track
   length plus congestion: +1.5 km for a track with a standing train, +400 m for a moving one, +300 m for track
@@ -39,7 +42,7 @@ driven trains aren't controlled; the others treat them as obstacles.
 - **Congestion rerouting**
 - **Trains pass through each other**: while traffic control is on, trains that touch don't crash or derail; the
   log counts how often it happened (`passed through each other N times`).
-- **Aggressive timing**: plans braking with 95% of measured (80% of rated until measured), goes first with 4 s to
+- **Aggressive timing**: plans braking with 95% of measured (80% of rated until measured), goes first with 2 s to
   spare instead of 8, a 10 m buffer for the train giving way and claims 100 m past the braking distance instead
   of 200 m. Off is the cautious values.
 

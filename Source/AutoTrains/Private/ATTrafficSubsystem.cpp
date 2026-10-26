@@ -1,5 +1,6 @@
 #include "ATTrafficSubsystem.h"
 #include "ATControlSubsystem.h"
+#include "ATRouter.h"
 #include "AutoTrains.h"
 #include "Buildables/FGBuildableRailroadTrack.h"
 #include "EngineUtils.h"
@@ -27,6 +28,18 @@ namespace
 	constexpr float OverspeedTolerance = 100.f;
 	constexpr double ConflictRebuildSeconds = 30.0;
 	constexpr double ConflictRebuildMinSeconds = 2.0;
+
+	// How often each train's route is checked for congestion. [s]
+	constexpr float RerouteInterval = 5.f;
+	// Congestion costs, as extra track length. [cm]
+	constexpr float StandingTrainPenalty = 150000.f;
+	constexpr float MovingTrainPenalty = 40000.f;
+	constexpr float ClaimPenalty = 30000.f;
+	constexpr float UpcomingSameWayPenalty = 5000.f;
+	constexpr float UpcomingOtherWayPenalty = 80000.f;
+	// A new route must be cheaper than the current one by this much and this share to be taken.
+	constexpr float RerouteMinGain = 30000.f;
+	constexpr float RerouteMinGainShare = 0.15f;
 
 	FString TrackName(const AFGBuildableRailroadTrack* Track)
 	{
@@ -94,6 +107,14 @@ FString AATTrafficSubsystem::SetEnabled(bool bEnabled)
 		RebuildConflicts();
 	}
 	const FString Message = bEnabled ? TEXT("Traffic control on: self-driving trains ignore signals and claim track ahead.") : TEXT("Traffic control off.");
+	UE_LOG(LogAutoTrains, Log, TEXT("%s"), *Message);
+	return Message;
+}
+
+FString AATTrafficSubsystem::SetRerouteEnabled(bool bEnabled)
+{
+	mRerouteEnabled = bEnabled;
+	const FString Message = bEnabled ? TEXT("Congestion rerouting on.") : TEXT("Congestion rerouting off.");
 	UE_LOG(LogAutoTrains, Log, TEXT("%s"), *Message);
 	return Message;
 }
@@ -181,6 +202,21 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 		if (State->BlockedReason != PreviousReason && !State->BlockedReason.IsEmpty())
 		{
 			UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s: %s"), *TrainName(State->Train.Get()), *State->BlockedReason);
+		}
+
+		if (mRerouteEnabled)
+		{
+			if (State->RerouteTimer < 0.f)
+			{
+				// Spread the checks out over the interval.
+				State->RerouteTimer = FMath::FRandRange(0.f, RerouteInterval);
+			}
+			State->RerouteTimer -= DeltaSeconds;
+			if (State->RerouteTimer <= 0.f)
+			{
+				State->RerouteTimer = RerouteInterval;
+				ConsiderReroute(*State);
+			}
 		}
 
 		const float Distance = GetAuthorityDistance(State->Train.Get());
@@ -458,6 +494,132 @@ bool AATTrafficSubsystem::IsOutOfOthersWay(const FATTrafficTrain& Self, const FA
 	return true;
 }
 
+void AATTrafficSubsystem::BuildCongestion(const FATTrafficTrain& Self, TMap<const AFGBuildableRailroadTrack*, FCongestion>& Out) const
+{
+	for (const TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Pair : mTrains)
+	{
+		const FATTrafficTrain& Other = Pair.Value;
+		if (&Other == &Self)
+		{
+			continue;
+		}
+		const float StandPenalty = Other.Speed < 100.f ? StandingTrainPenalty : MovingTrainPenalty;
+		for (const AFGBuildableRailroadTrack* Track : Other.Occupied)
+		{
+			for (const AFGBuildableRailroadTrack* Conflict : GetConflicts(Track))
+			{
+				Out.FindOrAdd(Conflict).Penalty += StandPenalty;
+			}
+		}
+		for (const TWeakObjectPtr<AFGBuildableRailroadTrack>& Claim : Other.Claims)
+		{
+			const AFGBuildableRailroadTrack* Track = Claim.Get();
+			if (Track && !Other.Occupied.Contains(const_cast<AFGBuildableRailroadTrack*>(Track)))
+			{
+				for (const AFGBuildableRailroadTrack* Conflict : GetConflicts(Track))
+				{
+					Out.FindOrAdd(Conflict).Penalty += ClaimPenalty;
+				}
+			}
+		}
+		if (Other.bManaged)
+		{
+			for (const FATRouteStep& Step : Other.Route)
+			{
+				if (Step.EndDistance - Other.FrontAhead > OthersRouteHorizon)
+				{
+					break;
+				}
+				Out.FindOrAdd(Step.Track).UpcomingExits.Add(Step.Exit);
+			}
+		}
+	}
+}
+
+float AATTrafficSubsystem::GetCongestionCost(const TMap<const AFGBuildableRailroadTrack*, FCongestion>& Congestion, const AFGBuildableRailroadTrack* Track,
+	const UFGRailroadTrackConnectionComponent* Exit)
+{
+	const FCongestion* Entry = Congestion.Find(Track);
+	if (!Entry)
+	{
+		return 0.f;
+	}
+	float Cost = Entry->Penalty;
+	for (const UFGRailroadTrackConnectionComponent* UpcomingExit : Entry->UpcomingExits)
+	{
+		Cost += UpcomingExit == Exit ? UpcomingSameWayPenalty : UpcomingOtherWayPenalty;
+	}
+	return Cost;
+}
+
+void AATTrafficSubsystem::ConsiderReroute(FATTrafficTrain& State)
+{
+	AFGTrain* Train = State.Train.Get();
+	if (!Train || State.bAuthorityToGoal || State.Route.Num() < 3 || !Train->mAtcData.Path.IsValid())
+	{
+		return;
+	}
+	// The route can only change beyond the claims: the train may already be committed to those tracks and switches.
+	int32 Commit = 0;
+	for (int32 Index = 0; Index < State.Route.Num(); ++Index)
+	{
+		if (State.Route[Index].Track == State.AuthorityTrack.Get())
+		{
+			Commit = Index;
+			break;
+		}
+	}
+	if (Commit >= State.Route.Num() - 2)
+	{
+		return;
+	}
+	UFGRailroadTrackConnectionComponent* Start = State.Route[Commit].Exit;
+	UFGRailroadTrackConnectionComponent* Goal = State.Route.Last().Exit;
+
+	const double Begin = FPlatformTime::Seconds();
+	TMap<const AFGBuildableRailroadTrack*, FCongestion> Congestion;
+	BuildCongestion(State, Congestion);
+	float CurrentCost = 0.f;
+	float CurrentLength = 0.f;
+	for (int32 Index = Commit + 1; Index < State.Route.Num(); ++Index)
+	{
+		CurrentLength += State.Route[Index].Track->GetLength();
+		CurrentCost += State.Route[Index].Track->GetLength() + GetCongestionCost(Congestion, State.Route[Index].Track, State.Route[Index].Exit);
+	}
+
+	const TArray<UFGRailroadTrackConnectionComponent*> Alternative = FATRouter::FindRoute(Start, Goal, false,
+		[&Congestion](const AFGBuildableRailroadTrack* Track, const UFGRailroadTrackConnectionComponent* Exit) { return GetCongestionCost(Congestion, Track, Exit); });
+	if (Alternative.Num() < 2)
+	{
+		return;
+	}
+	bool bSame = Alternative.Num() == State.Route.Num() - Commit;
+	float NewCost = 0.f;
+	for (int32 Index = 1; Index < Alternative.Num(); ++Index)
+	{
+		const AFGBuildableRailroadTrack* Track = Alternative[Index]->GetTrack();
+		NewCost += (Track ? Track->GetLength() : 0.f) + GetCongestionCost(Congestion, Track, Alternative[Index]);
+		bSame = bSame && Alternative[Index] == State.Route[Commit + Index].Exit;
+	}
+	if (bSame || NewCost > CurrentCost - FMath::Max(RerouteMinGain, CurrentCost * RerouteMinGainShare))
+	{
+		return;
+	}
+
+	TArray<UFGRailroadTrackConnectionComponent*> Connections;
+	for (int32 Index = 0; Index <= Commit; ++Index)
+	{
+		Connections.Add(State.Route[Index].Exit);
+	}
+	Connections.Append(&Alternative[1], Alternative.Num() - 1);
+	const FRailroadPathSharedPtr Path = FATRouter::BuildPath(Connections, Train->mAtcData.Path->Station.Get());
+	const bool bApplied = FATRouter::ApplyPath(Train, Path, Goal);
+	++State.Reroutes;
+	UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s rerouted after %s: cost %.0f -> %.0f m, length %.0f -> %.0f m, applied %s (%.2f ms)"),
+		*TrainName(Train), *TrackName(State.Route[Commit].Track), CurrentCost / 100.f, NewCost / 100.f, CurrentLength / 100.f,
+		FATRouter::GetRouteLength(Alternative) / 100.f, bApplied ? TEXT("yes") : TEXT("NO"), (FPlatformTime::Seconds() - Begin) * 1000.0);
+}
+
 void AATTrafficSubsystem::RebuildConflicts()
 {
 	const double Begin = FPlatformTime::Seconds();
@@ -695,9 +857,9 @@ TArray<FString> AATTrafficSubsystem::DescribeAll() const
 			continue;
 		}
 		const float Distance = GetAuthorityDistance(State.Train.Get());
-		Lines.Add(FString::Printf(TEXT("%s: %.0f km/h, %d claims, may drive %s, brakes at %.1f m/s2, waited %.0f s%s%s"), *TrainName(State.Train.Get()),
+		Lines.Add(FString::Printf(TEXT("%s: %.0f km/h, %d claims, may drive %s, brakes at %.1f m/s2, waited %.0f s, rerouted %d times%s%s"), *TrainName(State.Train.Get()),
 			State.Speed * 0.036f, State.Claims.Num(), Distance < 0.f ? TEXT("to its stop") : *FString::Printf(TEXT("%.0f m"), Distance / 100.f),
-			GetPlanningDeceleration(State) / 100.f, State.WaitingSeconds, State.BlockedReason.IsEmpty() ? TEXT("") : TEXT(", "), *State.BlockedReason));
+			GetPlanningDeceleration(State) / 100.f, State.WaitingSeconds, State.Reroutes, State.BlockedReason.IsEmpty() ? TEXT("") : TEXT(", "), *State.BlockedReason));
 	}
 	if (Lines.Num() == 0)
 	{

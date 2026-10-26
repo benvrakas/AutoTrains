@@ -40,6 +40,9 @@ struct FATTrafficTrain
 	bool bFullBrake = false;
 	// Whether the game's catch is set to hold the train at its stop point.
 	bool bCatchArmed = false;
+	// Seconds until this train's route is next checked for congestion, and how often it was rerouted.
+	float RerouteTimer = -1.f;
+	int32 Reroutes = 0;
 	// Last track the train may drive to the end of; null means no limit beyond its route.
 	TWeakObjectPtr<AFGBuildableRailroadTrack> AuthorityTrack;
 	bool bAuthorityToGoal = false;
@@ -67,6 +70,9 @@ public:
 
 	bool IsEnabled() const { return mEnabled; }
 	FString SetEnabled(bool bEnabled);
+
+	// Turns congestion rerouting on or off (on by default while traffic control is on).
+	FString SetRerouteEnabled(bool bEnabled);
 
 	// Returns true if this mod is driving Train.
 	bool IsManaged(const AFGTrain* Train) const;
@@ -112,11 +118,29 @@ private:
 
 	bool HoldsTrack(const FATTrafficTrain& State, const AFGBuildableRailroadTrack* Track) const;
 
+	// Congestion other trains than Self put on each track: standing trains, claims, and their routes ahead.
+	struct FCongestion
+	{
+		float Penalty = 0.f;
+		// Exit connections of other trains' upcoming passes over the track, to tell same and opposite direction apart.
+		TArray<const UFGRailroadTrackConnectionComponent*> UpcomingExits;
+	};
+	void BuildCongestion(const FATTrafficTrain& Self, TMap<const AFGBuildableRailroadTrack*, FCongestion>& Out) const;
+
+	// Extra cost of driving over Track and leaving through Exit, given the congestion map. [cm]
+	static float GetCongestionCost(const TMap<const AFGBuildableRailroadTrack*, FCongestion>& Congestion, const AFGBuildableRailroadTrack* Track,
+		const UFGRailroadTrackConnectionComponent* Exit);
+
+	// Looks for a route to State's goal, from the end of its claims, that's clearly cheaper than its current one once
+	// congestion is counted, and switches to it.
+	void ConsiderReroute(FATTrafficTrain& State);
+
 	// Deceleration to plan stops with: 85% of the measured full-brake deceleration, or 60% of the consist's rating
 	// until measured. [cm/s^2]
 	static float GetPlanningDeceleration(const FATTrafficTrain& State);
 
 	bool mEnabled = false;
+	bool mRerouteEnabled = true;
 	float mUpdateTimer = 0.f;
 	TMap<TWeakObjectPtr<AFGTrain>, FATTrafficTrain> mTrains;
 

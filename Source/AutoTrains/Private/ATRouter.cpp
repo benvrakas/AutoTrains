@@ -21,6 +21,12 @@ namespace
 
 TArray<UFGRailroadTrackConnectionComponent*> FATRouter::FindRoute(UFGRailroadTrackConnectionComponent* Start, UFGRailroadTrackConnectionComponent* Goal, bool bObeyOneWay)
 {
+	return FindRoute(Start, Goal, bObeyOneWay, [](const AFGBuildableRailroadTrack*, const UFGRailroadTrackConnectionComponent*) { return 0.f; });
+}
+
+TArray<UFGRailroadTrackConnectionComponent*> FATRouter::FindRoute(UFGRailroadTrackConnectionComponent* Start, UFGRailroadTrackConnectionComponent* Goal, bool bObeyOneWay,
+	TFunctionRef<float(const AFGBuildableRailroadTrack*, const UFGRailroadTrackConnectionComponent*)> ExtraCost)
+{
 	TArray<UFGRailroadTrackConnectionComponent*> Route;
 	if (!Start || !Goal)
 	{
@@ -56,7 +62,7 @@ TArray<UFGRailroadTrackConnectionComponent*> FATRouter::FindRoute(UFGRailroadTra
 			{
 				continue;
 			}
-			const float Cost = Node.Cost + Track->GetLength();
+			const float Cost = Node.Cost + Track->GetLength() + ExtraCost(Track, Next);
 			const float* Known = BestCost.Find(Next);
 			if (!Known || Cost < *Known)
 			{

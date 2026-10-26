@@ -12,7 +12,7 @@ AATChatCommand::AATChatCommand()
 	Aliases.Add(TEXT("autotrains"));
 	MinNumberOfArguments = 1;
 	bOnlyUsableByPlayer = true;
-	Usage = NSLOCTEXT("AutoTrains", "ChatUsage", "/at traffic on|off|status | list | speed <train> <km/h> | stopat <train> <m> | release <train|all> | signals <train> ignore|obey | route <train> check|via | autopilot <train|all> on|off | removesignals confirm | session <new name> | log on|off   (<train> = number from /at list, or part of its name)");
+	Usage = NSLOCTEXT("AutoTrains", "ChatUsage", "/at traffic on|off|status | reroute on|off | list | speed <train> <km/h> | stopat <train> <m> | release <train|all> | signals <train> ignore|obey | route <train> check|via | autopilot <train|all> on|off | removesignals confirm | session <new name> | log on|off   (<train> = number from /at list, or part of its name)");
 }
 
 EExecutionStatus AATChatCommand::ExecuteCommand_Implementation(UCommandSender* Sender, const TArray<FString>& Arguments, const FString& Label)
@@ -65,6 +65,16 @@ EExecutionStatus AATChatCommand::ExecuteCommand_Implementation(UCommandSender* S
 			{
 				Sender->SendChatMessage(Line);
 			}
+			return EExecutionStatus::COMPLETED;
+		}
+	}
+	if (Verb == TEXT("reroute") && Arguments.Num() == 2)
+	{
+		AATTrafficSubsystem* Traffic = AATTrafficSubsystem::Get(this);
+		const bool bOn = Arguments[1].Equals(TEXT("on"), ESearchCase::IgnoreCase);
+		if (Traffic && (bOn || Arguments[1].Equals(TEXT("off"), ESearchCase::IgnoreCase)))
+		{
+			Sender->SendChatMessage(Traffic->SetRerouteEnabled(bOn));
 			return EExecutionStatus::COMPLETED;
 		}
 	}

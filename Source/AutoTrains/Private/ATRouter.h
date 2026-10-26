@@ -17,6 +17,10 @@ public:
 	// that has only a trailing signal can't be left, as in the game's pathfinding.
 	static TArray<UFGRailroadTrackConnectionComponent*> FindRoute(UFGRailroadTrackConnectionComponent* Start, UFGRailroadTrackConnectionComponent* Goal, bool bObeyOneWay);
 
+	// Same, with ExtraCost(track, exit connection) added to each track's length. [cm]
+	static TArray<UFGRailroadTrackConnectionComponent*> FindRoute(UFGRailroadTrackConnectionComponent* Start, UFGRailroadTrackConnectionComponent* Goal, bool bObeyOneWay,
+		TFunctionRef<float(const AFGBuildableRailroadTrack*, const UFGRailroadTrackConnectionComponent*)> ExtraCost);
+
 	// Returns the summed track length of Route after its first connection. [cm]
 	static float GetRouteLength(const TArray<UFGRailroadTrackConnectionComponent*>& Route);
 

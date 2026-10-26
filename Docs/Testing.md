@@ -1,4 +1,4 @@
-# Test build 0.3.2: traffic without signals
+# Test build 0.4.0: traffic without signals
 
 This build adds the first traffic control. With it on, every self-driving train ignores signals and claims the
 track ahead of it:
@@ -13,6 +13,11 @@ track ahead of it:
   way. So a train never stops inside a junction or halfway along single track that another train needs. It waits
   before the junction, or goes on until it's clear of it.
 - The train that has waited longest gets to claim first.
+- Congestion rerouting (`/at reroute on|off`, on by default): every 5 s each moving train prices its route as track
+  length plus congestion: +1.5 km for a track with a standing train, +400 m for a moving one, +300 m for track
+  another train has claimed, +800 m for track another train will cross the other way, +50 m the same way. If a route
+  from the end of its claims is at least 15% and 300 m cheaper, it switches to it, even when that route is longer.
+  The log says `rerouted` with the costs and lengths.
 
 Trains don't yet adjust their speed ahead of time to arrive just as track frees; they brake when they must. Player
 driven trains aren't controlled; the others treat them as obstacles.
@@ -42,7 +47,9 @@ Back up the save first.
 4. **Long and short trains.** Does a long train wait where a short one would already go, because there's no room
    for its whole length past a junction?
 5. **Stations.** Do trains still dock normally, with DynamicTimeTable and Freight Car Control doing their part?
-6. **Stuck trains.** Any train that waits forever: `/at traffic status` says why.
+6. **Rerouting.** Where there's another way round: does a train take it when the usual way is blocked or busy, and
+   does it still reach its stop?
+7. **Stuck trains.** Any train that waits forever: `/at traffic status` says why.
 
 `/at traffic status` lists every moving self-driving train with its claims, how far it may drive and what it's
 waiting for. The log also gets a `traffic:` line whenever a train's reason for waiting changes.
@@ -54,6 +61,7 @@ When you're done: `/at log off`, then tell me. I read the telemetry CSV and `Fac
 `<train>` is the number from `/at list`, or part of the train's name.
 
 - `/at traffic on|off|status`
+- `/at reroute on|off`
 - `/at list`: every train with its number, speed, length, command and distance to its goal
 - `/at autopilot <train> on|off` or `/at autopilot all on|off`
 - `/at removesignals confirm`: dismantles every block and path signal in the loaded world

@@ -3,6 +3,7 @@
 #include "AutoTrains.h"
 #include "Buildables/FGBuildableRailroadTrack.h"
 #include "EngineUtils.h"
+#include "FGLocomotive.h"
 #include "FGRailroadSubsystem.h"
 #include "FGRailroadTrackConnectionComponent.h"
 #include "FGRailroadVehicle.h"
@@ -120,6 +121,10 @@ void AATControlSubsystem::AfterTickAtc(AFGTrain* Train, float DeltaSeconds)
 	State.Odometer += Speed * DeltaSeconds;
 	State.GameTargetSpeed = Atc.TargetSpeed;
 
+	if (State.bIgnoreSignals && Train->IsSelfDrivingEnabled())
+	{
+		IgnoreSignalStops(Train);
+	}
 	if (Train->IsSelfDrivingEnabled() && State.Mode != EATCommandMode::None)
 	{
 		float Allowed = Atc.TargetSpeed;
@@ -153,6 +158,64 @@ void AATControlSubsystem::AfterTickAtc(AFGTrain* Train, float DeltaSeconds)
 
 	mHookSeconds += FPlatformTime::Seconds() - Start;
 	++mHookCalls;
+}
+
+void AATControlSubsystem::IgnoreSignalStops(AFGTrain* Train)
+{
+	FTrainAtcData& Atc = Train->mAtcData;
+	for (FTrainAtcPoint& Point : Atc.TargetPoints)
+	{
+		if (Point.SignalAspect == ERailroadSignalAspect::RSA_Stop && Point.TrackConnection && Point.TrackConnection->GetFacingSignal())
+		{
+			Point.SignalAspect = ERailroadSignalAspect::RSA_Clear;
+		}
+	}
+	if (Atc.NextRestrictiveSignalAspect != ERailroadSignalAspect::RSA_Stop)
+	{
+		return;
+	}
+
+	// Pick the restrictive point as FTrainAtcData::UpdateNextRestrictiveSignal does, now that signal stops are clear.
+	const FTrainAtcPoint* Restrictive = nullptr;
+	for (const FTrainAtcPoint& Point : Atc.TargetPoints)
+	{
+		if (!Point.TrackConnection || Point.Distance >= Train->mConsistData.MaxBrakeDistance)
+		{
+			break;
+		}
+		if (Point.SignalAspect == ERailroadSignalAspect::RSA_Stop || Point.SignalAspect == ERailroadSignalAspect::RSA_Dock)
+		{
+			Restrictive = &Point;
+			break;
+		}
+	}
+	Atc.NextRestrictiveSignalConnection = Restrictive ? Restrictive->TrackConnection.Get() : nullptr;
+	Atc.NextRestrictiveSignalSpeed = 0.f;
+	Atc.NextRestrictiveSignalDistance = Restrictive ? Restrictive->Distance : 0.f;
+	Atc.NextRestrictiveSignalGrade = Restrictive ? Restrictive->AverageGrade : 0.f;
+	Atc.NextRestrictiveSignalAspect = Restrictive ? Restrictive->SignalAspect : ERailroadSignalAspect::RSA_None;
+	Atc.NextRestrictiveSignalStopOffset = !Restrictive ? 0.f
+		: Restrictive->SignalAspect == ERailroadSignalAspect::RSA_Dock ? TrainConstants::DOCK_STOP_OFFSET : TrainConstants::SIGNAL_STOP_OFFSET;
+
+	// Target speed as AFGTrain::TickAtc computes it from the restrictive point.
+	float Target = Train->mConsistData.MaxSpeed;
+	if (Restrictive)
+	{
+		const float Distance = Atc.NextRestrictiveSignalDistance;
+		if (Distance > TrainConstants::RESTRICTED_SPEED_DISTANCE)
+		{
+			Atc.NextRestrictiveSignalSpeed = TrainConstants::RESTRICTED_SPEED;
+			const float Mass = FMath::Max(Train->mConsistData.Mass, 1.f);
+			const float Deceleration = FMath::Max(0.f, Train->mConsistData.MaxBrakeDeceleration - Train->mSimulationData.GravitationalForce * Atc.NextRestrictiveSignalGrade / Mass);
+			Target = FMath::Min(Target, FMath::Sqrt(Deceleration * 2.f * (Distance - TrainConstants::RESTRICTED_SPEED_DISTANCE) + FMath::Square(TrainConstants::RESTRICTED_SPEED)));
+		}
+		else
+		{
+			Target = Distance >= Atc.NextRestrictiveSignalStopOffset + 1e-4f ? TrainConstants::RESTRICTED_SPEED : 0.f;
+		}
+	}
+	const AFGLocomotive* Master = Train->GetMultipleUnitMaster();
+	Atc.TargetSpeed = Master && Master->HasPower() ? Target : 0.f;
 }
 
 bool AATControlSubsystem::IsIgnoringSignals(const AFGTrain* Train) const

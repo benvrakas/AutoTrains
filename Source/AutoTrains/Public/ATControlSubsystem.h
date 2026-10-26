@@ -72,6 +72,9 @@ public:
 	FString SetLogging(bool bLog);
 
 private:
+	// Clears the train's signal stops and recomputes its restrictive point and target speed without them.
+	void IgnoreSignalStops(AFGTrain* Train);
+
 	// Returns all trains, sorted by name, as numbered by /at list.
 	TArray<AFGTrain*> GetSortedTrains() const;
 

@@ -1,15 +1,8 @@
 #include "ATHooks.h"
 #include "ATControlSubsystem.h"
 #include "AutoTrains.h"
-#include "FGRailroadTrackConnectionComponent.h"
 #include "FGTrain.h"
 #include "Patching/NativeHookManager.h"
-
-namespace
-{
-	// The train whose TickAtc is running; TickAtc and the ATC functions it calls run on the game thread.
-	AFGTrain* GTickingTrain = nullptr;
-}
 
 void FATHooks::InstallHooks()
 {
@@ -23,35 +16,15 @@ void FATHooks::InstallHooks()
 	}
 	bInstalled = true;
 
-	SUBSCRIBE_METHOD(AFGTrain::TickAtc, [](auto& Scope, AFGTrain* Self, float DeltaSeconds)
+	SUBSCRIBE_METHOD_AFTER(AFGTrain::TickAtc, [](AFGTrain* Self, float DeltaSeconds)
 	{
-		AATControlSubsystem* Control = Self && Self->HasAuthority() ? AATControlSubsystem::Get(Self) : nullptr;
-		GTickingTrain = Self;
-		Scope(Self, DeltaSeconds);
-		GTickingTrain = nullptr;
-		if (Control)
+		if (!Self || !Self->HasAuthority())
+		{
+			return;
+		}
+		if (AATControlSubsystem* Control = AATControlSubsystem::Get(Self))
 		{
 			Control->AfterTickAtc(Self, DeltaSeconds);
-		}
-	});
-
-	SUBSCRIBE_METHOD_AFTER(FTrainAtcData::RefreshTargetPointsDistanceAndAspect, [](const bool& bResult, FTrainAtcData* Self, float CurrentPathSegmentOffset)
-	{
-		if (!bResult || !GTickingTrain || &GTickingTrain->mAtcData != Self)
-		{
-			return;
-		}
-		const AATControlSubsystem* Control = AATControlSubsystem::Get(GTickingTrain);
-		if (!Control || !Control->IsIgnoringSignals(GTickingTrain))
-		{
-			return;
-		}
-		for (FTrainAtcPoint& Point : Self->TargetPoints)
-		{
-			if (Point.SignalAspect == ERailroadSignalAspect::RSA_Stop && Point.TrackConnection && Point.TrackConnection->GetFacingSignal())
-			{
-				Point.SignalAspect = ERailroadSignalAspect::RSA_Clear;
-			}
 		}
 	});
 

@@ -1,4 +1,4 @@
-# Test build 0.2.0: can the mod drive trains itself?
+# Test build 0.2.1: can the mod drive trains itself?
 
 The finished mod plans every train's speed along its route so trains never meet, without signals. That needs the
 mod to command speed and stop points precisely, ignore signals, choose routes, and know where every train is. This

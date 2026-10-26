@@ -31,7 +31,10 @@ train, then a row per train every 0.2 s:
 - The mod hooks `AFGTrain::TickAtc`. After the game computes the train's target speed, the mod lowers it for a speed
   cap or a braking curve to a stop point (70% of the consist's brake deceleration, ending 1 m short).
   `TickSelfDriving_FollowPath` then drives to that target speed with the game's own throttle and brake logic.
-- Ignoring signals clears the stop aspect from the train's target points that have a facing signal, while its ATC
-  refreshes them; stations (dock points) are untouched.
+- Ignoring signals happens in the same hook: the mod clears the stop aspect from the train's target points that have
+  a facing signal, then picks the restrictive point and target speed the way the game does, without those stops.
+  Stations (dock points) are untouched. (0.2.0 hooked `FTrainAtcData::RefreshTargetPointsDistanceAndAspect` for
+  this, which crashed: the hook's call-through stub for that function was corrupt, likely because it starts with a
+  short conditional jump. Don't hook it.)
 - Routes are chains of track connections, built by the mod's own shortest-path search and given to the train with
   `FTrainAtcData::SetPath`.

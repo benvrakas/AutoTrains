@@ -1,8 +1,8 @@
 {
 	"FileVersion": 3,
 	"Version": 0,
-	"VersionName": "0.2.2",
-	"SemVersion": "0.2.2",
+	"VersionName": "0.2.3",
+	"SemVersion": "0.2.3",
 	"GameVersion": ">=513885",
 	"FriendlyName": "Auto Trains",
 	"Description": "Test build: probes direct control of self-driving trains (speed, stop points, signals, routes) for a signal-free train traffic system.",

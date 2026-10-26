@@ -509,20 +509,39 @@ FString AATControlSubsystem::RemoveAllSignals()
 		}
 	}
 	int32 PathSignals = 0;
+	int32 Forced = 0;
 	for (AFGBuildableRailroadSignal* Signal : Signals)
 	{
 		PathSignals += Signal->IsPathSignal() ? 1 : 0;
 		IFGDismantleInterface::Execute_Dismantle(Signal);
+		// Dismantle outside the build gun can leave the actor in place (seen in 0.2.2); destroy what's left.
+		if (IsValid(Signal) && !Signal->IsActorBeingDestroyed())
+		{
+			Signal->Destroy();
+			++Forced;
+		}
 	}
-	int32 Remaining = 0;
+	const int32 Remaining = CountSignals();
+	const FString Message = FString::Printf(TEXT("Removed %d signals (%d path, %d block; %d needed a forced destroy); %d left."), Signals.Num(), PathSignals,
+		Signals.Num() - PathSignals, Forced, Remaining);
+	UE_LOG(LogAutoTrains, Log, TEXT("%s"), *Message);
+
+	FTimerHandle Handle;
+	GetWorldTimerManager().SetTimer(Handle, FTimerDelegate::CreateWeakLambda(this, [this]()
+	{
+		UE_LOG(LogAutoTrains, Log, TEXT("Signals in the world one second after removal: %d"), CountSignals());
+	}), 1.f, false);
+	return Message;
+}
+
+int32 AATControlSubsystem::CountSignals() const
+{
+	int32 Count = 0;
 	for (TActorIterator<AFGBuildableRailroadSignal> It(GetWorld()); It; ++It)
 	{
-		Remaining += IsValid(*It) ? 1 : 0;
+		Count += IsValid(*It) && !It->IsActorBeingDestroyed() ? 1 : 0;
 	}
-	const FString Message = FString::Printf(TEXT("Removed %d signals (%d path, %d block); %d left."), Signals.Num(), PathSignals,
-		Signals.Num() - PathSignals, Remaining);
-	UE_LOG(LogAutoTrains, Log, TEXT("%s"), *Message);
-	return Message;
+	return Count;
 }
 
 TArray<AFGTrain*> AATControlSubsystem::GetSortedTrains() const

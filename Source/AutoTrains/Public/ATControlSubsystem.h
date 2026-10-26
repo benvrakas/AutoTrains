@@ -75,6 +75,9 @@ public:
 	FString RemoveAllSignals();
 
 private:
+	// Returns the number of block and path signals in the world that aren't being destroyed.
+	int32 CountSignals() const;
+
 	// Clears the train's signal stops and recomputes its restrictive point and target speed without them.
 	void IgnoreSignalStops(AFGTrain* Train);
 

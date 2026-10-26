@@ -1,4 +1,4 @@
-# Test build 0.5.3: traffic without signals
+# Test build 0.5.4: traffic without signals
 
 This build adds the first traffic control. With it on, every self-driving train ignores signals and claims the
 track ahead of it:
@@ -18,14 +18,17 @@ track ahead of it:
   moving at 5 m/s or more, isn't held up itself, and clears it before this train could get there at full
   acceleration, plus the safety margin setting (0 s by default). So a train follows another through a roundabout instead of waiting until it has left
   the whole path. A follower never takes track its leader still needs and hasn't claimed (`follows X, which still
-  needs`). It's rechecked every update; if the leader slows, the follower gives the claims back and brakes
-  (`gives up ... claims`).
+  needs`). While following, its speed is capped every tick so it can stop before the first track its leader
+  still holds plus the leader's own braking distance (moving block), so it slows with the leader instead of braking
+  hard. Shared claims are given back only once the leader has stood still for 2 s (`gives up ... has stopped`). A
+  train never both follows and goes first ahead of the same train.
 - Claims run unbroken from the train's position; a claim left past a gap (after a reroute or giving way) is dropped.
 - Claim order: the train that would get through the next track it needs soonest claims first; each second waited
   counts as half a second sooner (a full second when not aggressive), so no train waits forever.
 - Going first: a train may take a track or switch that another train has only claimed if it clears it before the other
   train could get there at full acceleration, plus the safety margin, and the other train can still stop short of it.
-  The other train gives up its claims from there on. The log says `goes first`.
+  Every train with a claim there must be able to give way. The other train gives up its claims from there on.
+  The log says `goes first`.
 - Deadlocks: if trains wait for each other in a circle for 20 s, the log says `DEADLOCK` with each train's reason.
 - Congestion rerouting (`/at reroute on|off`, on by default): every 5 s each moving train prices its route as track
   length plus congestion: +1.5 km for a track with a standing train, +400 m for a moving one, +300 m for track

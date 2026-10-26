@@ -32,6 +32,8 @@ struct FATTrafficTrain
 	TArray<TWeakObjectPtr<AFGBuildableRailroadTrack>> Claims;
 	// Switch joints the train's held tracks pass through.
 	TSet<int32> ClaimedJoints;
+	// Trains holding track this train has claimed too: it follows them and keeps its distance from them.
+	TArray<TWeakObjectPtr<AFGTrain>> FollowLeaders;
 	float Length = 0.f;
 	float Speed = 0.f;
 	// How far the train's front is ahead of its MU master, which the ATC distances are measured from. [cm]
@@ -42,6 +44,8 @@ struct FATTrafficTrain
 	// Speed at the previous update, and whether the train was on full brake since. [cm/s]
 	float LastSpeed = 0.f;
 	bool bFullBrake = false;
+	// Seconds the train has stood still.
+	float StoppedSeconds = 0.f;
 	// Whether the game's catch is set to hold the train at its stop point.
 	bool bCatchArmed = false;
 	// Seconds until this train's route is next checked for congestion, and how often it was rerouted.
@@ -149,9 +153,19 @@ private:
 	bool IsClearingInTime(const FATTrafficTrain& Self, const FATTrafficTrain& Holder, const AFGBuildableRailroadTrack* Track, int32 Joint,
 		float SelfDistance) const;
 
-	// Drops Self's claims from the first one another train still holds (stands on or claimed) and no longer clears in
-	// time.
+	// Drops Self's claims from the first one shared with a train that has stopped.
 	void RevalidateFollowClaims(FATTrafficTrain& State);
+
+	// Sets State's follow leaders: other trains holding track it has claimed.
+	void UpdateFollowLeaders(FATTrafficTrain& State) const;
+
+	// Returns how far Train may go behind its follow leaders: to the first track along its path one of them holds,
+	// plus that leader's braking distance; -1 if it follows none. [cm]
+	float GetFollowLimit(const AFGTrain* Train, const FATTrafficTrain& State) const;
+
+	// Returns the distance from Train's front to the start of Track along its path (negative once on it), or a large
+	// negative number if Track isn't on it. [cm]
+	float GetDistanceToTrackStart(const AFGTrain* Train, const FATTrafficTrain& State, const AFGBuildableRailroadTrack* Track) const;
 
 	// Returns true if Self may stop with its front StopMargin before the end of route step EndIndex.
 	bool IsValidStop(const FATTrafficTrain& Self, int32 EndIndex, FString& OutReason) const;

@@ -2,40 +2,36 @@
 
 ## Logs
 
-The game log is `%LOCALAPPDATA%\FactoryGame\Saved\Logs\FactoryGame.log`. Filter for `LogAutoSignals`.
+The game log is `%LOCALAPPDATA%\FactoryGame\Saved\Logs\FactoryGame.log`. Filter for `LogAutoTrains`.
 
-At the default level the mod logs:
+- startup: `Auto Trains module starting`, `Hooks installed`
+- every `/at` command and its result
+- `stopat`: the consist's length, mass, brake deceleration and brake distance, then `<train> stopped for stopat: <n> m
+  short of|past the stop point`
+- `route check`: `SAME ROUTE` or `DIFFERENT ROUTE` with point counts and distance differences, then the first 8 points
+  of both routes side by side
+- `route via`: the route's length and point count, whether the train accepted it, and later `the path this mod set was
+  replaced` if the game or another mod gave the train a different path
+- while logging: `Control hook: <n> calls in 10 s, <us> us each`
 
-- startup: `AutoSignals module starting`, `Hooks installed`
-- every `/sigtest` command, and what it did
-- each test signal spawned: `Spawned block|path signal <name> at <location>: guards <n> (...), observes <n> (...),
-  valid connections yes|no, attached to track yes|NO`, then `Railroad subsystem registered <signal>`
-- `Signal blocks rebuilt for track graph <id>: <n> blocks` whenever the game rebuilds blocks
-- `/sigtest info`: every test signal (aspect, block, validation), every track graph and its blocks, every train
-  (status, speed, next signal, wait time, error) with the scheduler's bookings for it
-- `/sigtest watch on`: once a second, a `watch:` line for each test signal whose aspect changed and each train whose
-  status, next signal, aspect, error, docking state or moving/stopped changed, with its bookings
+## Telemetry
 
-Every `AddSignal`/`RemoveSignal` call, the player's signals included, is logged at `Verbose`. To raise the level, add
-to `%LOCALAPPDATA%\FactoryGame\Saved\Config\Windows\Engine.ini`:
+`/at log on` writes `%LOCALAPPDATA%\FactoryGame\Saved\AutoTrains\telemetry-<time>.csv`: one `# consist` line per
+train, then a row per train every 0.2 s:
 
-```
-[Core.Log]
-LogAutoSignals=Verbose
-```
+- `speed_kmh`; `game_target_kmh`, the speed the game's driver wanted; `final_target_kmh`, after this mod's command
+- `accel_ms2`, from the speed change between samples
+- `odometer_m`, distance travelled since the train was first seen; `stop_remaining_m` for `stopat`
+- `goal_distance_m`, the track distance left to the train's goal along its path
+- `restrictive_*` and `next_signal_*`, what the game's driver is braking for
+- `front_track`/`front_offset_m` and `rear_track`/`rear_offset_m`, where the first and last vehicle are
 
-## Reading bookings
+## How the control works
 
-A booking line reads `block <id> (path block|normal block, occupied|free): path|exclusive booking
-approved|pending|cancelled, entry <signal>, exit <signal>, path segments <a>..<b>, <n> tracks left`.
-
-- A path booking with an exit signal followed by an exclusive booking of the next normal block means the scheduler
-  books the block after a junction's exit. A path booking alone means it doesn't.
-- `depends on <n> trains` and `dependency level` come from the scheduler's deadlock ordering.
-
-## Test signals
-
-- They're the game's own block and path signal actors, spawned by the mod with the tag `AutoSignals.TestSignal`.
-- They're never written to the save (the mod hooks `AFGBuildable::ShouldSave_Implementation` for that tag), so a
-  reload removes them.
-- Dismantling one with the build gun works like any signal while it's visible.
+- The mod hooks `AFGTrain::TickAtc`. After the game computes the train's target speed, the mod lowers it for a speed
+  cap or a braking curve to a stop point (70% of the consist's brake deceleration, ending 1 m short).
+  `TickSelfDriving_FollowPath` then drives to that target speed with the game's own throttle and brake logic.
+- Ignoring signals clears the stop aspect from the train's target points that have a facing signal, while its ATC
+  refreshes them; stations (dock points) are untouched.
+- Routes are chains of track connections, built by the mod's own shortest-path search and given to the train with
+  `FTrainAtcData::SetPath`.

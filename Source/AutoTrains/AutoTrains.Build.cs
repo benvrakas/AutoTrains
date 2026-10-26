@@ -2,9 +2,9 @@ using UnrealBuildTool;
 using System.IO;
 using System;
 
-public class AutoSignals : ModuleRules
+public class AutoTrains : ModuleRules
 {
-	public AutoSignals(ReadOnlyTargetRules Target) : base(Target)
+	public AutoTrains(ReadOnlyTargetRules Target) : base(Target)
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 		CppStandard = CppStandardVersion.Cpp20;

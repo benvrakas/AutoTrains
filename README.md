@@ -1,10 +1,9 @@
-# AutoSignals (working name)
+# Auto Trains
 
-Satisfactory mod: self-driving trains share track without player-placed signals. Every track joint acts as a block or
-path signal depending on what's beyond it, using the game's own signal blocks and train scheduler.
+Satisfactory mod: train traffic without block or path signals. Every self-driving train follows a route and speed
+profile planned so that no two trains ever meet; trains speed up, slow down or wait as needed.
 
-Current state: test build 0.1.0, which only places signals on command (`/sigtest`) to check that signals created by
-code work. See `Docs/Testing.md` and `Docs/Debugging.md`.
+Current state: test build 0.2.0, which only probes direct control of trains (`/at`). See `Docs/Testing.md` and
+`Docs/Debugging.md`.
 
-Build with the SatisfactoryModLoader starter project; package with
-`D:\SFMod\Tools\BuildScripts\package-autosignals.bat local` (Windows client only).
+Package with `D:\SFMod\Tools\BuildScripts\package-autotrains.bat local` (Windows client only).

@@ -2,16 +2,16 @@
 
 #include "CoreMinimal.h"
 #include "Command/ChatCommandInstance.h"
-#include "ASChatCommand.generated.h"
+#include "ATChatCommand.generated.h"
 
-// /sigtest: places, hides and removes test signals and logs train and block state.
+// /at: test commands that control trains directly and log what they do.
 UCLASS()
-class AUTOSIGNALS_API AASChatCommand : public AChatCommandInstance
+class AUTOTRAINS_API AATChatCommand : public AChatCommandInstance
 {
 	GENERATED_BODY()
 
 public:
-	AASChatCommand();
+	AATChatCommand();
 
 	virtual EExecutionStatus ExecuteCommand_Implementation(UCommandSender* Sender, const TArray<FString>& Arguments, const FString& Label) override;
 };

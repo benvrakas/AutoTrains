@@ -1,18 +1,23 @@
-# Test build 0.4.0: traffic without signals
+# Test build 0.5.0: traffic without signals
 
 This build adds the first traffic control. With it on, every self-driving train ignores signals and claims the
 track ahead of it:
 
-- A track is free only if no other train stands on it or has claimed it, or a conflicting track: one overlapping it
-  (crossings), or one meeting it at a switch or merge.
+- A track is free only if no other train stands on it, has claimed it, or holds a track crossing it. A switch or
+  merge is free only if no other train has a vehicle within 20 m of the switch point or holds track through it.
+  Trains stop 25 m before a switch (10 m elsewhere), so a waiting train never fouls one.
 - A train always keeps the speed at which it can stop before the end of its claims, so it slows down and stops for
   traffic ahead and speeds up as track frees. It plans with 60% of its rated braking until it has braked hard once,
   then with 85% of what it actually managed. If it's ever over that curve it gets full brake, and at the last
   connection the game's own catch stops it dead at its stop point, whatever its speed.
-- A claim may only end where the whole train stands off junctions and where no other train needs to come the other
-  way. So a train never stops inside a junction or halfway along single track that another train needs. It waits
-  before the junction, or goes on until it's clear of it.
+- A claim may only end where the whole train stands clear of crossings and switches and where no other train needs to
+  come the other way. So a train never stops inside a junction or halfway along single track that another train
+  needs. It waits before the junction, or goes on until it's clear of it.
 - The train that has waited longest gets to claim first.
+- Going first: a train may take a track or switch that another train has only claimed (not one it stands on) if it
+  clears it at least 8 s before the other train could get there at full acceleration, and the other train can
+  still stop comfortably short of it. The other train gives up its claims from there on. The log says `goes first`.
+- Deadlocks: if trains wait for each other in a circle for 20 s, the log says `DEADLOCK` with each train's reason.
 - Congestion rerouting (`/at reroute on|off`, on by default): every 5 s each moving train prices its route as track
   length plus congestion: +1.5 km for a track with a standing train, +400 m for a moving one, +300 m for track
   another train has claimed, +800 m for track another train will cross the other way, +50 m the same way. If a route
@@ -21,6 +26,18 @@ track ahead of it:
 
 Trains don't yet adjust their speed ahead of time to arrive just as track frees; they brake when they must. Player
 driven trains aren't controlled; the others treat them as obstacles.
+
+## Mods menu settings (all on by default)
+
+- **Traffic control**: Auto Trains drives every self-driving train. Off gives the game's signals back.
+- **Congestion rerouting**
+- **Trains pass through each other**: while traffic control is on, trains that touch don't crash or derail; the
+  log counts how often it happened (`passed through each other N times`).
+- **Aggressive timing**: plans braking with 95% of measured (80% of rated until measured), goes first with 4 s to
+  spare instead of 8, a 10 m buffer for the train giving way and claims 100 m past the braking distance instead
+  of 200 m. Off is the cautious values.
+
+`/at traffic` and `/at reroute` switch for the session; changing the setting in the Mods menu applies again.
 
 Back up the save first.
 

@@ -14,7 +14,7 @@ struct FATRouteStep
 	AFGBuildableRailroadTrack* Track = nullptr;
 	// Connection the train leaves the track through.
 	UFGRailroadTrackConnectionComponent* Exit = nullptr;
-	// Distance from the train's front to the end of this track when the route was read. [cm]
+	// Distance from the train's MU master to the end of this track when the route was read. [cm]
 	float EndDistance = 0.f;
 };
 
@@ -26,8 +26,12 @@ struct FATTrafficTrain
 	bool bManaged = false;
 	TArray<FATRouteStep> Route;
 	TSet<AFGBuildableRailroadTrack*> Occupied;
+	// Switch joints with a vehicle of this train within their fouling zone.
+	TSet<int32> OccupiedJoints;
 	// Tracks ahead granted to this train, in route order; kept between updates until the train is past them.
 	TArray<TWeakObjectPtr<AFGBuildableRailroadTrack>> Claims;
+	// Switch joints the train's held tracks pass through.
+	TSet<int32> ClaimedJoints;
 	float Length = 0.f;
 	float Speed = 0.f;
 	// How far the train's front is ahead of its MU master, which the ATC distances are measured from. [cm]
@@ -46,16 +50,19 @@ struct FATTrafficTrain
 	// Last track the train may drive to the end of; null means no limit beyond its route.
 	TWeakObjectPtr<AFGBuildableRailroadTrack> AuthorityTrack;
 	bool bAuthorityToGoal = false;
+	// How far before the end of the authority track the train stops: more when a switch is there. [cm]
+	float StopMargin = 1000.f;
 	// Why the claims stop where they do, for the log and /at traffic.
 	FString BlockedReason;
 	TWeakObjectPtr<AFGTrain> BlockedBy;
 };
 
-// Server only. Train traffic without signals: every self-driving train claims the track ahead of it, a track is
-// free only if no other train occupies or claims it or a conflicting track (overlapping it, or meeting it at a
-// switch), and a claim may only end where the whole train stands off junctions and out of the way of trains coming
-// the other way. Each train's speed is limited so it can always stop before the end of its claims, with the game's
-// catch as the backstop at the last connection.
+// Server only. Train traffic without signals. Every self-driving train claims the track ahead of it. A track is
+// free unless another train stands on it, has claimed it, or holds a track crossing it; a switch is free unless
+// another train has a vehicle within its fouling zone or holds track through it. A claim may only end where the whole
+// train stands clear of crossings and switches and out of the way of trains coming the other way. Each train's
+// speed is limited so it can always stop before the end of its claims, with the game's catch as the backstop.
+// A train may take track another train has only claimed if it clears it well before that train could arrive.
 UCLASS()
 class AUTOTRAINS_API AATTrafficSubsystem : public AModSubsystem
 {
@@ -67,6 +74,7 @@ public:
 	static AATTrafficSubsystem* Get(const UObject* WorldContext);
 
 	virtual void Tick(float DeltaSeconds) override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	bool IsEnabled() const { return mEnabled; }
 	FString SetEnabled(bool bEnabled);
@@ -74,13 +82,19 @@ public:
 	// Turns congestion rerouting on or off (on by default while traffic control is on).
 	FString SetRerouteEnabled(bool bEnabled);
 
+	// Returns true if trains should pass through each other instead of colliding (traffic control and the setting on).
+	static bool ShouldPhaseThrough();
+
+	// Called by the collision hook each time a train contact was let through.
+	static void CountPhaseThrough();
+
 	// Returns true if this mod is driving Train.
 	bool IsManaged(const AFGTrain* Train) const;
 
 	// Called after the game's AFGTrain::TickAtc for managed trains; caps the target speed to the train's authority.
 	void ApplyAuthority(AFGTrain* Train);
 
-	// Returns the distance from Train's front to the end of its authority, or -1 for no limit. [cm]
+	// Returns the distance from Train's front to the end of its authority track, or -1 for no limit. [cm]
 	float GetAuthorityDistance(const AFGTrain* Train) const;
 
 	// Returns a one-line traffic summary of Train for telemetry.
@@ -90,33 +104,64 @@ public:
 	TArray<FString> DescribeAll() const;
 
 private:
+	// Another train's claim Self wants to take over, at a track or a switch on Self's route.
+	struct FPreemption
+	{
+		FATTrafficTrain* Holder = nullptr;
+		const AFGBuildableRailroadTrack* Track = nullptr;
+		int32 Joint = INDEX_NONE;
+	};
+
+	// Applies the Mods menu settings; a changed switch overrides what /at set for this session.
+	void ApplySettings();
 	void UpdateTraffic(float DeltaSeconds);
 	void ReadTrain(FATTrafficTrain& State, AFGTrain* Train) const;
 	void ReleasePassedClaims(FATTrafficTrain& State) const;
 	void ExtendClaims(FATTrafficTrain& State);
 	void UpdateAuthority(FATTrafficTrain& State) const;
+	void RefreshClaimedJoints(FATTrafficTrain& State) const;
+	void LogDeadlocks();
 
-	// Returns false if another train occupies or claims Track or a track conflicting with it; sets OutBlocker, the
-	// conflicting track it holds, and whether it stands on it.
-	bool IsTrackFree(const AFGBuildableRailroadTrack* Track, const FATTrafficTrain& Self, const FATTrafficTrain*& OutBlocker,
-		AFGBuildableRailroadTrack*& OutConflict, bool& bOutStandsOnIt) const;
+	// Returns false if another train stands on, claims or holds a track crossing Track; sets the holder, the track it
+	// holds, and whether it stands on it.
+	bool IsTrackFree(const AFGBuildableRailroadTrack* Track, const FATTrafficTrain& Self, FATTrafficTrain*& OutHolder,
+		AFGBuildableRailroadTrack*& OutConflict, bool& bOutStandsOnIt);
 
-	// Returns true if Self may stop with its front at the end of route step EndIndex.
+	// Returns false if another train has a vehicle in Joint's fouling zone or holds track through it.
+	bool IsJointFree(int32 Joint, const FATTrafficTrain& Self, FATTrafficTrain*& OutHolder, bool& bOutStandsAtIt);
+
+	// Returns true if every preemption can be done safely with Self clearing the conflicts within ClearDistance;
+	// sets OutReason otherwise.
+	bool CanPreempt(const FATTrafficTrain& Self, const TArray<FPreemption>& Preemptions, float ClearDistance, FString& OutReason) const;
+	void ApplyPreemptions(const FATTrafficTrain& Self, const TArray<FPreemption>& Preemptions);
+
+	// Returns the route index at which Holder's claims meet the preempted item, or INDEX_NONE; for a switch it's the
+	// step whose exit is the switch.
+	int32 FindOnRoute(const FATTrafficTrain& Holder, const FPreemption& Preemption) const;
+
+	// Returns true if Self may stop with its front StopMargin before the end of route step EndIndex.
 	bool IsValidStop(const FATTrafficTrain& Self, int32 EndIndex, FString& OutReason) const;
 
-	// Returns true if no other moving train needs to pass Track, against or across Self's direction, before Self
-	// moves on; trains behind Self going the same way only queue.
+	// Returns true if no other moving train needs to pass Track, against Self's direction, before Self moves on;
+	// trains behind Self going the same way only queue.
 	bool IsOutOfOthersWay(const FATTrafficTrain& Self, const FATRouteStep& Step, FString& OutReason) const;
 
-	// Returns Track first, then every track conflicting with it.
+	// Returns Track first, then every track crossing it.
 	const TArray<AFGBuildableRailroadTrack*>& GetConflicts(const AFGBuildableRailroadTrack* Track) const;
-	bool IsJunction(const AFGBuildableRailroadTrack* Track) const;
+	bool IsCrossing(const AFGBuildableRailroadTrack* Track) const;
 
-	// Rebuilds the conflict graph for every track in the world: the game's overlapping tracks, made symmetric, and
-	// all tracks that meet at a joint of three or more tracks (switches and merges).
+	// Returns the switch joint Connection belongs to, or INDEX_NONE.
+	int32 GetJoint(const UFGRailroadTrackConnectionComponent* Connection) const;
+
+	// Stop margin before a track end leaving through Exit. [cm]
+	float GetStopMargin(const UFGRailroadTrackConnectionComponent* Exit) const;
+
+	// Rebuilds the conflict model for every track in the world: switch joints (three or more tracks meeting) and the
+	// game's overlapping tracks, made symmetric, that don't share a switch joint (crossings).
 	void RebuildConflicts();
 
 	bool HoldsTrack(const FATTrafficTrain& State, const AFGBuildableRailroadTrack* Track) const;
+	static bool HoldsJoint(const FATTrafficTrain& State, int32 Joint);
 
 	// Congestion other trains than Self put on each track: standing trains, claims, and their routes ahead.
 	struct FCongestion
@@ -139,13 +184,27 @@ private:
 	// until measured. [cm/s^2]
 	static float GetPlanningDeceleration(const FATTrafficTrain& State);
 
+	// Acceleration estimate from the consist's tractive effort and mass, times Share. [cm/s^2]
+	static float GetAcceleration(const FATTrafficTrain& State, float Share);
+
+	// Time to cover Distance from Speed accelerating at Acceleration up to MaxSpeed. [s]
+	static float TimeToCover(float Distance, float Speed, float Acceleration, float MaxSpeed);
+
 	bool mEnabled = false;
 	bool mRerouteEnabled = true;
 	float mUpdateTimer = 0.f;
+	float mSettingsTimer = 0.f;
+	float mPhaseReportTimer = 0.f;
+	// Settings as last read, to notice changes; unset until first read.
+	TOptional<bool> mConfigTraffic;
+	TOptional<bool> mConfigRerouting;
 	TMap<TWeakObjectPtr<AFGTrain>, FATTrafficTrain> mTrains;
 
 	TMap<const AFGBuildableRailroadTrack*, TArray<AFGBuildableRailroadTrack*>> mConflicts;
+	TMap<const UFGRailroadTrackConnectionComponent*, int32> mJointOf;
 	double mConflictsBuiltAt = -1e9;
-	// Set when a track missing from the conflict graph was looked up.
+	// Set when a track missing from the conflict model was looked up.
 	mutable bool mConflictsStale = false;
+	// The last deadlock logged, to log each one once.
+	FString mLastDeadlock;
 };

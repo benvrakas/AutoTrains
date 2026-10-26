@@ -1,6 +1,9 @@
 #include "ATHooks.h"
 #include "ATControlSubsystem.h"
+#include "ATTrafficSubsystem.h"
 #include "AutoTrains.h"
+#include "Buildables/FGBuildableRailroadTrack.h"
+#include "FGRailroadSubsystem.h"
 #include "FGTrain.h"
 #include "Patching/NativeHookManager.h"
 
@@ -25,6 +28,21 @@ void FATHooks::InstallHooks()
 		if (AATControlSubsystem* Control = AATControlSubsystem::Get(Self))
 		{
 			Control->AfterTickAtc(Self, DeltaSeconds);
+		}
+	});
+
+	SUBSCRIBE_METHOD(AFGRailroadSubsystem::SweepRailroadPositions, [](auto& Scope, AFGRailroadSubsystem* Self, FVector2D CapsuleSize, FRailroadTrackPosition StartPos,
+		float StartOrientation, FRailroadTrackPosition EndPos, FVector2D OtherCapsuleSize, FRailroadTrackPosition OtherPos)
+	{
+		if (!AATTrafficSubsystem::ShouldPhaseThrough())
+		{
+			return;
+		}
+		const float HitTime = Scope(Self, CapsuleSize, StartPos, StartOrientation, EndPos, OtherCapsuleSize, OtherPos);
+		if (HitTime < 1.f)
+		{
+			AATTrafficSubsystem::CountPhaseThrough();
+			Scope.Override(1.f);
 		}
 	});
 

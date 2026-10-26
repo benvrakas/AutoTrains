@@ -1,8 +1,8 @@
 {
 	"FileVersion": 3,
 	"Version": 0,
-	"VersionName": "0.4.0",
-	"SemVersion": "0.4.0",
+	"VersionName": "0.5.0",
+	"SemVersion": "0.5.0",
 	"GameVersion": ">=513885",
 	"FriendlyName": "Auto Trains",
 	"Description": "Test build: train traffic without block or path signals. Self-driving trains claim the track ahead and never stop where they block others.",

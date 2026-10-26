@@ -122,13 +122,14 @@ private:
 	void RefreshClaimedJoints(FATTrafficTrain& State) const;
 	void LogDeadlocks();
 
-	// Returns false if another train stands on, claims or holds a track crossing Track; sets the holder, the track it
-	// holds, and whether it stands on it.
+	// Returns false if another train (not in Ignore) stands on, claims or holds a track crossing Track; sets the
+	// holder, the track it holds, and whether it stands on it.
 	bool IsTrackFree(const AFGBuildableRailroadTrack* Track, const FATTrafficTrain& Self, FATTrafficTrain*& OutHolder,
-		AFGBuildableRailroadTrack*& OutConflict, bool& bOutStandsOnIt);
+		AFGBuildableRailroadTrack*& OutConflict, bool& bOutStandsOnIt, const TSet<const FATTrafficTrain*>* Ignore = nullptr);
 
-	// Returns false if another train has a vehicle in Joint's fouling zone or holds track through it.
-	bool IsJointFree(int32 Joint, const FATTrafficTrain& Self, FATTrafficTrain*& OutHolder, bool& bOutStandsAtIt);
+	// Returns false if another train (not in Ignore) has a vehicle in Joint's fouling zone or holds track through it.
+	bool IsJointFree(int32 Joint, const FATTrafficTrain& Self, FATTrafficTrain*& OutHolder, bool& bOutStandsAtIt,
+		const TSet<const FATTrafficTrain*>* Ignore = nullptr);
 
 	// Returns true if every preemption can be done safely with Self clearing the conflicts within ClearDistance;
 	// sets OutReason otherwise.
@@ -138,6 +139,18 @@ private:
 	// Returns the route index at which Holder's claims meet the preempted item, or INDEX_NONE; for a switch it's the
 	// step whose exit is the switch.
 	int32 FindOnRoute(const FATTrafficTrain& Holder, const FPreemption& Preemption) const;
+
+	// Returns true if another moving train's route soon passes Track or a track crossing it (Joint: through the
+	// switch), so Self mustn't stand there.
+	bool IsNeededByOthers(const FATTrafficTrain& Self, const AFGBuildableRailroadTrack* Track, int32 Joint) const;
+
+	// Returns true if Holder, standing on Track (or at Joint), is moving away and clears it before Self, SelfDistance
+	// away, could get there; Self may then count it as free and start moving early.
+	bool IsClearingInTime(const FATTrafficTrain& Self, const FATTrafficTrain& Holder, const AFGBuildableRailroadTrack* Track, int32 Joint,
+		float SelfDistance) const;
+
+	// Drops Self's claims from the first one another train still stands on and no longer clears in time.
+	void RevalidateFollowClaims(FATTrafficTrain& State);
 
 	// Returns true if Self may stop with its front StopMargin before the end of route step EndIndex.
 	bool IsValidStop(const FATTrafficTrain& Self, int32 EndIndex, FString& OutReason) const;

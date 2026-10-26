@@ -1,5 +1,6 @@
 #include "ATChatCommand.h"
 #include "ATControlSubsystem.h"
+#include "ATTrafficSubsystem.h"
 #include "AutoTrains.h"
 #include "Command/CommandSender.h"
 #include "FGPlayerController.h"
@@ -11,7 +12,7 @@ AATChatCommand::AATChatCommand()
 	Aliases.Add(TEXT("autotrains"));
 	MinNumberOfArguments = 1;
 	bOnlyUsableByPlayer = true;
-	Usage = NSLOCTEXT("AutoTrains", "ChatUsage", "/at list | speed <train> <km/h> | stopat <train> <m> | release <train|all> | signals <train> ignore|obey | route <train> check|via | autopilot <train|all> on|off | removesignals confirm | log on|off   (<train> = number from /at list, or part of its name)");
+	Usage = NSLOCTEXT("AutoTrains", "ChatUsage", "/at traffic on|off|status | list | speed <train> <km/h> | stopat <train> <m> | release <train|all> | signals <train> ignore|obey | route <train> check|via | autopilot <train|all> on|off | removesignals confirm | log on|off   (<train> = number from /at list, or part of its name)");
 }
 
 EExecutionStatus AATChatCommand::ExecuteCommand_Implementation(UCommandSender* Sender, const TArray<FString>& Arguments, const FString& Label)
@@ -43,6 +44,29 @@ EExecutionStatus AATChatCommand::ExecuteCommand_Implementation(UCommandSender* S
 	{
 		Sender->SendChatMessage(Control->ReleaseAll());
 		return EExecutionStatus::COMPLETED;
+	}
+	if (Verb == TEXT("traffic") && Arguments.Num() == 2)
+	{
+		AATTrafficSubsystem* Traffic = AATTrafficSubsystem::Get(this);
+		if (!Traffic)
+		{
+			Sender->SendChatMessage(TEXT("Auto Trains: traffic subsystem missing."), FLinearColor::Red);
+			return EExecutionStatus::UNCOMPLETED;
+		}
+		const FString Mode = Arguments[1].ToLower();
+		if (Mode == TEXT("on") || Mode == TEXT("off"))
+		{
+			Sender->SendChatMessage(Traffic->SetEnabled(Mode == TEXT("on")));
+			return EExecutionStatus::COMPLETED;
+		}
+		if (Mode == TEXT("status"))
+		{
+			for (const FString& Line : Traffic->DescribeAll())
+			{
+				Sender->SendChatMessage(Line);
+			}
+			return EExecutionStatus::COMPLETED;
+		}
 	}
 	if (Verb == TEXT("removesignals"))
 	{

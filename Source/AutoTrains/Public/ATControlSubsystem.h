@@ -57,6 +57,10 @@ public:
 	// Returns true if Train should drive through stop signals.
 	bool IsIgnoringSignals(const AFGTrain* Train) const;
 
+	// Clears the train's signal stops and recomputes its restrictive point and target speed without them. Call after
+	// AFGTrain::TickAtc.
+	static void IgnoreSignalStops(AFGTrain* Train);
+
 	// Returns the train for a /at list number or a name, or nullptr.
 	AFGTrain* FindTrain(const FString& Token) const;
 
@@ -77,9 +81,6 @@ public:
 private:
 	// Returns the number of block and path signals in the world that aren't being destroyed.
 	int32 CountSignals() const;
-
-	// Clears the train's signal stops and recomputes its restrictive point and target speed without them.
-	void IgnoreSignalStops(AFGTrain* Train);
 
 	// Returns all trains, sorted by name, as numbered by /at list.
 	TArray<AFGTrain*> GetSortedTrains() const;

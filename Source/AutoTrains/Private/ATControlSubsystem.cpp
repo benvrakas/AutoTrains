@@ -1,5 +1,6 @@
 #include "ATControlSubsystem.h"
 #include "ATRouter.h"
+#include "ATTrafficSubsystem.h"
 #include "AutoTrains.h"
 #include "Buildables/FGBuildableRailroadSignal.h"
 #include "Buildables/FGBuildableRailroadTrack.h"
@@ -123,9 +124,14 @@ void AATControlSubsystem::AfterTickAtc(AFGTrain* Train, float DeltaSeconds)
 	State.Odometer += Speed * DeltaSeconds;
 	State.GameTargetSpeed = Atc.TargetSpeed;
 
+	// Signal stops are cleared first, since that recomputes the target speed; every cap applies after it.
 	if (State.bIgnoreSignals && Train->IsSelfDrivingEnabled())
 	{
 		IgnoreSignalStops(Train);
+	}
+	if (AATTrafficSubsystem* Traffic = AATTrafficSubsystem::Get(this))
+	{
+		Traffic->ApplyAuthority(Train);
 	}
 	if (Train->IsSelfDrivingEnabled() && State.Mode != EATCommandMode::None)
 	{
@@ -468,7 +474,7 @@ FString AATControlSubsystem::SetLogging(bool bLog)
 			Consist.MaxTractiveEffort / 100000.f, Consist.MaxAirBrakingEffort / 100000.f, Consist.MaxDynamicBrakingEffort / 100000.f,
 			Consist.MaxBrakeDeceleration / 100.f, Consist.MaxBrakeDistance / 100.f));
 	}
-	mPendingRows.Add(TEXT("time_s,train,self_driving,status,command,ignore_signals,speed_kmh,game_target_kmh,final_target_kmh,accel_ms2,odometer_m,stop_remaining_m,goal_distance_m,restrictive_aspect,restrictive_distance_m,next_signal_aspect,next_signal_distance_m,front_track,front_offset_m,rear_track,rear_offset_m,docking,error"));
+	mPendingRows.Add(TEXT("time_s,train,self_driving,status,command,ignore_signals,speed_kmh,game_target_kmh,final_target_kmh,accel_ms2,odometer_m,stop_remaining_m,goal_distance_m,restrictive_aspect,restrictive_distance_m,next_signal_aspect,next_signal_distance_m,front_track,front_offset_m,rear_track,rear_offset_m,docking,error,traffic_managed,authority_m,claims,waiting_s,blocked_by"));
 	FlushTelemetry();
 	UE_LOG(LogAutoTrains, Log, TEXT("Telemetry started: %s"), *mTelemetryPath);
 	return FString::Printf(TEXT("Logging telemetry to %s"), *mTelemetryPath);
@@ -514,7 +520,7 @@ FString AATControlSubsystem::RemoveAllSignals()
 	{
 		PathSignals += Signal->IsPathSignal() ? 1 : 0;
 		IFGDismantleInterface::Execute_Dismantle(Signal);
-		// Dismantle outside the build gun can leave the actor in place (seen in 0.2.2); destroy what's left.
+		// Destroys a signal the dismantle call left standing; normally it's already being destroyed.
 		if (IsValid(Signal) && !Signal->IsActorBeingDestroyed())
 		{
 			Signal->Destroy();
@@ -558,6 +564,7 @@ TArray<AFGTrain*> AATControlSubsystem::GetSortedTrains() const
 
 void AATControlSubsystem::SampleTelemetry(float SampleSeconds)
 {
+	const AATTrafficSubsystem* Traffic = AATTrafficSubsystem::Get(this);
 	for (AFGTrain* Train : GetSortedTrains())
 	{
 		FATTrainState& State = mStates.FindOrAdd(Train);
@@ -566,7 +573,7 @@ void AATControlSubsystem::SampleTelemetry(float SampleSeconds)
 		const float Acceleration = (Speed - State.LastSampleSpeed) / SampleSeconds / 100.f;
 		State.LastSampleSpeed = Speed;
 		const float GoalDistance = GetDistanceToGoal(Train);
-		mPendingRows.Add(FString::Printf(TEXT("%.2f,%s,%d,%s,%s,%d,%.2f,%.2f,%.2f,%.3f,%.2f,%.2f,%.1f,%s,%.1f,%s,%.1f,%s,%s,%s,%s"),
+		mPendingRows.Add(FString::Printf(TEXT("%.2f,%s,%d,%s,%s,%d,%.2f,%.2f,%.2f,%.3f,%.2f,%.2f,%.1f,%s,%.1f,%s,%.1f,%s,%s,%s,%s,%s"),
 			mLogTime, *Train->GetTrainName().ToString(), Train->IsSelfDrivingEnabled() ? 1 : 0, *EnumName(Train->GetTrainStatus()),
 			ModeName(State.Mode), State.bIgnoreSignals ? 1 : 0, Speed * CmPerSecondToKmh, State.GameTargetSpeed * CmPerSecondToKmh,
 			State.FinalTargetSpeed * CmPerSecondToKmh, Acceleration, State.Odometer / 100.f,
@@ -575,7 +582,8 @@ void AATControlSubsystem::SampleTelemetry(float SampleSeconds)
 			*EnumName(Atc.NextRestrictiveSignalAspect), Atc.NextRestrictiveSignalDistance / 100.f,
 			*EnumName(Atc.NextSignalAspect), Atc.NextSignalDistance / 100.f,
 			*DescribePosition(Train->GetFirstVehicle()), *DescribePosition(Train->GetLastVehicle()),
-			*EnumName(Train->GetDockingState()), *EnumName(Train->GetSelfDrivingError())));
+			*EnumName(Train->GetDockingState()), *EnumName(Train->GetSelfDrivingError()),
+			Traffic ? *Traffic->DescribeForTelemetry(Train) : TEXT("0,-1,0,0,")));
 	}
 }
 

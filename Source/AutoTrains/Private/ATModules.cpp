@@ -2,6 +2,7 @@
 #include "ATChatCommand.h"
 #include "ATControlSubsystem.h"
 #include "ATHooks.h"
+#include "ATTrafficSubsystem.h"
 
 UATGameInstanceModule::UATGameInstanceModule()
 {
@@ -21,5 +22,6 @@ UATGameWorldModule::UATGameWorldModule()
 {
 	bRootModule = true;
 	ModSubsystems.Add(AATControlSubsystem::StaticClass());
+	ModSubsystems.Add(AATTrafficSubsystem::StaticClass());
 	mChatCommands.Add(AATChatCommand::StaticClass());
 }

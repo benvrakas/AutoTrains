@@ -14,6 +14,18 @@ The game log is `%LOCALAPPDATA%\FactoryGame\Saved\Logs\FactoryGame.log`. Filter 
   replaced` if the game or another mod gave the train a different path
 - while logging: `Control hook: <n> calls in 10 s, <us> us each`
 
+## Traffic
+
+- `Traffic control on|off` when switched; `traffic: <train>: <reason>` whenever the reason a train's claims stop
+  changes: `waits for <train>, which holds <track> or a track crossing it, <n> m ahead`, or `no safe place to stop
+  beyond <track>: <why>` (the train would stand on a junction, or another train comes the other way over a track).
+- `/at traffic status` logs `traffic status:` lines: speed, number of claims, how far the train may drive, how long
+  it has waited, and its reason.
+- Telemetry columns `traffic_managed`, `authority_m` (distance from the front to where it must be able to stop;
+  -1 means to its station), `claims`, `waiting_s`, `blocked_by`.
+- Distances from the game's ATC are from the MU master locomotive; the mod corrects them by how far the train's
+  front is ahead of it (`FrontAhead`).
+
 ## Telemetry
 
 `/at log on` writes `%LOCALAPPDATA%\FactoryGame\Saved\AutoTrains\telemetry-<time>.csv`: one `# consist` line per

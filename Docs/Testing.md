@@ -1,60 +1,56 @@
-# Test build 0.2.3: can the mod drive trains itself?
+# Test build 0.3.0: traffic without signals
 
-The finished mod plans every train's speed along its route so trains never meet, without signals. That needs the
-mod to command speed and stop points precisely, ignore signals, choose routes, and know where every train is. This
-build tests those controls on their own; there's no automatic traffic planning in it yet.
+This build adds the first traffic control. With it on, every self-driving train ignores signals and claims the
+track ahead of it:
 
-Back up the save first. Only command trains on track where nothing else is in their way: a train told to ignore
-signals, or routed somewhere new, has no collision protection from this build.
+- A track is free only if no other train stands on it or has claimed it, or a track overlapping it (switch branches,
+  crossings).
+- A train always keeps the speed at which it can stop before the end of its claims, so it slows down and stops for
+  traffic ahead and speeds up as track frees.
+- A claim may only end where the whole train stands off junctions and where no other train needs to come the other
+  way. So a train never stops inside a junction or halfway along single track that another train needs. It waits
+  before the junction, or goes on until it's clear of it.
+- The train that has waited longest gets to claim first.
 
-## Setup: a world without signals
+Trains don't yet adjust their speed ahead of time to arrive just as track frees; they brake when they must. Player
+driven trains aren't controlled; the others treat them as obstacles.
 
-1. Load the copy of your world that has its own session (for example "Bens CSE No Signals").
-2. `/at autopilot all off`, so the game's own trains can't run into each other once the signals are gone.
-3. `/at removesignals confirm`: dismantles every block and path signal; chat says how many.
-4. Save. Turn autopilot on for one train at a time for the steps below (`/at autopilot <train> on`).
+Back up the save first.
 
-## Commands
+## Setup
+
+1. Load the signal-free copy of your world ("Bens CSE No Signals"). It should still have every train's autopilot off.
+2. `/at log on`
+3. `/at traffic on`
+4. Turn autopilot on for two trains whose routes cross or share track: `/at autopilot <train> on`. Add more once those
+   behave.
+
+## Watch for
+
+1. **Following.** Two trains on the same track in the same direction: does the second keep its distance and stop
+   behind the first?
+2. **Junctions.** Trains meeting at a switch or crossing: does one wait before it until the other has cleared it,
+   never stopping on it?
+3. **Single track.** Two trains on one track from opposite ends: does one wait at the end (or a passing place)
+   until the other is through?
+4. **Long and short trains.** Does a long train wait where a short one would already go, because there's no room
+   for its whole length past a junction?
+5. **Stations.** Do trains still dock normally, with DynamicTimeTable and Freight Car Control doing their part?
+6. **Stuck trains.** Any train that waits forever: `/at traffic status` says why.
+
+`/at traffic status` lists every moving self-driving train with its claims, how far it may drive and what it's
+waiting for. The log also gets a `traffic:` line whenever a train's reason for waiting changes.
+
+When you're done: `/at log off`, then tell me. I read the telemetry CSV and `FactoryGame.log` myself.
+
+## All commands
 
 `<train>` is the number from `/at list`, or part of the train's name.
 
+- `/at traffic on|off|status`
 - `/at list`: every train with its number, speed, length, command and distance to its goal
-- `/at speed <train> <km/h>`: cap its speed (`0` stops it)
-- `/at stopat <train> <m>`: stop it that many metres ahead; the log says how far short of or past the point it stopped
-- `/at release <train>` or `/at release all`
-- `/at signals <train> ignore|obey`
-- `/at route <train> check`: this mod's router against the game's route to the train's current stop
-- `/at route <train> via`: send the train to its stop through the track nearest you
 - `/at autopilot <train> on|off` or `/at autopilot all on|off`
 - `/at removesignals confirm`: dismantles every block and path signal in the loaded world
 - `/at log on|off`: telemetry every 0.2 s to `%LOCALAPPDATA%\FactoryGame\Saved\AutoTrains\telemetry-<time>.csv`
-
-## Steps
-
-Run `/at log on` first and `/at log off` at the end.
-
-1. **Speed.** On a self-driving train at full speed: `/at speed <train> 30`, wait, `/at speed <train> 0`, wait,
-   `/at release <train>`. Does it hold 30 km/h, stop, then carry on to its stop normally?
-2. **Stop points.** At full speed: `/at stopat <train> 300`. Repeat with an empty and a loaded train, and on a slope
-   if you have one. Note roughly where each stopped.
-3. **Signals.** With a train waiting at a red signal and nothing ahead of it: `/at signals <train> ignore`. Does it
-   go? Then `/at signals <train> obey`.
-4. **Router.** On a few trains heading to a stop: `/at route <train> check`. Chat should say `SAME ROUTE`.
-5. **Custom route.** Stand next to a track on a different way to a train's next stop: `/at route <train> via`. Does
-   the train take that way, set the switches, and dock at the station normally?
-6. **Your other mods.** Repeat 1 and 5 with a train that uses a DynamicTimeTable group and has Freight Car Control
-   car rules. Do its stops and freight car rules still work?
-
-Then send the telemetry CSV and `%LOCALAPPDATA%\FactoryGame\Saved\Logs\FactoryGame.log`.
-
-## What each step answers
-
-| Step | Question |
-|---|---|
-| 1 | Can the mod set any train's speed directly, and how closely does the train follow it? |
-| 2 | How precisely can it stop a train at a chosen point, and how do braking distances vary by load and slope? |
-| 3 | Can it make a train disregard the game's signals? |
-| 4 | Does its own router match the game's routes, so it can replace the routing? |
-| 5 | Will a train follow a route the mod chose, switches and docking included? |
-| 6 | Do DynamicTimeTable and Freight Car Control keep working? |
-| all | What does the control cost per tick (the log reports it every 10 s while logging)? |
+- Control tests from 0.2: `/at speed <train> <km/h>`, `/at stopat <train> <m>`, `/at release <train>|all`,
+  `/at signals <train> ignore|obey`, `/at route <train> check|via`

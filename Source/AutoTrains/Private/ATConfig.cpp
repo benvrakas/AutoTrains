@@ -2,6 +2,8 @@
 #include "AutoTrains.h"
 #include "Configuration/ConfigManager.h"
 #include "Configuration/Properties/ConfigPropertyBool.h"
+#include "Configuration/Properties/ConfigPropertyFloat.h"
+#include "Configuration/Properties/WidgetExtension/CP_Float.h"
 #include "Configuration/Properties/ConfigPropertySection.h"
 #include "Configuration/Properties/WidgetExtension/CP_Section.h"
 #include "Engine/GameInstance.h"
@@ -13,6 +15,7 @@ const FString UATConfig::TrafficControlKey = TEXT("TrafficControl");
 const FString UATConfig::ReroutingKey = TEXT("Rerouting");
 const FString UATConfig::PhaseThroughKey = TEXT("PhaseThrough");
 const FString UATConfig::AggressiveKey = TEXT("AggressiveTiming");
+const FString UATConfig::SafetyMarginKey = TEXT("SafetyMarginSeconds");
 
 namespace
 {
@@ -36,6 +39,13 @@ namespace
 		const TObjectPtr<UConfigProperty>* Found = Root ? Root->SectionProperties.Find(Key) : nullptr;
 		const UConfigPropertyBool* Property = Found ? Cast<UConfigPropertyBool>(Found->Get()) : nullptr;
 		return Property ? Property->Value : bDefault;
+	}
+
+	float ReadFloat(const UConfigPropertySection* Root, const FString& Key, float Default)
+	{
+		const TObjectPtr<UConfigProperty>* Found = Root ? Root->SectionProperties.Find(Key) : nullptr;
+		const UConfigPropertyFloat* Property = Found ? Cast<UConfigPropertyFloat>(Found->Get()) : nullptr;
+		return Property ? Property->Value : Default;
 	}
 
 	const TCHAR* SMLPropertyPath = TEXT("/SML/Interface/UI/Menu/Mods/ConfigProperties/");
@@ -93,8 +103,15 @@ UATConfig::UATConfig()
 		LOCTEXT("PhaseThroughTip", "While traffic control is on, trains that touch pass through each other instead of crashing and derailing, so a misjudged gap only looks like a clip."),
 		Defaults.bPhaseThrough);
 	AddBool(AggressiveKey, TEXT("AggressiveTiming"), LOCTEXT("Aggressive", "Aggressive timing"),
-		LOCTEXT("AggressiveTip", "Tighter margins: trains plan braking closer to what they really manage and squeeze through junctions ahead of other trains with less time to spare. Best with trains passing through each other. Off is more cautious."),
+		LOCTEXT("AggressiveTip", "Tighter margins: trains plan braking closer to what they really manage, claim less track ahead, and squeeze through junctions ahead of other trains more readily. Best with trains passing through each other. Off is more cautious."),
 		Defaults.bAggressive);
+
+	UConfigPropertyFloat* Margin = CreateDefaultSubobject<UConfigPropertyFloat>(TEXT("SafetyMarginSeconds"));
+	Margin->DisplayName = LOCTEXT("SafetyMargin", "Safety margin (seconds)");
+	Margin->Tooltip = LOCTEXT("SafetyMarginTip", "Extra time, 0 to 10 seconds, a train leaves when it follows another out of a junction or goes through ahead of another train's claim. 0 starts trains as soon as the timing allows; raise it if trains clip each other.");
+	Margin->DefaultValue = Defaults.SafetyMargin;
+	Margin->Value = Defaults.SafetyMargin;
+	RootSection->SectionProperties.Add(SafetyMarginKey, Margin);
 }
 
 void UATConfig::UseSMLEditorClasses()
@@ -124,7 +141,14 @@ void UATConfig::UseSMLEditorClasses()
 		}
 		if (UClass* EditorClass = LoadEditorClass(Old->GetClass()))
 		{
-			NewRoot->SectionProperties.Add(Pair.Key, CloneAs(Old, EditorClass, NewRoot));
+			UConfigProperty* Clone = CloneAs(Old, EditorClass, NewRoot);
+			// SML's number widget accepts 0 to 1 unless told otherwise.
+			if (UCP_Float* Float = Cast<UCP_Float>(Clone))
+			{
+				Float->MinValue = MinSafetyMargin;
+				Float->MaxValue = MaxSafetyMargin;
+			}
+			NewRoot->SectionProperties.Add(Pair.Key, Clone);
 			++Converted;
 			continue;
 		}
@@ -146,6 +170,7 @@ bool UATConfig::Read(const UObject* WorldContext, FATSettings& OutSettings)
 	OutSettings.bRerouting = ReadBool(Root, ReroutingKey, Defaults.bRerouting);
 	OutSettings.bPhaseThrough = ReadBool(Root, PhaseThroughKey, Defaults.bPhaseThrough);
 	OutSettings.bAggressive = ReadBool(Root, AggressiveKey, Defaults.bAggressive);
+	OutSettings.SafetyMargin = FMath::Clamp(ReadFloat(Root, SafetyMarginKey, Defaults.SafetyMargin), MinSafetyMargin, MaxSafetyMargin);
 	return true;
 }
 

@@ -11,6 +11,8 @@ struct FATSettings
 	bool bRerouting = true;
 	bool bPhaseThrough = true;
 	bool bAggressive = true;
+	// Extra time a train leaves when following another out of a junction or going ahead of another's claim. [s]
+	float SafetyMargin = 0.f;
 };
 
 // Auto Trains' mod configuration: on/off switches shown in the Mods menu and Satisfactory Mod Manager.
@@ -26,6 +28,11 @@ public:
 	static const FString ReroutingKey;
 	static const FString PhaseThroughKey;
 	static const FString AggressiveKey;
+	static const FString SafetyMarginKey;
+
+	// Accepted range of the safety margin. [s]
+	static constexpr float MinSafetyMargin = 0.f;
+	static constexpr float MaxSafetyMargin = 10.f;
 
 	// Rebuilds the default configuration with SML's Blueprint property classes, which carry the editor widgets
 	// SML's Mods menu shows. Call before SML registers the configuration.

@@ -17,6 +17,8 @@ namespace
 	// From the Mods menu: tighter margins, and trains passing through each other.
 	bool GAggressive = true;
 	bool GPhaseThrough = false;
+	// Seconds of slack for following and going first. [s]
+	float GSafetyMargin = 0.f;
 	int32 GPhaseThroughCount = 0;
 
 	constexpr float TrafficUpdateInterval = 0.25f;
@@ -43,15 +45,15 @@ namespace
 	// the taker must clear it this long before the holder could arrive. Taker time assumes half its acceleration,
 	// holder time its full acceleration. [cm] [s]
 	float PreemptStopBuffer() { return GAggressive ? 1000.f : 3000.f; }
-	float PreemptTimeMargin() { return GAggressive ? 2.f : 8.f; }
+	float PreemptTimeMargin() { return GSafetyMargin; }
 	float PreemptTakerAccelerationShare() { return GAggressive ? 0.9f : 0.5f; }
 
 	// Claim order: each second waited counts as this many seconds sooner through. [s/s]
 	float WaitingWeight() { return GAggressive ? 0.5f : 1.f; }
 
-	// Following: a train may count track another train stands on as free if that train is moving away at least
-	// FollowMinSpeed and clears it this long before the follower could get there. [s] [cm/s]
-	float FollowTimeMargin() { return GAggressive ? 1.5f : 4.f; }
+	// Following: a train may count track another train holds as free if that train is moving at least FollowMinSpeed
+	// and clears it the safety margin before the follower could get there. [s] [cm/s]
+	float FollowTimeMargin() { return GSafetyMargin; }
 	constexpr float FollowMinSpeed = 500.f;
 	// Other trains whose route passes a crossing or switch within this distance keep a train from stopping on it. [cm]
 	float NeedHorizon() { return GAggressive ? 150000.f : 300000.f; }
@@ -173,13 +175,14 @@ void AATTrafficSubsystem::ApplySettings()
 		}
 	}
 	const bool bPhaseThrough = mEnabled && Settings.bPhaseThrough;
-	if (bPhaseThrough != GPhaseThrough || Settings.bAggressive != GAggressive)
+	if (bPhaseThrough != GPhaseThrough || Settings.bAggressive != GAggressive || Settings.SafetyMargin != GSafetyMargin)
 	{
-		UE_LOG(LogAutoTrains, Log, TEXT("Settings: trains pass through each other %s, aggressive timing %s"),
-			bPhaseThrough ? TEXT("on") : TEXT("off"), Settings.bAggressive ? TEXT("on") : TEXT("off"));
+		UE_LOG(LogAutoTrains, Log, TEXT("Settings: trains pass through each other %s, aggressive timing %s, safety margin %.1f s"),
+			bPhaseThrough ? TEXT("on") : TEXT("off"), Settings.bAggressive ? TEXT("on") : TEXT("off"), Settings.SafetyMargin);
 	}
 	GPhaseThrough = bPhaseThrough;
 	GAggressive = Settings.bAggressive;
+	GSafetyMargin = Settings.SafetyMargin;
 }
 
 bool AATTrafficSubsystem::ShouldPhaseThrough()

@@ -284,3 +284,11 @@ train, then a row per train every 0.2 s:
   the follower's stop (`IsSameWayLeader`), as the follow limit then requires: Cable RSC followed Heavy Oil Residue
   [Coke Steel] pulling away from standstill 0 m ahead and was forced to stop. (3) Fair turns also exempt a train that
   a train in the waiting train's way waits for, so that one can clear the way.
+- Milestone 2 started (space-time planner, see the plan file): `ATPlanner.cpp`, shadow mode only. Resources are
+  tracks (with crossing tracks as conflicts) and switch joints (geometric fouling zones); a pass is the front
+  position where a train enters a resource and where its tail has cleared it, timed by a motion profile (legs between
+  stops: accelerate at half the tractive acceleration to top speed, brake at the service deceleration; the goal is
+  booked open-ended because the dwell is unknown). Update: trains not driven or docked book what they stand on
+  open-ended; moving trains book what lies within their stopping distance (committed); then in claim-priority order
+  each train is planned: the first conflict (overlap plus the safety margin and 2 s drift) puts a wait at the last
+  track end (stop margin short) before the resource so it enters after the booking clears; up to 32 waits.

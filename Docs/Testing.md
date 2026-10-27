@@ -37,6 +37,11 @@ With traffic control on (the default), every self-driving train ignores signals 
   stop must be free once they have. Only then do the other trains give up their claims from there on; the log says
   `goes first`.
 - Deadlocks: if trains wait for each other in a circle for 20 s, the log says `DEADLOCK` with each train's reason.
+- Planner shadow mode (`/at planner shadow on|off`, off by default): every second the space-time planner books
+  every train's route as time intervals on tracks and switch fouling zones and plans each train around the others
+  (priority order, waits at the ends of tracks), without controlling anything. It logs `planner: <train>: ...` where
+  its plan disagrees with the claims (the plan would hold a train the claims let go, or let go one they hold), plan
+  failures, two moving trains both committed to one resource, and waiting cycles, with a summary every 60 s.
 - Congestion rerouting (`/at reroute on|off`, on by default): every 5 s each moving train times its route from the
   end of its claims: each track at its top speed, plus the wait wherever another train is on it, or on a track
   crossing it, while it would be (a standing train for 40 s if docked, 120 s if not driven by the mod, else 20 s or

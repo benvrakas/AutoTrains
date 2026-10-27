@@ -163,6 +163,10 @@ public:
 	// Turns congestion rerouting on or off (on by default while traffic control is on).
 	FString SetRerouteEnabled(bool bEnabled);
 
+	// Turns the space-time planner's shadow mode on or off: it plans every train around the others' bookings and logs
+	// where its plans disagree with the claim system, without controlling anything (off by default).
+	FString SetPlannerShadow(bool bEnabled);
+
 	// Returns true if trains should pass through each other instead of colliding (traffic control and the setting on).
 	static bool ShouldPhaseThrough();
 
@@ -349,13 +353,15 @@ private:
 	};
 	void BuildCongestion(const FATTrafficTrain& Self, TMap<const AFGBuildableRailroadTrack*, FCongestion>& Out) const;
 
-	// How a train is timed along a route: cruising speed and length [cm/s] [cm], and the time a stop costs over driving
-	// on [s].
+	// How a train is timed along a route: cruising speed and length [cm/s] [cm], the time a stop costs over driving
+	// on [s], and the acceleration and service braking it plans with [cm/s^2].
 	struct FRouteSpeed
 	{
 		float Cruise = 500.f;
 		float Length = 0.f;
 		float StopLoss = 0.f;
+		float Accel = 100.f;
+		float Brake = 100.f;
 	};
 	FRouteSpeed GetRouteSpeed(const FATTrafficTrain& State) const;
 
@@ -403,11 +409,87 @@ private:
 	// Gives every changed vehicle its own traction, power and top speed back.
 	void RestoreLocomotivePower();
 
+	// Space-time planner (ATPlanner.cpp), shadow mode. A resource is a track (conflicting with the tracks crossing it)
+	// or a switch joint's fouling zone; a booking holds it for a train from Enter to Clear (world seconds).
+	struct FResourceKey
+	{
+		const AFGBuildableRailroadTrack* Track = nullptr;
+		int32 Joint = INDEX_NONE;
+		bool operator==(const FResourceKey& Other) const { return Track == Other.Track && Joint == Other.Joint; }
+		friend uint32 GetTypeHash(const FResourceKey& Key) { return HashCombine(::GetTypeHash(Key.Track), ::GetTypeHash(Key.Joint)); }
+	};
+	struct FBooking
+	{
+		const FATTrafficTrain* Train = nullptr;
+		double Enter = 0.0;
+		double Clear = 0.0;
+		// Booked whatever else wants it: a moving train within its stopping distance, or a standing obstacle.
+		bool bCommitted = false;
+	};
+	// One resource a train passes on its route: the front position at which it enters it, the one at which its tail
+	// has cleared it [cm along the route from the front], and the times. [s]
+	struct FPass
+	{
+		FResourceKey Key;
+		float EnterAt = 0.f;
+		float ClearAt = 0.f;
+		double Enter = 0.0;
+		double Clear = 0.0;
+	};
+	// A wait in a plan: the front stands at At [cm along the route] until Until.
+	struct FWait
+	{
+		float At = 0.f;
+		double Until = 0.0;
+	};
+	struct FPlan
+	{
+		TArray<FWait> Waits;
+		TArray<FPass> Passes;
+		// The train whose booking caused the first wait, and why planning failed, if it did.
+		const FATTrafficTrain* WaitFor = nullptr;
+		FString Failure;
+		// Distance within which the train can't stop any more. [cm]
+		float Committed = 0.f;
+	};
+	// What shadow mode last logged for a train, to log changes only.
+	struct FShadowState
+	{
+		FString Verdict;
+		double LoggedAt = -1e9;
+	};
+
+	static float GetSafetyMarginSeconds();
+	void UpdatePlanner();
+	// Lists the resources along State's route with the front positions at which it enters and clears them, plus those
+	// its tail still holds behind the front (entered already).
+	void CollectPasses(const FATTrafficTrain& State, TArray<FPass>& Out) const;
+	// Times Passes for State's motion with Waits, from Now. [s]
+	void TimePasses(const FATTrafficTrain& State, const FRouteSpeed& Speed, const TArray<FWait>& Waits, double Now, TArray<FPass>& Passes) const;
+	// Plans State around the bookings in mBookings of other trains.
+	void PlanTrain(const FATTrafficTrain& State, double Now, FPlan& Plan) const;
+	// Returns the other train's booking that overlaps Pass on its resource (or a track crossing it), or null.
+	const FBooking* FindConflict(const FATTrafficTrain& State, const FPass& Pass, double Headway) const;
+	void Book(const FATTrafficTrain& State, const TArray<FPass>& Passes, bool bCommitted);
+	void LogShadow(const FATTrafficTrain& State, const FPlan& Plan, double Now);
+
+	TMap<FResourceKey, TArray<FBooking>> mBookings;
+	TMap<TWeakObjectPtr<AFGTrain>, FShadowState> mShadow;
+	int32 mShadowHolds = 0;
+	int32 mShadowGos = 0;
+	int32 mShadowFailures = 0;
+	int32 mShadowCommittedConflicts = 0;
+	int32 mShadowPlans = 0;
+	double mShadowSeconds = 0.0;
+	double mShadowSummaryAt = 0.0;
+
 	// Vehicles the acceleration and top speed settings have changed.
 	TMap<TWeakObjectPtr<AFGRailroadVehicle>, FATVehicleBase> mVehicleBase;
 
 	bool mEnabled = false;
 	bool mRerouteEnabled = true;
+	bool mPlannerShadow = false;
+	float mPlannerTimer = 0.f;
 	float mUpdateTimer = 0.f;
 	// Seconds since the last traffic update.
 	float mSinceUpdate = 0.f;

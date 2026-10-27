@@ -33,6 +33,8 @@ namespace
 	FString GPhaseNames;
 
 	constexpr float TrafficUpdateInterval = 0.25f;
+	// How often the planner plans in shadow mode. [s]
+	constexpr float PlannerShadowInterval = 1.f;
 	constexpr float SettingsInterval = 1.f;
 	// Claims reach this far past the braking distance plus the train's length; less when aggressive. [cm]
 	float ClaimLookahead() { return GAggressive ? 10000.f : 20000.f; }
@@ -216,6 +218,15 @@ void AATTrafficSubsystem::Tick(float DeltaSeconds)
 		mUpdateTimer = TrafficUpdateInterval;
 		UpdateTraffic(mSinceUpdate);
 		mSinceUpdate = 0.f;
+		if (mPlannerShadow)
+		{
+			mPlannerTimer -= TrafficUpdateInterval;
+			if (mPlannerTimer <= 0.f)
+			{
+				mPlannerTimer = PlannerShadowInterval;
+				UpdatePlanner();
+			}
+		}
 		if (GPhaseNamesPending)
 		{
 			// Name the trains standing on the tracks of the last contact.
@@ -326,6 +337,11 @@ FString AATTrafficSubsystem::SetEnabled(bool bEnabled)
 	const FString Message = bEnabled ? TEXT("Traffic control on: self-driving trains ignore signals and claim track ahead.") : TEXT("Traffic control off.");
 	UE_LOG(LogAutoTrains, Log, TEXT("%s"), *Message);
 	return Message;
+}
+
+float AATTrafficSubsystem::GetSafetyMarginSeconds()
+{
+	return GSafetyMargin;
 }
 
 FString AATTrafficSubsystem::SetRerouteEnabled(bool bEnabled)
@@ -2105,6 +2121,8 @@ AATTrafficSubsystem::FRouteSpeed AATTrafficSubsystem::GetRouteSpeed(const FATTra
 	const float Acceleration = GetAcceleration(State, 0.5f);
 	const float Deceleration = GetPlanningDeceleration(State, Speed.Cruise) * ServiceBrakeShare;
 	Speed.StopLoss = Speed.Cruise / (2.f * Acceleration) + Speed.Cruise / (2.f * FMath::Max(Deceleration, MinPlanDeceleration));
+	Speed.Accel = Acceleration;
+	Speed.Brake = FMath::Max(Deceleration, MinPlanDeceleration);
 	return Speed;
 }
 

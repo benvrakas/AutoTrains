@@ -98,4 +98,16 @@ train, then a row per train every 0.2 s:
   leader's braking distance (that only applies to a leader moving on ahead the same way).
 - Brake samples up to 12.65 m/s2 against a rating of 2.6 (catches, contact with other trains): a sample now counts
   for at most 1.25x the rating.
+- Next session: 12 full brakes in 8 min (from 70), no deadlocks, one pass-through burst. at test 2 and Heavy Oil
+  Residue (120) crept up to 9-14 m behind a stopped train with no follow cap, then gave up their claims at speed
+  (and at test 2 overlapped AI Limiter RSC: 565 pass-throughs). The train in front had counted the one behind it
+  as "clearing in time" (IsClearingInTime didn't check order), so it recorded the follower as its leader, which in
+  turn kept the real follower from following. `GetRouteOrder` now decides who is ahead on a shared route; a holder
+  behind Self on its own way is never clearing in time, and IsSameWayLeader needs the holder ahead.
+- Remaining "behind a leader" brakes: the moving-block cap gave the leader its own (weakest) planning braking
+  distance from a 0.25 s old speed, so a leader braking normally (harder at lower speed) shrank the cap faster than
+  the follower could follow. The leader's distance now uses its live speed and the strongest braking a sample can
+  count for (1.25x rated).
+- Two full brakes right after a 57 s pause (the game didn't tick): trains moved past their authority in one step.
+  Not a logic bug.
 

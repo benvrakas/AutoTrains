@@ -174,6 +174,10 @@ private:
 	// claims that it holds, or -1 if it may stop before then.
 	float GetBlockerClearSeconds(const FATTrafficTrain& State) const;
 
+	// Returns 1 if Other is ahead on Self's route going the same way, -1 if it's on Self's route the other way or
+	// behind Self on its track, 0 if the track Other's master is on isn't on Self's route.
+	int32 GetRouteOrder(const FATTrafficTrain& Self, const FATTrafficTrain& Other) const;
+
 	// Returns true if Other leads Self: it's ahead on Self's route going the same way, or Self followed it when
 	// claiming. A train following Self is never its leader.
 	bool IsLeaderOf(const FATTrafficTrain& Self, const FATTrafficTrain& Other) const;

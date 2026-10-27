@@ -1043,6 +1043,11 @@ bool AATTrafficSubsystem::IsClearingInTime(const FATTrafficTrain& Self, const FA
 	{
 		return false;
 	}
+	// A holder behind Self on its own way has to pass where Self is first.
+	if (GetRouteOrder(Holder, Self) > 0)
+	{
+		return false;
+	}
 	// The holder must keep moving: its own authority has to reach past its braking distance and its length.
 	const float HolderAuthority = GetAuthorityDistance(HolderTrain);
 	const float HolderBrake = FMath::Square(Holder.Speed) / (2.f * GetPlanningDeceleration(Holder));
@@ -1125,11 +1130,11 @@ float AATTrafficSubsystem::GetBlockerClearSeconds(const FATTrafficTrain& State) 
 	return TimeToCover(ClearDistance, Blocker->Speed, GetAcceleration(*Blocker, 1.f), BlockerTrain->mConsistData.MaxSpeed);
 }
 
-bool AATTrafficSubsystem::IsLeaderOf(const FATTrafficTrain& Self, const FATTrafficTrain& Other) const
+int32 AATTrafficSubsystem::GetRouteOrder(const FATTrafficTrain& Self, const FATTrafficTrain& Other) const
 {
-	if (!Other.bManaged || Other.Route.Num() == 0 || Self.Route.Num() == 0)
+	if (Other.Route.Num() == 0 || Self.Route.Num() == 0)
 	{
-		return false;
+		return 0;
 	}
 	const FATRouteStep& OtherStep = Other.Route[0];
 	for (int32 Index = 0; Index < Self.Route.Num(); ++Index)
@@ -1140,18 +1145,28 @@ bool AATTrafficSubsystem::IsLeaderOf(const FATTrafficTrain& Self, const FATTraff
 		}
 		if (Self.Route[Index].Exit != OtherStep.Exit)
 		{
-			return false;
+			return -1;
 		}
 		// On the same track: the one nearer its end is ahead.
-		return Index > 0 || OtherStep.EndDistance - Other.FrontAhead < Self.Route[0].EndDistance - Self.FrontAhead;
+		return Index > 0 || OtherStep.EndDistance - Other.FrontAhead < Self.Route[0].EndDistance - Self.FrontAhead ? 1 : -1;
 	}
+	return 0;
+}
+
+bool AATTrafficSubsystem::IsLeaderOf(const FATTrafficTrain& Self, const FATTrafficTrain& Other) const
+{
+	if (!Other.bManaged)
+	{
+		return false;
+	}
+	const int32 Order = GetRouteOrder(Self, Other);
 	// Merging or crossing traffic leads only if Self chose to follow it.
-	return Self.FollowedTrains.Contains(Other.Train);
+	return Order != 0 ? Order > 0 : Self.FollowedTrains.Contains(Other.Train);
 }
 
 bool AATTrafficSubsystem::IsSameWayLeader(const FATTrafficTrain& Self, const FATTrafficTrain& Holder, int32 FromIndex) const
 {
-	if (!Holder.bManaged || Holder.Route.Num() == 0 || Holder.StoppedSeconds >= LeaderStopSeconds)
+	if (!Holder.bManaged || Holder.Route.Num() == 0 || Holder.StoppedSeconds >= LeaderStopSeconds || GetRouteOrder(Self, Holder) <= 0)
 	{
 		return false;
 	}
@@ -1304,7 +1319,12 @@ float AATTrafficSubsystem::GetFollowLimit(const AFGTrain* Train, const FATTraffi
 		{
 			continue;
 		}
-		const float LeaderBrake = FMath::Square(Leader->Speed) / (2.f * GetPlanningDeceleration(*Leader));
+		// The leader may brake as hard as any sample counts for, from its speed now.
+		const AFGTrain* LeaderTrainNow = Leader->Train.Get();
+		const float LeaderSpeed = LeaderTrainNow ? FMath::Abs(LeaderTrainNow->mSimulationData.Velocity) : Leader->Speed;
+		const float LeaderStrongest = LeaderTrainNow ? FMath::Max(LeaderTrainNow->mConsistData.MaxBrakeDeceleration * MaxRatedBrakeMultiple,
+			GetPlanningDeceleration(*Leader, LeaderSpeed)) : GetPlanningDeceleration(*Leader, LeaderSpeed);
+		const float LeaderBrake = FMath::Square(LeaderSpeed) / (2.f * LeaderStrongest);
 		// A leader ahead on this train's route: stop behind its tail, allowing for the distance the leader itself
 		// needs to stop.
 		const FATRouteStep& LeaderStep = Leader->Route[0];

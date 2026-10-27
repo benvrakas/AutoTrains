@@ -99,8 +99,10 @@ namespace
 	// Congestion costs, as extra track length. [cm]
 	constexpr float StandingTrainPenalty = 150000.f;
 	constexpr float MovingTrainPenalty = 40000.f;
-	// A train waiting for the train being routed can't get out of its way.
+	// A train waiting for the train being routed can't get out of its way, and one that holds track the other way may
+	// stop on it facing the train being routed: a new route doesn't run against held track.
 	constexpr float WaitingForSelfPenalty = 10000000.f;
+	constexpr float HeadOnPenalty = 10000000.f;
 	constexpr float ClaimPenalty = 30000.f;
 	constexpr float UpcomingSameWayPenalty = 5000.f;
 	constexpr float UpcomingOtherWayPenalty = 80000.f;
@@ -1752,12 +1754,20 @@ void AATTrafficSubsystem::BuildCongestion(const FATTrafficTrain& Self, TMap<cons
 				}
 				Out.FindOrAdd(Step.Track).UpcomingExits.Add(Step.Exit);
 			}
+			for (const FATRouteStep& Step : Other.Route)
+			{
+				if (!HoldsTrack(Other, Step.Track))
+				{
+					break;
+				}
+				Out.FindOrAdd(Step.Track).HeldExits.Add(Step.Exit);
+			}
 		}
 	}
 }
 
 float AATTrafficSubsystem::GetCongestionCost(const TMap<const AFGBuildableRailroadTrack*, FCongestion>& Congestion, const AFGBuildableRailroadTrack* Track,
-	const UFGRailroadTrackConnectionComponent* Exit)
+	const UFGRailroadTrackConnectionComponent* Exit, bool bNewRoute)
 {
 	const FCongestion* Entry = Congestion.Find(Track);
 	if (!Entry)
@@ -1768,6 +1778,13 @@ float AATTrafficSubsystem::GetCongestionCost(const TMap<const AFGBuildableRailro
 	for (const UFGRailroadTrackConnectionComponent* UpcomingExit : Entry->UpcomingExits)
 	{
 		Cost += UpcomingExit == Exit ? UpcomingSameWayPenalty : UpcomingOtherWayPenalty;
+	}
+	for (const UFGRailroadTrackConnectionComponent* HeldExit : Entry->HeldExits)
+	{
+		if (bNewRoute && HeldExit != Exit)
+		{
+			Cost += HeadOnPenalty;
+		}
 	}
 	return Cost;
 }
@@ -1804,11 +1821,11 @@ void AATTrafficSubsystem::ConsiderReroute(FATTrafficTrain& State)
 	for (int32 Index = Commit + 1; Index < State.Route.Num(); ++Index)
 	{
 		CurrentLength += State.Route[Index].Track->GetLength();
-		CurrentCost += State.Route[Index].Track->GetLength() + GetCongestionCost(Congestion, State.Route[Index].Track, State.Route[Index].Exit);
+		CurrentCost += State.Route[Index].Track->GetLength() + GetCongestionCost(Congestion, State.Route[Index].Track, State.Route[Index].Exit, false);
 	}
 
 	const TArray<UFGRailroadTrackConnectionComponent*> Alternative = FATRouter::FindRoute(Start, Goal, false,
-		[&Congestion](const AFGBuildableRailroadTrack* Track, const UFGRailroadTrackConnectionComponent* Exit) { return GetCongestionCost(Congestion, Track, Exit); });
+		[&Congestion](const AFGBuildableRailroadTrack* Track, const UFGRailroadTrackConnectionComponent* Exit) { return GetCongestionCost(Congestion, Track, Exit, true); });
 	if (Alternative.Num() < 2)
 	{
 		return;
@@ -1818,7 +1835,7 @@ void AATTrafficSubsystem::ConsiderReroute(FATTrafficTrain& State)
 	for (int32 Index = 1; Index < Alternative.Num(); ++Index)
 	{
 		const AFGBuildableRailroadTrack* Track = Alternative[Index]->GetTrack();
-		NewCost += (Track ? Track->GetLength() : 0.f) + GetCongestionCost(Congestion, Track, Alternative[Index]);
+		NewCost += (Track ? Track->GetLength() : 0.f) + GetCongestionCost(Congestion, Track, Alternative[Index], true);
 		bSame = bSame && Alternative[Index] == State.Route[Commit + Index].Exit;
 	}
 	if (bSame || NewCost > CurrentCost - FMath::Max(RerouteMinGain, CurrentCost * RerouteMinGainShare))

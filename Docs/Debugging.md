@@ -201,3 +201,11 @@ train, then a row per train every 0.2 s:
   acceleration rose less than x2.
 - Pass-through reports now name the trains on the tracks of the last contact. The burst at 04:45:20-30 had no two
   trains on the same track (switch or crossing).
+- Session 2026-10-27 05:19: MF Resource Train and AI Limiter RSC were nose to nose on a short bidirectional line
+  from load: the save held the deadlock of the previous session (04:20), which never cleared (trains can't back
+  out) and was cleared by hand. It formed when AI Limiter rerouted (04:20:22) onto a route running the other way over
+  track MF held, its stop, and MF rerouted 2 s later onto one running the other way into AI Limiter's claims; each
+  was committed into the line from its own end. Reroute congestion counted another train's claim as 300 m whichever
+  way it ran. A new route now costs 100 km per track it runs against another train's held route
+  (`HeadOnPenalty`, `FCongestion::HeldExits`); the current route doesn't, so single track with passing loops keeps
+  working. The pass-through at 05:29:33-53 (Coated Plates RSC Train / at test 3) was at test 3 driven by hand.

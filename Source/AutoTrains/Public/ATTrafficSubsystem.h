@@ -309,12 +309,15 @@ private:
 		float Penalty = 0.f;
 		// Exit connections of other trains' upcoming passes over the track, to tell same and opposite direction apart.
 		TArray<const UFGRailroadTrackConnectionComponent*> UpcomingExits;
+		// Exit connections of other trains that hold the track on their route.
+		TArray<const UFGRailroadTrackConnectionComponent*> HeldExits;
 	};
 	void BuildCongestion(const FATTrafficTrain& Self, TMap<const AFGBuildableRailroadTrack*, FCongestion>& Out) const;
 
-	// Extra cost of driving over Track and leaving through Exit, given the congestion map. [cm]
+	// Extra cost of driving over Track and leaving through Exit, given the congestion map; bNewRoute adds the cost of
+	// driving against another train's held track. [cm]
 	static float GetCongestionCost(const TMap<const AFGBuildableRailroadTrack*, FCongestion>& Congestion, const AFGBuildableRailroadTrack* Track,
-		const UFGRailroadTrackConnectionComponent* Exit);
+		const UFGRailroadTrackConnectionComponent* Exit, bool bNewRoute);
 
 	// Looks for a route to State's goal, from the end of its claims, that's clearly cheaper than its current one once
 	// congestion is counted, and switches to it.

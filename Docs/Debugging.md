@@ -121,4 +121,10 @@ train, then a row per train every 0.2 s:
 - The follow cap is now two-level: the speed cap gives a leader moving on ahead its braking distance with the
   strongest braking a sample counts for, and full brake only comes when over the curve with the leader's planning
   braking. The strict cap alone put followers over the curve whenever they followed closer than it allowed.
+- Next session (12 min, no telemetry): no deadlocks, no pass-throughs, 11 full brakes. The previous session's
+  telemetry shows the "behind a leader" ones aren't a slowly tightening cap: MF Resource Train at 107 km/h had a cap
+  of 141 km/h, then a leader appeared ~150 m ahead inside its own claims within one tick. Rerouting isn't it (75
+  reroutes, authority never dropped). The full-brake line now names the binding leader, the gap (to its nearest
+  vehicle on the path, or to the first track it holds), the leader's braking distance and how long it has been a
+  leader (`FollowLeaderSince`), to find where such leaders come from.
 

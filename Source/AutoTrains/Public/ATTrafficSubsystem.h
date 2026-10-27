@@ -31,6 +31,17 @@ struct FATRouteStep
 	float EndDistance = 0.f;
 };
 
+// The follow leader that sets a train's speed cap, for the log.
+struct FATFollowInfo
+{
+	TWeakObjectPtr<AFGTrain> Leader;
+	// Distance to the leader's nearest vehicle on the path, or to the first track it holds; the leader's braking
+	// distance added to it. [cm]
+	float Gap = -1.f;
+	float LeaderBrake = 0.f;
+	bool bVehicleOnPath = false;
+};
+
 // Traffic state of one train, rebuilt every update except its claims.
 struct FATTrafficTrain
 {
@@ -48,6 +59,8 @@ struct FATTrafficTrain
 	TSet<int32> ClaimedJoints;
 	// Trains holding track this train has claimed too: it follows them and keeps its distance from them.
 	TArray<TWeakObjectPtr<AFGTrain>> FollowLeaders;
+	// World time each current follow leader became one, for the log. [s]
+	TMap<TWeakObjectPtr<AFGTrain>, double> FollowLeaderSince;
 	// Trains this one counted as moving out of its way when it claimed track they hold. Apart from trains ahead of it
 	// the same way, only these lead it.
 	TSet<TWeakObjectPtr<AFGTrain>> FollowedTrains;
@@ -206,7 +219,7 @@ private:
 	// first track along it one holds), plus the braking distance of a leader moving on ahead the same way, counted
 	// with the strongest braking a sample counts for; -1 if it follows none. OutHardLimit is the same with the
 	// leaders' planning braking, for full brake. [cm]
-	float GetFollowLimit(const AFGTrain* Train, const FATTrafficTrain& State, float& OutHardLimit) const;
+	float GetFollowLimit(const AFGTrain* Train, const FATTrafficTrain& State, float& OutHardLimit, FATFollowInfo* OutInfo = nullptr) const;
 
 	// Returns the distance from Train's front along its path to the nearest vehicle of Other ahead of it, or -1 if
 	// none is within GapSearchDistance. [cm]

@@ -1250,6 +1250,7 @@ void AATTrafficSubsystem::RevalidateFollowClaims(FATTrafficTrain& State)
 
 void AATTrafficSubsystem::UpdateFollowLeaders(FATTrafficTrain& State) const
 {
+	const TArray<TWeakObjectPtr<AFGTrain>> Previous = State.FollowLeaders;
 	State.FollowLeaders.Reset();
 	for (const TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Pair : mTrains)
 	{
@@ -1290,6 +1291,21 @@ void AATTrafficSubsystem::UpdateFollowLeaders(FATTrafficTrain& State) const
 			It.RemoveCurrent();
 		}
 	}
+	const double Now = GetWorld()->GetTimeSeconds();
+	for (auto It = State.FollowLeaderSince.CreateIterator(); It; ++It)
+	{
+		if (!State.FollowLeaders.Contains(It.Key()))
+		{
+			It.RemoveCurrent();
+		}
+	}
+	for (const TWeakObjectPtr<AFGTrain>& Leader : State.FollowLeaders)
+	{
+		if (!Previous.Contains(Leader) || !State.FollowLeaderSince.Contains(Leader))
+		{
+			State.FollowLeaderSince.Add(Leader, Now);
+		}
+	}
 }
 
 float AATTrafficSubsystem::GetDistanceToTrackStart(const AFGTrain* Train, const FATTrafficTrain& State, const AFGBuildableRailroadTrack* Track) const
@@ -1320,14 +1336,26 @@ float AATTrafficSubsystem::GetDistanceToTrackStart(const AFGTrain* Train, const 
 	return TrackNotOnPath;
 }
 
-float AATTrafficSubsystem::GetFollowLimit(const AFGTrain* Train, const FATTrafficTrain& State, float& OutHardLimit) const
+float AATTrafficSubsystem::GetFollowLimit(const AFGTrain* Train, const FATTrafficTrain& State, float& OutHardLimit, FATFollowInfo* OutInfo) const
 {
 	float Limit = -1.f;
 	OutHardLimit = -1.f;
-	auto Add = [&Limit, &OutHardLimit](float Soft, float Hard)
+	const FATTrafficTrain* Current = nullptr;
+	auto Add = [&Limit, &OutHardLimit, &Current, OutInfo](float Gap, float SoftBrake, float HardBrake, bool bVehicleOnPath)
 	{
-		Limit = Limit < 0.f ? Soft : FMath::Min(Limit, Soft);
-		OutHardLimit = OutHardLimit < 0.f ? Hard : FMath::Min(OutHardLimit, Hard);
+		const float Hard = Gap + HardBrake;
+		if (OutHardLimit < 0.f || Hard < OutHardLimit)
+		{
+			OutHardLimit = Hard;
+			if (OutInfo)
+			{
+				OutInfo->Leader = Current->Train;
+				OutInfo->Gap = Gap;
+				OutInfo->LeaderBrake = HardBrake;
+				OutInfo->bVehicleOnPath = bVehicleOnPath;
+			}
+		}
+		Limit = Limit < 0.f ? Gap + SoftBrake : FMath::Min(Limit, Gap + SoftBrake);
 	};
 	for (const TWeakObjectPtr<AFGTrain>& LeaderTrain : State.FollowLeaders)
 	{
@@ -1337,6 +1365,7 @@ float AATTrafficSubsystem::GetFollowLimit(const AFGTrain* Train, const FATTraffi
 		{
 			continue;
 		}
+		Current = Leader;
 		// The braking distance of a leader from its speed now: with the strongest braking a sample counts for, and
 		// with its planning braking. A train this mod doesn't drive is a standing obstacle.
 		float SoftBrake = 0.f;
@@ -1356,7 +1385,7 @@ float AATTrafficSubsystem::GetFollowLimit(const AFGTrain* Train, const FATTraffi
 		if (Gap >= 0.f)
 		{
 			const bool bMovesAhead = Leader->bManaged && GetRouteOrder(State, *Leader) > 0;
-			Add(Gap + (bMovesAhead ? SoftBrake : 0.f), Gap + (bMovesAhead ? HardBrake : 0.f));
+			Add(Gap, bMovesAhead ? SoftBrake : 0.f, bMovesAhead ? HardBrake : 0.f, true);
 			continue;
 		}
 		if (!Leader->bManaged)
@@ -1386,7 +1415,7 @@ float AATTrafficSubsystem::GetFollowLimit(const AFGTrain* Train, const FATTraffi
 			{
 				return LeaderStep.Track == Step.Track && LeaderStep.Exit == Step.Exit;
 			});
-			Add(FMath::Max(Start, 0.f) + (bSameWay ? SoftBrake : 0.f), FMath::Max(Start, 0.f) + (bSameWay ? HardBrake : 0.f));
+			Add(FMath::Max(Start, 0.f), bSameWay ? SoftBrake : 0.f, bSameWay ? HardBrake : 0.f, false);
 			break;
 		}
 	}
@@ -1942,7 +1971,8 @@ void AATTrafficSubsystem::ApplyAuthority(AFGTrain* Train)
 	const float Distance = GetAuthorityDistance(Train);
 	// Behind a leader on shared track: keep able to stop where the leader could stop.
 	float HardFollowLimit = -1.f;
-	const float FollowLimit = GetFollowLimit(Train, *State, HardFollowLimit);
+	FATFollowInfo FollowInfo;
+	const float FollowLimit = GetFollowLimit(Train, *State, HardFollowLimit, &FollowInfo);
 	if (Distance < 0.f && FollowLimit < 0.f)
 	{
 		State->bFullBrake = false;
@@ -1972,15 +2002,6 @@ void AATTrafficSubsystem::ApplyAuthority(AFGTrain* Train)
 	const float Deceleration = GetPlanningDeceleration(*State, Speed);
 	const float Allowed = GetAllowed(Deceleration, FollowLimit);
 	const float AllowedHard = GetAllowed(Deceleration, HardFollowLimit);
-	float Limit = MAX_flt;
-	if (Distance >= 0.f)
-	{
-		Limit = Distance;
-	}
-	if (FollowLimit >= 0.f)
-	{
-		Limit = FMath::Min(Limit, FollowLimit);
-	}
 	// Braking is weaker at higher speed: the speed it may still reach is planned with that speed's braking.
 	float Target = Allowed;
 	if (Allowed > Speed && Allowed < MAX_flt)
@@ -1999,8 +2020,16 @@ void AATTrafficSubsystem::ApplyAuthority(AFGTrain* Train)
 	Atc.TargetSpeed = State->bFullBrake ? 0.f : FMath::Min(Atc.TargetSpeed, Target);
 	if (State->bFullBrake && !bWasFullBrake && Speed > AllowedHard + 500.f)
 	{
+		FString Behind;
+		if (HardFollowLimit >= 0.f && (Distance < 0.f || HardFollowLimit - AuthorityStopMargin < Usable))
+		{
+			const double* Since = State->FollowLeaderSince.Find(FollowInfo.Leader);
+			Behind = FString::Printf(TEXT(", behind %s: %s %.0f m, its braking %.0f m, leader for %.1f s"), *TrainName(FollowInfo.Leader.Get()),
+				FollowInfo.bVehicleOnPath ? TEXT("nearest vehicle") : TEXT("first track it holds"), FollowInfo.Gap / 100.f, FollowInfo.LeaderBrake / 100.f,
+				Since ? GetWorld()->GetTimeSeconds() - *Since : -1.0);
+		}
 		UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s over its braking curve (%.0f km/h, allowed %.0f, %.0f m to go%s): full brake"), *TrainName(Train),
-			Speed * 0.036f, AllowedHard * 0.036f, Limit / 100.f, Limit == FollowLimit ? TEXT(", behind a leader") : TEXT(""));
+			Speed * 0.036f, AllowedHard * 0.036f, (Behind.IsEmpty() ? Distance : HardFollowLimit) / 100.f, *Behind);
 	}
 	if (Distance < 0.f)
 	{

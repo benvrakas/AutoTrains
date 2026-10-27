@@ -122,10 +122,9 @@ server admin) can use them, except `/at list` and `/at traffic status`.
 
 - `/at traffic on|off|status`
 - `/at reroute on|off`
-- `/at list`: every train with its number, speed, length, command and distance to its goal
+- `/at planner on|off`
+- `/at list`: every train with its number, speed, length and distance to its goal
 - `/at autopilot <train> on|off` or `/at autopilot all on|off`
 - `/at removesignals confirm`: dismantles every block and path signal in the loaded world
 - `/at session <new name>`: renames the running session; saves and autosaves go to the new name
 - `/at log on|off`: telemetry every 0.2 s to `%LOCALAPPDATA%\FactoryGame\Saved\AutoTrains\telemetry-<time>.csv`
-- Control tests from 0.2: `/at speed <train> <km/h>`, `/at stopat <train> <m>`, `/at release <train>|all`,
-  `/at signals <train> ignore|obey`, `/at route <train> check|via`

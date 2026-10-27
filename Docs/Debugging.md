@@ -6,12 +6,6 @@ The game log is `%LOCALAPPDATA%\FactoryGame\Saved\Logs\FactoryGame.log`. Filter 
 
 - startup: `Auto Trains module starting`, `Hooks installed`
 - every `/at` command and its result
-- `stopat`: the consist's length, mass, brake deceleration and brake distance, then `<train> stopped for stopat: <n> m
-  short of|past the stop point`
-- `route check`: `SAME ROUTE` or `DIFFERENT ROUTE` with point counts and distance differences, then the first 8 points
-  of both routes side by side
-- `route via`: the route's length and point count, whether the train accepted it, and later `the path this mod set was
-  replaced` if the game or another mod gave the train a different path
 - while logging: `Control hook: <n> calls in 10 s, <us> us each`
 
 ## Traffic
@@ -52,9 +46,9 @@ The game log is `%LOCALAPPDATA%\FactoryGame\Saved\Logs\FactoryGame.log`. Filter 
 `/at log on` writes `%LOCALAPPDATA%\FactoryGame\Saved\AutoTrains\telemetry-<time>.csv`: one `# consist` line per
 train, then a row per train every 0.2 s:
 
-- `speed_kmh`; `game_target_kmh`, the speed the game's driver wanted; `final_target_kmh`, after this mod's command
+- `speed_kmh`; `game_target_kmh`, the speed the game's driver wanted; `final_target_kmh`, after this mod's control
 - `accel_ms2`, from the speed change between samples
-- `odometer_m`, distance travelled since the train was first seen; `stop_remaining_m` for `stopat`
+- `odometer_m`, distance travelled since the train was first seen
 - `goal_distance_m`, the track distance left to the train's goal along its path
 - `restrictive_*` and `next_signal_*`, what the game's driver is braking for
 - `front_track`/`front_offset_m` and `rear_track`/`rear_offset_m`, where the first and last vehicle are
@@ -335,3 +329,15 @@ train, then a row per train every 0.2 s:
   average about 92 km/h, so far-off trains looked much closer in time and others held back for them. Plans now use
   each train's cruising speed and acceleration as seen. Wait reasons show the blocking booking's lock and entry time
   and are logged only when the blocker or place changes.
+- Cleanup (2026-10-27): the 0.2 control-test commands (`/at speed`, `stopat`, `release`, `signals`, `route`) and what
+  only they used (per-train command modes, the route check, `FATRouter::FindRoute`, `GetConnectionAhead`,
+  `CompareWithCurrentPath`, `Describe`) are gone; telemetry drops the `command`, `ignore_signals` and
+  `stop_remaining_m` columns.
+- Third planner run (17:30): followers crept behind trains on open track ("waits for AI Limiter RSC ... locked, clear in
+  0 s" with the leader moving away). The tail's bookings behind a train's route had no direction, so following never
+  matched there and a follower waited for each track to be left entirely. CollectPasses now walks the tail back from
+  the route's first track and books each track and switch with the way it is left. Heavy Oil Residue (120) stood after
+  a 45 m/s2 stop (AI Limiter RSC held a track 34 m ahead of it at 167 km/h), its plan failing at 32 waits and
+  rerouting between three routes every 20 s: waits are now capped at 64, a route left in the last 2 minutes isn't taken
+  again, a train the planner names a blocker for counts as waiting for deadlock detection wherever it stands, and a
+  path the game gives a driving train is logged (`got a new path from the game`), the suspected cause of the stop.

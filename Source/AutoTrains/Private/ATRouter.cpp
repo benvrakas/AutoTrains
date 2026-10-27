@@ -19,19 +19,8 @@ namespace
 	}
 }
 
-TArray<UFGRailroadTrackConnectionComponent*> FATRouter::FindRoute(UFGRailroadTrackConnectionComponent* Start, UFGRailroadTrackConnectionComponent* Goal, bool bObeyOneWay)
-{
-	return Search(Start, Goal, bObeyOneWay, 0.f, [](const AFGBuildableRailroadTrack* Track, const UFGRailroadTrackConnectionComponent*, float) { return Track->GetLength(); });
-}
-
 TArray<UFGRailroadTrackConnectionComponent*> FATRouter::FindFastestRoute(UFGRailroadTrackConnectionComponent* Start, UFGRailroadTrackConnectionComponent* Goal,
 	float StartSeconds, TFunctionRef<float(const AFGBuildableRailroadTrack*, const UFGRailroadTrackConnectionComponent*, float)> StepSeconds)
-{
-	return Search(Start, Goal, false, StartSeconds, StepSeconds);
-}
-
-TArray<UFGRailroadTrackConnectionComponent*> FATRouter::Search(UFGRailroadTrackConnectionComponent* Start, UFGRailroadTrackConnectionComponent* Goal, bool bObeyOneWay,
-	float StartCost, TFunctionRef<float(const AFGBuildableRailroadTrack*, const UFGRailroadTrackConnectionComponent*, float)> StepCost)
 {
 	TArray<UFGRailroadTrackConnectionComponent*> Route;
 	if (!Start || !Goal)
@@ -42,8 +31,8 @@ TArray<UFGRailroadTrackConnectionComponent*> FATRouter::Search(UFGRailroadTrackC
 	TMap<UFGRailroadTrackConnectionComponent*, float> BestCost;
 	TMap<UFGRailroadTrackConnectionComponent*, UFGRailroadTrackConnectionComponent*> Previous;
 	TArray<FOpenNode> Open;
-	BestCost.Add(Start, StartCost);
-	Open.HeapPush({Start, StartCost});
+	BestCost.Add(Start, StartSeconds);
+	Open.HeapPush({Start, StartSeconds});
 	while (Open.Num() > 0)
 	{
 		FOpenNode Node;
@@ -56,10 +45,6 @@ TArray<UFGRailroadTrackConnectionComponent*> FATRouter::Search(UFGRailroadTrackC
 		{
 			break;
 		}
-		if (bObeyOneWay && !Node.Connection->GetFacingSignal() && Node.Connection->GetTrailingSignal())
-		{
-			continue;
-		}
 		for (UFGRailroadTrackConnectionComponent* Entry : Node.Connection->GetConnections())
 		{
 			UFGRailroadTrackConnectionComponent* Next = Entry ? Entry->GetOpposite() : nullptr;
@@ -68,7 +53,7 @@ TArray<UFGRailroadTrackConnectionComponent*> FATRouter::Search(UFGRailroadTrackC
 			{
 				continue;
 			}
-			const float Cost = Node.Cost + StepCost(Track, Next, Node.Cost);
+			const float Cost = Node.Cost + StepSeconds(Track, Next, Node.Cost);
 			const float* Known = BestCost.Find(Next);
 			if (!Known || Cost < *Known)
 			{
@@ -122,49 +107,6 @@ FRailroadPathSharedPtr FATRouter::BuildPath(const TArray<UFGRailroadTrackConnect
 	return Path;
 }
 
-UFGRailroadTrackConnectionComponent* FATRouter::GetConnectionAhead(AFGTrain* Train)
-{
-	const AFGLocomotive* Master = Train ? Train->GetMultipleUnitMaster() : nullptr;
-	return Master ? Master->GetTrackPosition().GetForwardConnection() : nullptr;
-}
-
-FString FATRouter::CompareWithCurrentPath(AFGTrain* Train, const FRailroadPathSharedPtr& OurPath)
-{
-	const FTrainAtcData& Atc = Train->mAtcData;
-	if (!Atc.Path.IsValid() || !OurPath.IsValid() || OurPath->PathPoints.Num() == 0)
-	{
-		return TEXT("no path to compare");
-	}
-	const TArray<FRailroadPathPoint>& Theirs = Atc.Path->PathPoints;
-	int32 Offset = INDEX_NONE;
-	for (int32 Index = 0; Index < Theirs.Num(); ++Index)
-	{
-		if (Theirs[Index].TrackConnection.Get() == OurPath->PathPoints[0].TrackConnection.Get())
-		{
-			Offset = Index;
-			break;
-		}
-	}
-	if (Offset == INDEX_NONE)
-	{
-		return FString::Printf(TEXT("the connection ahead (%s) isn't on the game's path (%d points, current segment %d)"),
-			*Describe(OurPath->PathPoints[0].TrackConnection.Get()), Theirs.Num(), Atc.CurrentPathSegment);
-	}
-
-	int32 Matching = 0;
-	float MaxDistanceError = 0.f;
-	while (Offset + Matching < Theirs.Num() && Matching < OurPath->PathPoints.Num()
-		&& Theirs[Offset + Matching].TrackConnection.Get() == OurPath->PathPoints[Matching].TrackConnection.Get())
-	{
-		MaxDistanceError = FMath::Max(MaxDistanceError, FMath::Abs(Theirs[Offset + Matching].Distance - OurPath->PathPoints[Matching].Distance));
-		++Matching;
-	}
-	const bool bSame = Matching == OurPath->PathPoints.Num() && Offset + Matching == Theirs.Num();
-	return FString::Printf(TEXT("%s: game path has %d points (current segment %d, ahead connection at %d), ours %d, %d match in order, largest distance difference %.1f m, game distance at start %.1f m, ours %.1f m"),
-		bSame ? TEXT("SAME ROUTE") : TEXT("DIFFERENT ROUTE"), Theirs.Num(), Atc.CurrentPathSegment, Offset, OurPath->PathPoints.Num(), Matching,
-		MaxDistanceError / 100.f, Theirs[Offset].Distance / 100.f, OurPath->PathPoints[0].Distance / 100.f);
-}
-
 bool FATRouter::ApplyPath(AFGTrain* Train, const FRailroadPathSharedPtr& Path, UFGRailroadTrackConnectionComponent* Goal)
 {
 	FRailroadPathFindingResult Result;
@@ -173,9 +115,4 @@ bool FATRouter::ApplyPath(AFGTrain* Train, const FRailroadPathSharedPtr& Path, U
 	Result.Path = Path;
 	Result.Result = ERailroadPathFindingResult::RPFR_Success;
 	return Train->mAtcData.SetPath(Result);
-}
-
-FString FATRouter::Describe(const UFGRailroadTrackConnectionComponent* Connection)
-{
-	return Connection ? FString::Printf(TEXT("%s.%s"), *GetNameSafe(Connection->GetOwner()), *Connection->GetName()) : TEXT("none");
 }

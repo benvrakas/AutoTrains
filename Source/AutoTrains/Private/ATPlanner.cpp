@@ -17,7 +17,7 @@ namespace
 	// Bookings on one resource keep this far apart beyond the safety margin, for trains drifting from their plans. [s]
 	constexpr double PlannerDriftSeconds = 2.0;
 	// A plan adds at most this many waits.
-	constexpr int32 PlanMaxWaits = 32;
+	constexpr int32 PlanMaxWaits = 64;
 	// An open-ended time: a stay nobody knows the end of, or everything after a wait for one. [s]
 	constexpr double OpenTime = 1e12;
 	// Stay expected at a station no train has been seen docking at from the start yet. [s]
@@ -38,6 +38,8 @@ namespace
 	constexpr float SearchMinGainSeconds = 10.f;
 	constexpr float SearchMinGainShare = 0.1f;
 	constexpr float SearchCooldownSeconds = 15.f;
+	// A train doesn't go back to a route it left for this long. [s]
+	constexpr double LeftRouteSeconds = 120.0;
 	// A track the search can only get onto after an open-ended booking costs this. [s]
 	constexpr float SearchBlockedSeconds = 1e6f;
 	// A train's booking is locked within this many times its stopping distance plus this much travel time and distance:
@@ -313,6 +315,39 @@ void AATTrafficSubsystem::CollectPasses(const FATTrafficTrain& State, TArray<FPa
 		Out.Add(Pass);
 		OnRoute.Add(Step.Track);
 	}
+	// The way the tail runs over the tracks and switches behind the route, walking back from the route's first track:
+	// the connection it leaves each track through, and for each switch the connections it enters and leaves it by.
+	TMap<const AFGBuildableRailroadTrack*, const UFGRailroadTrackConnectionComponent*> TailExit;
+	TMap<int32, TPair<const UFGRailroadTrackConnectionComponent*, const UFGRailroadTrackConnectionComponent*>> TailJoint;
+	if (State.Route.Num() > 0 && State.Route[0].Exit)
+	{
+		const UFGRailroadTrackConnectionComponent* Ahead = State.Route[0].Exit;
+		const UFGRailroadTrackConnectionComponent* Entry = Ahead->GetOpposite();
+		while (Entry && TailExit.Num() < State.Occupied.Num())
+		{
+			const UFGRailroadTrackConnectionComponent* Behind = nullptr;
+			for (const UFGRailroadTrackConnectionComponent* Other : Entry->GetConnections())
+			{
+				const AFGBuildableRailroadTrack* Track = Other ? Other->GetTrack() : nullptr;
+				if (!Behind && Track && State.Occupied.Contains(const_cast<AFGBuildableRailroadTrack*>(Track)) && !OnRoute.Contains(Track) && !TailExit.Contains(Track))
+				{
+					Behind = Other;
+				}
+			}
+			if (!Behind)
+			{
+				break;
+			}
+			TailExit.Add(Behind->GetTrack(), Behind);
+			const int32 Joint = GetJoint(Behind);
+			if (Joint != INDEX_NONE)
+			{
+				TailJoint.Add(Joint, TPair<const UFGRailroadTrackConnectionComponent*, const UFGRailroadTrackConnectionComponent*>(Behind, Ahead));
+			}
+			Ahead = Behind;
+			Entry = Behind->GetOpposite();
+		}
+	}
 	// What the tail still holds behind the front.
 	for (const AFGBuildableRailroadTrack* Track : State.Occupied)
 	{
@@ -322,6 +357,7 @@ void AATTrafficSubsystem::CollectPasses(const FATTrafficTrain& State, TArray<FPa
 		}
 		FPass Pass;
 		Pass.Key.Track = Track;
+		Pass.Exit = TailExit.FindRef(Track);
 		Pass.EnterAt = -1.f;
 		const float Clear = GetTailClearDistance(State, Track, INDEX_NONE);
 		Pass.ClearAt = Clear >= 0.f ? Clear : State.Length;
@@ -335,6 +371,11 @@ void AATTrafficSubsystem::CollectPasses(const FATTrafficTrain& State, TArray<FPa
 		}
 		FPass Pass;
 		Pass.Key.Joint = Joint;
+		if (const TPair<const UFGRailroadTrackConnectionComponent*, const UFGRailroadTrackConnectionComponent*>* Way = TailJoint.Find(Joint))
+		{
+			Pass.Via = Way->Key;
+			Pass.Exit = Way->Value;
+		}
 		Pass.EnterAt = -1.f;
 		const float Clear = GetTailClearDistance(State, nullptr, Joint);
 		Pass.ClearAt = Clear >= 0.f ? Clear : State.Length + GetJointFoulDistance(Joint);
@@ -1203,15 +1244,29 @@ void AATTrafficSubsystem::ConsiderPlannedReroute(FATTrafficTrain& State, double 
 	}
 	bool bSame = Alternative.Num() == State.Route.Num() - Commit;
 	float NewSeconds = StartSeconds;
+	uint32 NewHash = 0;
 	for (int32 Index = 1; Index < Alternative.Num(); ++Index)
 	{
 		NewSeconds += Step(Alternative[Index]->GetTrack(), Alternative[Index], NewSeconds);
 		bSame = bSame && Alternative[Index] == State.Route[Commit + Index].Exit;
+		NewHash = HashCombine(NewHash, GetTypeHash(Alternative[Index]));
 	}
 	if (bSame || NewSeconds > CurrentSeconds - FMath::Max(SearchMinGainSeconds, CurrentSeconds * SearchMinGainShare))
 	{
 		return;
 	}
+	// A route the train left a little while ago only looked slower then for a reason that may come back.
+	State.LeftRoutes.RemoveAll([Now](const TPair<uint32, double>& Left) { return Now - Left.Value > LeftRouteSeconds; });
+	if (State.LeftRoutes.ContainsByPredicate([NewHash](const TPair<uint32, double>& Left) { return Left.Key == NewHash; }))
+	{
+		return;
+	}
+	uint32 OldHash = 0;
+	for (int32 Index = Commit + 1; Index < State.Route.Num(); ++Index)
+	{
+		OldHash = HashCombine(OldHash, GetTypeHash(State.Route[Index].Exit));
+	}
+	State.LeftRoutes.Add(TPair<uint32, double>(OldHash, Now));
 
 	TArray<UFGRailroadTrackConnectionComponent*> Connections;
 	for (int32 Index = 0; Index <= Commit; ++Index)
@@ -1248,6 +1303,7 @@ void AATTrafficSubsystem::ConsiderPlannedReroute(FATTrafficTrain& State, double 
 	State.Route = MoveTemp(Route);
 	State.RoutePath = Train->mAtcData.Path.Get();
 	State.RouteFirstSegment = 0;
+	State.LastPath = State.RoutePath;
 }
 
 void AATTrafficSubsystem::UpdatePlannedTraffic(float DeltaSeconds)

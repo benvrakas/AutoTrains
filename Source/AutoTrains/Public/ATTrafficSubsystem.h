@@ -180,6 +180,11 @@ struct FATTrafficTrain
 	float PredictedFrontAhead = 0.f;
 	TWeakObjectPtr<AFGBuildableRailroadStation> PredictedStation;
 	double PredictedAt = -1e9;
+	// The ATC path seen at the previous update and whether the train was driven then, to notice the game replacing it.
+	const void* LastPath = nullptr;
+	bool bLastManaged = false;
+	// Routes the planner's search left, by hash, with when (world seconds).
+	TArray<TPair<uint32, double>> LeftRoutes;
 };
 
 // Server only. Train traffic without signals. Every self-driving train claims the track ahead of it. A track is
@@ -201,7 +206,6 @@ public:
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
-	bool IsEnabled() const { return mEnabled; }
 	FString SetEnabled(bool bEnabled);
 
 	// Turns congestion rerouting on or off (on by default while traffic control is on).
@@ -210,7 +214,6 @@ public:
 	// Turns the space-time planner on or off (off by default): it drives every self-driving train instead of the claim
 	// rules.
 	FString SetPlannerControl(bool bEnabled);
-	bool IsPlannerControl() const { return mPlannerControl; }
 
 	// Returns true if trains should pass through each other instead of colliding (traffic control and the setting on).
 	static bool ShouldPhaseThrough();

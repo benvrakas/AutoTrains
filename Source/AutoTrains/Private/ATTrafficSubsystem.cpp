@@ -392,6 +392,13 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 		FATTrafficTrain& State = mTrains.FindOrAdd(Train);
 		ReadTrain(State, Train);
 		TrackDocking(State, Train, WorldNow);
+		// A path this mod didn't set while the train was already driving: the game found it one of its own.
+		if (State.bManaged && State.bLastManaged && State.RoutePath != State.LastPath && mPlannerControl)
+		{
+			UE_LOG(LogAutoTrains, Warning, TEXT("planner: %s got a new path from the game while driving (%d tracks to its goal)"), *TrainName(Train), State.Route.Num());
+		}
+		State.LastPath = State.RoutePath;
+		State.bLastManaged = State.bManaged;
 		ApplyLocomotivePower(Train, Train->IsSelfDrivingEnabled() ? GAccelerationScale : 1.f, Train->IsSelfDrivingEnabled() ? GTopSpeed * 0.036f : 0.f);
 
 		// Measure full-brake deceleration per speed band between updates with full brake on at both; a catch ends at
@@ -520,7 +527,8 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 		}
 
 		const float Distance = GetAuthorityDistance(State->Train.Get());
-		const bool bHeld = !State->bAuthorityToGoal && Distance >= 0.f && Distance < State->StopMargin + 5000.f;
+		// The planner names what each train waits for wherever it stands.
+		const bool bHeld = (!State->bAuthorityToGoal && Distance >= 0.f && Distance < State->StopMargin + 5000.f) || (mPlannerControl && State->BlockedBy.IsValid());
 		if (State->Speed < 50.f && bHeld)
 		{
 			State->WaitingSeconds += DeltaSeconds;

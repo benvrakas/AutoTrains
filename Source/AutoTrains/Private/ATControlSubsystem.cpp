@@ -1,5 +1,4 @@
 #include "ATControlSubsystem.h"
-#include "ATRouter.h"
 #include "ATTrafficSubsystem.h"
 #include "AutoTrains.h"
 #include "Buildables/FGBuildableRailroadSignal.h"
@@ -21,10 +20,6 @@
 
 namespace
 {
-	// How far short of the stop point the braking curve ends. [cm]
-	constexpr float StopMargin = 100.f;
-	// Share of the consist's brake deceleration the stop curve plans with.
-	constexpr float StopBrakeShare = 0.7f;
 	constexpr float CmPerSecondToKmh = 0.036f;
 	constexpr float TelemetryInterval = 0.2f;
 
@@ -33,16 +28,6 @@ namespace
 	{
 		const UEnum* Enum = StaticEnum<TEnum>();
 		return Enum ? Enum->GetNameStringByValue(static_cast<int64>(Value)) : FString::FromInt(static_cast<int32>(Value));
-	}
-
-	const TCHAR* ModeName(EATCommandMode Mode)
-	{
-		switch (Mode)
-		{
-		case EATCommandMode::SpeedCap: return TEXT("speed");
-		case EATCommandMode::StopAt: return TEXT("stopat");
-		default: return TEXT("none");
-		}
 	}
 
 	// Returns the remaining track distance along the train's path to its goal, or -1. [cm]
@@ -127,46 +112,12 @@ void AATControlSubsystem::AfterTickAtc(AFGTrain* Train, float DeltaSeconds)
 	State.Odometer += Speed * DeltaSeconds;
 	State.GameTargetSpeed = Atc.TargetSpeed;
 
-	// Signal stops are cleared first, since that recomputes the target speed; every cap applies after it.
-	if (State.bIgnoreSignals && Train->IsSelfDrivingEnabled())
-	{
-		IgnoreSignalStops(Train);
-	}
 	if (AATTrafficSubsystem* Traffic = AATTrafficSubsystem::Get(this))
 	{
 		Traffic->ApplyAuthority(Train, DeltaSeconds);
 		Traffic->ApplySpeedSettings(Train, DeltaSeconds);
 	}
-	if (Train->IsSelfDrivingEnabled() && State.Mode != EATCommandMode::None)
-	{
-		float Allowed = Atc.TargetSpeed;
-		if (State.Mode == EATCommandMode::SpeedCap)
-		{
-			Allowed = FMath::Min(Allowed, State.CapSpeed);
-		}
-		else
-		{
-			const float Remaining = State.StopOdometer - State.Odometer;
-			const float Deceleration = FMath::Max(Train->mConsistData.MaxBrakeDeceleration * StopBrakeShare, 10.f);
-			const float CurveSpeed = Remaining > StopMargin ? FMath::Sqrt(2.f * Deceleration * (Remaining - StopMargin)) : 0.f;
-			Allowed = FMath::Min(Allowed, CurveSpeed);
-			if (!State.bStopReported && Speed < 5.f && CurveSpeed <= 0.f)
-			{
-				State.bStopReported = true;
-				UE_LOG(LogAutoTrains, Log, TEXT("%s stopped for stopat: %.1f m %s the stop point"), *Train->GetTrainName().ToString(),
-					FMath::Abs(Remaining) / 100.f, Remaining >= 0.f ? TEXT("short of") : TEXT("past"));
-			}
-		}
-		Atc.TargetSpeed = Allowed;
-	}
 	State.FinalTargetSpeed = Atc.TargetSpeed;
-
-	if (State.AppliedPath.IsValid() && !State.bPathReplacedReported && Atc.Path != State.AppliedPath.Pin())
-	{
-		State.bPathReplacedReported = true;
-		UE_LOG(LogAutoTrains, Log, TEXT("%s: the path this mod set was replaced (now %d points, current segment %d)"), *Train->GetTrainName().ToString(),
-			Atc.Path.IsValid() ? Atc.Path->PathPoints.Num() : 0, Atc.CurrentPathSegment);
-	}
 
 	mHookSeconds += FPlatformTime::Seconds() - Start;
 	++mHookCalls;
@@ -230,12 +181,6 @@ void AATControlSubsystem::IgnoreSignalStops(AFGTrain* Train)
 	Atc.TargetSpeed = Master && Master->HasPower() ? Target : 0.f;
 }
 
-bool AATControlSubsystem::IsIgnoringSignals(const AFGTrain* Train) const
-{
-	const FATTrainState* State = mStates.Find(Train);
-	return State && State->bIgnoreSignals;
-}
-
 AFGTrain* AATControlSubsystem::FindTrain(const FString& Token) const
 {
 	const TArray<AFGTrain*> Trains = GetSortedTrains();
@@ -261,12 +206,10 @@ TArray<FString> AATControlSubsystem::ListTrains() const
 	for (int32 Index = 0; Index < Trains.Num(); ++Index)
 	{
 		AFGTrain* Train = Trains[Index];
-		const FATTrainState* State = mStates.Find(Train);
 		const float DistanceToGoal = GetDistanceToGoal(Train);
-		Lines.Add(FString::Printf(TEXT("%d. %s: %s, %.0f km/h, %.0f m long, command %s%s, %s to goal"), Index + 1,
+		Lines.Add(FString::Printf(TEXT("%d. %s: %s, %.0f km/h, %.0f m long, %s to goal"), Index + 1,
 			*Train->GetTrainName().ToString(), Train->IsSelfDrivingEnabled() ? TEXT("self-driving") : *EnumName(Train->GetTrainStatus()),
 			FMath::Abs(Train->mSimulationData.Velocity) * CmPerSecondToKmh, Train->mConsistData.Length / 100.f,
-			State ? ModeName(State->Mode) : TEXT("none"), State && State->bIgnoreSignals ? TEXT(", ignoring signals") : TEXT(""),
 			DistanceToGoal >= 0.f ? *FString::Printf(TEXT("%.0f m"), DistanceToGoal / 100.f) : TEXT("no path")));
 	}
 	if (Lines.Num() == 0)
@@ -278,174 +221,6 @@ TArray<FString> AATControlSubsystem::ListTrains() const
 		UE_LOG(LogAutoTrains, Log, TEXT("list: %s"), *Line);
 	}
 	return Lines;
-}
-
-FString AATControlSubsystem::SetSpeedCap(AFGTrain* Train, float Kmh)
-{
-	FATTrainState& State = mStates.FindOrAdd(Train);
-	State.Mode = EATCommandMode::SpeedCap;
-	State.CapSpeed = FMath::Max(0.f, Kmh) / CmPerSecondToKmh;
-	const FString Message = FString::Printf(TEXT("%s: speed capped at %.0f km/h."), *Train->GetTrainName().ToString(), Kmh);
-	UE_LOG(LogAutoTrains, Log, TEXT("%s"), *Message);
-	return Message;
-}
-
-FString AATControlSubsystem::SetStopAhead(AFGTrain* Train, float Metres)
-{
-	FATTrainState& State = mStates.FindOrAdd(Train);
-	const float Speed = FMath::Abs(Train->mSimulationData.Velocity);
-	const float Deceleration = FMath::Max(Train->mConsistData.MaxBrakeDeceleration * StopBrakeShare, 10.f);
-	const float BrakingDistance = Speed * Speed / (2.f * Deceleration) + StopMargin;
-	State.Mode = EATCommandMode::StopAt;
-	State.StopOdometer = State.Odometer + Metres * 100.f;
-	State.bStopReported = false;
-	const FString Message = FString::Printf(TEXT("%s: stopping %.0f m ahead (at %.0f km/h it needs about %.0f m)."), *Train->GetTrainName().ToString(),
-		Metres, Speed * CmPerSecondToKmh, BrakingDistance / 100.f);
-	UE_LOG(LogAutoTrains, Log, TEXT("%s Consist: %.0f m, %.0f t, brake deceleration %.2f m/s2, brake distance %.0f m"), *Message,
-		Train->mConsistData.Length / 100.f, Train->mConsistData.Mass / 1000.f, Train->mConsistData.MaxBrakeDeceleration / 100.f,
-		Train->mConsistData.MaxBrakeDistance / 100.f);
-	return Message;
-}
-
-FString AATControlSubsystem::Release(AFGTrain* Train)
-{
-	FATTrainState& State = mStates.FindOrAdd(Train);
-	State.Mode = EATCommandMode::None;
-	const FString Message = FString::Printf(TEXT("%s: released."), *Train->GetTrainName().ToString());
-	UE_LOG(LogAutoTrains, Log, TEXT("%s"), *Message);
-	return Message;
-}
-
-FString AATControlSubsystem::ReleaseAll()
-{
-	int32 Count = 0;
-	for (TPair<TWeakObjectPtr<AFGTrain>, FATTrainState>& Pair : mStates)
-	{
-		Count += Pair.Value.Mode != EATCommandMode::None || Pair.Value.bIgnoreSignals ? 1 : 0;
-		Pair.Value.Mode = EATCommandMode::None;
-		Pair.Value.bIgnoreSignals = false;
-	}
-	const FString Message = FString::Printf(TEXT("Released %d trains; all obey signals again."), Count);
-	UE_LOG(LogAutoTrains, Log, TEXT("%s"), *Message);
-	return Message;
-}
-
-FString AATControlSubsystem::SetIgnoreSignals(AFGTrain* Train, bool bIgnore)
-{
-	mStates.FindOrAdd(Train).bIgnoreSignals = bIgnore;
-	const FString Message = FString::Printf(TEXT("%s: %s signals."), *Train->GetTrainName().ToString(), bIgnore ? TEXT("ignoring") : TEXT("obeying"));
-	UE_LOG(LogAutoTrains, Log, TEXT("%s"), *Message);
-	return Message;
-}
-
-FString AATControlSubsystem::CheckRoute(AFGTrain* Train)
-{
-	const FTrainAtcData& Atc = Train->mAtcData;
-	UFGRailroadTrackConnectionComponent* Start = FATRouter::GetConnectionAhead(Train);
-	UFGRailroadTrackConnectionComponent* Goal = Atc.Path.IsValid() && Atc.Path->PathPoints.Num() > 0 ? Atc.Path->PathPoints.Last().TrackConnection.Get() : nullptr;
-	if (!Start || !Goal)
-	{
-		const FString Message = FString::Printf(TEXT("%s: needs a path (self-driving, heading to a stop). Ahead %s, goal %s."), *Train->GetTrainName().ToString(),
-			*FATRouter::Describe(Start), *FATRouter::Describe(Goal));
-		UE_LOG(LogAutoTrains, Log, TEXT("%s"), *Message);
-		return Message;
-	}
-
-	const double Begin = FPlatformTime::Seconds();
-	const TArray<UFGRailroadTrackConnectionComponent*> Route = FATRouter::FindRoute(Start, Goal, !IsIgnoringSignals(Train));
-	const double Milliseconds = (FPlatformTime::Seconds() - Begin) * 1000.0;
-	if (Route.Num() == 0)
-	{
-		const FString Message = FString::Printf(TEXT("%s: this mod's router found no route from %s to %s (%.2f ms)."), *Train->GetTrainName().ToString(),
-			*FATRouter::Describe(Start), *FATRouter::Describe(Goal), Milliseconds);
-		UE_LOG(LogAutoTrains, Warning, TEXT("%s"), *Message);
-		return Message;
-	}
-	const FRailroadPathSharedPtr Ours = FATRouter::BuildPath(Route, Atc.Path->Station.Get());
-	const FString Message = FString::Printf(TEXT("%s: %s (%.2f ms)"), *Train->GetTrainName().ToString(), *FATRouter::CompareWithCurrentPath(Train, Ours), Milliseconds);
-	UE_LOG(LogAutoTrains, Log, TEXT("%s"), *Message);
-	for (int32 Index = 0; Index < FMath::Min(Route.Num(), 8); ++Index)
-	{
-		const int32 TheirIndex = Atc.CurrentPathSegment + Index;
-		UE_LOG(LogAutoTrains, Log, TEXT("  %d: ours %s %.1f m | game %s %.1f m"), Index, *FATRouter::Describe(Route[Index]), Ours->PathPoints[Index].Distance / 100.f,
-			Atc.Path->PathPoints.IsValidIndex(TheirIndex) ? *FATRouter::Describe(Atc.Path->PathPoints[TheirIndex].TrackConnection.Get()) : TEXT("-"),
-			Atc.Path->PathPoints.IsValidIndex(TheirIndex) ? Atc.Path->PathPoints[TheirIndex].Distance / 100.f : 0.f);
-	}
-	return Message;
-}
-
-FString AATControlSubsystem::RouteVia(AFGTrain* Train, const FVector& Location)
-{
-	const FTrainAtcData& Atc = Train->mAtcData;
-	UFGRailroadTrackConnectionComponent* Start = FATRouter::GetConnectionAhead(Train);
-	UFGRailroadTrackConnectionComponent* Goal = Atc.Path.IsValid() && Atc.Path->PathPoints.Num() > 0 ? Atc.Path->PathPoints.Last().TrackConnection.Get() : nullptr;
-	if (!Start || !Goal)
-	{
-		return FString::Printf(TEXT("%s: needs a path (self-driving, heading to a stop)."), *Train->GetTrainName().ToString());
-	}
-
-	AFGBuildableRailroadTrack* Nearest = nullptr;
-	float NearestDistanceSquared = FMath::Square(5000.f);
-	for (TActorIterator<AFGBuildableRailroadTrack> It(GetWorld()); It; ++It)
-	{
-		for (int32 Index = 0; Index < 2; ++Index)
-		{
-			const UFGRailroadTrackConnectionComponent* Connection = It->GetConnection(Index);
-			const float DistanceSquared = Connection ? FVector::DistSquared(Connection->GetConnectorLocation(), Location) : MAX_flt;
-			if (DistanceSquared < NearestDistanceSquared)
-			{
-				NearestDistanceSquared = DistanceSquared;
-				Nearest = *It;
-			}
-		}
-	}
-	if (!Nearest)
-	{
-		return TEXT("No track within 50 m.");
-	}
-
-	const bool bObeyOneWay = !IsIgnoringSignals(Train);
-	TArray<UFGRailroadTrackConnectionComponent*> Best;
-	for (int32 Index = 0; Index < 2; ++Index)
-	{
-		UFGRailroadTrackConnectionComponent* Via = Nearest->GetConnection(Index);
-		TArray<UFGRailroadTrackConnectionComponent*> First = FATRouter::FindRoute(Start, Via, bObeyOneWay);
-		const TArray<UFGRailroadTrackConnectionComponent*> Second = FATRouter::FindRoute(Via, Goal, bObeyOneWay);
-		if (First.Num() == 0 || Second.Num() == 0)
-		{
-			continue;
-		}
-		First.Append(&Second[1], Second.Num() - 1);
-		if (Best.Num() == 0 || FATRouter::GetRouteLength(First) < FATRouter::GetRouteLength(Best))
-		{
-			Best = MoveTemp(First);
-		}
-	}
-	if (Best.Num() == 0)
-	{
-		const FString Message = FString::Printf(TEXT("%s: no route to its stop passes %s."), *Train->GetTrainName().ToString(), *GetNameSafe(Nearest));
-		UE_LOG(LogAutoTrains, Log, TEXT("%s"), *Message);
-		return Message;
-	}
-
-	TSet<UFGRailroadTrackConnectionComponent*> Seen;
-	int32 Repeats = 0;
-	for (UFGRailroadTrackConnectionComponent* Connection : Best)
-	{
-		bool bAlreadySeen = false;
-		Seen.Add(Connection, &bAlreadySeen);
-		Repeats += bAlreadySeen ? 1 : 0;
-	}
-	const FRailroadPathSharedPtr Path = FATRouter::BuildPath(Best, Atc.Path->Station.Get());
-	const bool bApplied = FATRouter::ApplyPath(Train, Path, Goal);
-	FATTrainState& State = mStates.FindOrAdd(Train);
-	State.AppliedPath = Path;
-	State.bPathReplacedReported = false;
-	const FString Message = FString::Printf(TEXT("%s: route via %s, %d points, %.0f m, %d repeated connections; applied: %s, now at segment %d."),
-		*Train->GetTrainName().ToString(), *GetNameSafe(Nearest), Best.Num(), FATRouter::GetRouteLength(Best) / 100.f, Repeats,
-		bApplied ? TEXT("yes") : TEXT("NO"), Train->mAtcData.CurrentPathSegment);
-	UE_LOG(LogAutoTrains, Log, TEXT("%s"), *Message);
-	return Message;
 }
 
 FString AATControlSubsystem::SetLogging(bool bLog)
@@ -478,7 +253,7 @@ FString AATControlSubsystem::SetLogging(bool bLog)
 			Consist.MaxTractiveEffort / 100000.f, Consist.MaxAirBrakingEffort / 100000.f, Consist.MaxDynamicBrakingEffort / 100000.f,
 			Consist.MaxBrakeDeceleration / 100.f, Consist.MaxBrakeDistance / 100.f));
 	}
-	mPendingRows.Add(TEXT("time_s,train,self_driving,status,command,ignore_signals,speed_kmh,game_target_kmh,final_target_kmh,accel_ms2,odometer_m,stop_remaining_m,goal_distance_m,restrictive_aspect,restrictive_distance_m,next_signal_aspect,next_signal_distance_m,front_track,front_offset_m,rear_track,rear_offset_m,docking,error,traffic_managed,authority_m,claims,waiting_s,blocked_by,full_brake,catch_armed,plan_brake_ms2,throttle,tractive_kN,brake_kN,resistive_kN,gradient_kN,mass_t"));
+	mPendingRows.Add(TEXT("time_s,train,self_driving,status,speed_kmh,game_target_kmh,final_target_kmh,accel_ms2,odometer_m,goal_distance_m,restrictive_aspect,restrictive_distance_m,next_signal_aspect,next_signal_distance_m,front_track,front_offset_m,rear_track,rear_offset_m,docking,error,traffic_managed,authority_m,claims,waiting_s,blocked_by,full_brake,catch_armed,plan_brake_ms2,throttle,tractive_kN,brake_kN,resistive_kN,gradient_kN,mass_t"));
 	FlushTelemetry();
 	UE_LOG(LogAutoTrains, Log, TEXT("Telemetry started: %s"), *mTelemetryPath);
 	return FString::Printf(TEXT("Logging telemetry to %s"), *mTelemetryPath);
@@ -608,11 +383,10 @@ void AATControlSubsystem::SampleTelemetry(float SampleSeconds)
 		}
 		const FString Forces = FString::Printf(TEXT("%.2f,%.0f,%.0f,%.0f,%.0f,%.1f"), MasterMovement ? MasterMovement->GetThrottle() : -1.f, Simulation.TractiveForce / 100000.f,
 			(Simulation.AirBrakingForce + Simulation.DynamicBrakingForce) / 100000.f, Simulation.ResistiveForce / 100000.f, Simulation.GradientForce / 100000.f, Mass / 1000.f);
-		mPendingRows.Add(FString::Printf(TEXT("%.2f,%s,%d,%s,%s,%d,%.2f,%.2f,%.2f,%.3f,%.2f,%.2f,%.1f,%s,%.1f,%s,%.1f,%s,%s,%s,%s,%s,%s"),
+		mPendingRows.Add(FString::Printf(TEXT("%.2f,%s,%d,%s,%.2f,%.2f,%.2f,%.3f,%.2f,%.1f,%s,%.1f,%s,%.1f,%s,%s,%s,%s,%s,%s"),
 			mLogTime, *Train->GetTrainName().ToString(), Train->IsSelfDrivingEnabled() ? 1 : 0, *EnumName(Train->GetTrainStatus()),
-			ModeName(State.Mode), State.bIgnoreSignals ? 1 : 0, Speed * CmPerSecondToKmh, State.GameTargetSpeed * CmPerSecondToKmh,
+			Speed * CmPerSecondToKmh, State.GameTargetSpeed * CmPerSecondToKmh,
 			State.FinalTargetSpeed * CmPerSecondToKmh, Acceleration, State.Odometer / 100.f,
-			State.Mode == EATCommandMode::StopAt ? (State.StopOdometer - State.Odometer) / 100.f : 0.f,
 			GoalDistance >= 0.f ? GoalDistance / 100.f : -1.f,
 			*EnumName(Atc.NextRestrictiveSignalAspect), Atc.NextRestrictiveSignalDistance / 100.f,
 			*EnumName(Atc.NextSignalAspect), Atc.NextSignalDistance / 100.f,

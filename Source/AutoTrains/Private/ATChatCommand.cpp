@@ -13,7 +13,7 @@ AATChatCommand::AATChatCommand()
 	Aliases.Add(TEXT("autotrains"));
 	MinNumberOfArguments = 1;
 	bOnlyUsableByPlayer = true;
-	Usage = NSLOCTEXT("AutoTrains", "ChatUsage", "/at traffic on|off|status | reroute on|off | planner on|off | list | speed <train> <km/h> | stopat <train> <m> | release <train|all> | signals <train> ignore|obey | route <train> check|via | autopilot <train|all> on|off | removesignals confirm | session <new name> | log on|off   (<train> = number from /at list, or part of its name)");
+	Usage = NSLOCTEXT("AutoTrains", "ChatUsage", "/at traffic on|off|status | reroute on|off | planner on|off | list | autopilot <train|all> on|off | removesignals confirm | session <new name> | log on|off   (<train> = number from /at list, or part of its name)");
 }
 
 bool AATChatCommand::MayChangeWorld(UCommandSender* Sender)
@@ -57,11 +57,6 @@ EExecutionStatus AATChatCommand::ExecuteCommand_Implementation(UCommandSender* S
 	if (Verb == TEXT("log") && Arguments.Num() == 2)
 	{
 		Sender->SendChatMessage(Control->SetLogging(Arguments[1].Equals(TEXT("on"), ESearchCase::IgnoreCase)));
-		return EExecutionStatus::COMPLETED;
-	}
-	if (Verb == TEXT("release") && Arguments.Num() == 2 && Arguments[1].Equals(TEXT("all"), ESearchCase::IgnoreCase))
-	{
-		Sender->SendChatMessage(Control->ReleaseAll());
 		return EExecutionStatus::COMPLETED;
 	}
 	if (Verb == TEXT("traffic") && Arguments.Num() == 2)
@@ -139,48 +134,10 @@ EExecutionStatus AATChatCommand::ExecuteCommand_Implementation(UCommandSender* S
 		PrintCommandUsage(Sender);
 		return EExecutionStatus::BAD_ARGUMENTS;
 	}
-	if (Verb == TEXT("speed") && Arguments.Num() == 3 && Arguments[2].IsNumeric())
-	{
-		Sender->SendChatMessage(Control->SetSpeedCap(Train, FCString::Atof(*Arguments[2])));
-		return EExecutionStatus::COMPLETED;
-	}
-	if (Verb == TEXT("stopat") && Arguments.Num() == 3 && Arguments[2].IsNumeric())
-	{
-		Sender->SendChatMessage(Control->SetStopAhead(Train, FCString::Atof(*Arguments[2])));
-		return EExecutionStatus::COMPLETED;
-	}
 	if (bAutopilotArgs)
 	{
 		Sender->SendChatMessage(Control->SetAutopilot(Train, bAutopilotOn));
 		return EExecutionStatus::COMPLETED;
-	}
-	if (Verb == TEXT("release") && Arguments.Num() == 2)
-	{
-		Sender->SendChatMessage(Control->Release(Train));
-		return EExecutionStatus::COMPLETED;
-	}
-	if (Verb == TEXT("signals") && Arguments.Num() == 3)
-	{
-		const bool bIgnore = Arguments[2].Equals(TEXT("ignore"), ESearchCase::IgnoreCase);
-		if (bIgnore || Arguments[2].Equals(TEXT("obey"), ESearchCase::IgnoreCase))
-		{
-			Sender->SendChatMessage(Control->SetIgnoreSignals(Train, bIgnore));
-			return EExecutionStatus::COMPLETED;
-		}
-	}
-	if (Verb == TEXT("route") && Arguments.Num() == 3)
-	{
-		if (Arguments[2].Equals(TEXT("check"), ESearchCase::IgnoreCase))
-		{
-			Sender->SendChatMessage(Control->CheckRoute(Train));
-			return EExecutionStatus::COMPLETED;
-		}
-		const APawn* Pawn = Sender->GetPlayer() ? Sender->GetPlayer()->GetPawn() : nullptr;
-		if (Arguments[2].Equals(TEXT("via"), ESearchCase::IgnoreCase) && Pawn)
-		{
-			Sender->SendChatMessage(Control->RouteVia(Train, Pawn->GetActorLocation()));
-			return EExecutionStatus::COMPLETED;
-		}
 	}
 	PrintCommandUsage(Sender);
 	return EExecutionStatus::BAD_ARGUMENTS;

@@ -260,3 +260,20 @@ train, then a row per train every 0.2 s:
   stop cost (braking and accelerating again, `GetRouteSpeed`) up to the wait. A train ahead the same way costs a 2 s
   headway. A train waiting for this one, and for a new route track held the other way, count 100000 s. A reroute
   needs 10% and 10 s.
+- Session 2026-10-27 07:01 (time-based rerouting), 34 min: dockings per train-hour 29.3 against 29.6-30.9 before, so
+  timing routes didn't change throughput, with 6 reroutes in 34 min against 80-90 per 12 min priced in metres. Mean
+  speed off stations fell from 114 to 98 km/h already in the session before, with the 0.75 service-brake target
+  (earlier braking into every stop); `ServiceBrakeShare` is now 0.85.
+- Five forced stops at 50-130 km/h within 0-10 m ("first track it holds 0-10 m", up to 669 m/s2), e.g. Coated Plates
+  RSC B behind at test 3: the two routes shared a switch, not a track. The follow limit's held-track fallback only
+  looked at tracks the leader holds, so nothing paced the follower until the leader's vehicle reached the switch and
+  overhung onto its track a few metres ahead. The fallback now takes the first switch on the route the leader holds
+  too, paced the same way (the leader's clear distance through the switch, from its route or from its vehicles in the
+  fouling zone, `GetTailClearDistance` with a joint), stopping before the switch's fouling zone.
+- Adaptive Control Unit GTHR Train B stood 25 m before a switch (a valid stop) while Coated Plates RSC B passed at 150
+  km/h on the other branch: 82 contacts in 10 s. Near a shallow switch the branches stay closer than a vehicle's
+  width well past the fixed 20 m fouling zone. `RebuildConflicts` now measures each switch: for every pair of
+  branches leaving it the same way, the distance along them until their centre lines are 5.5 m apart (up to 150 m,
+  at least 20 m) (`GetFoulDistance` per connection, `GetJointFoulDistance` per joint). It's used for vehicles fouling a
+  switch, stop margins before a switch (fouling zone + 10 m, at least 25 m), clear distances and valid stops. Log:
+  `longest fouling zone N m`.

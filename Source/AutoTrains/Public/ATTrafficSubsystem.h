@@ -249,8 +249,8 @@ private:
 	float GetClearDistance(const FATTrafficTrain& Holder, const AFGBuildableRailroadTrack* Track, int32 Joint) const;
 
 	// Returns how far Holder still travels until none of its vehicles is on Track, a track off its route, or reaches
-	// onto it past an end; -1 if none does. [cm]
-	float GetTailClearDistance(const FATTrafficTrain& Holder, const AFGBuildableRailroadTrack* Track) const;
+	// onto it past an end (or is in Joint's fouling zone); -1 if none does. [cm]
+	float GetTailClearDistance(const FATTrafficTrain& Holder, const AFGBuildableRailroadTrack* Track, int32 Joint) const;
 
 	// Returns the seconds until the train blocking State has cleared the first track (or switch) beyond State's
 	// claims that it holds, or -1 if it may stop before then.
@@ -285,10 +285,10 @@ private:
 	// crossings of leaders clearing them first only after they have, MAX_flt if none. [cm]
 	float GetFollowLimit(const AFGTrain* Train, const FATTrafficTrain& State, float& OutHardLimit, float& OutPaceSpeed, FATFollowInfo* OutInfo = nullptr) const;
 
-	// Returns the speed at which Train, Start away from where Leader crosses its route on Track, gets there with
-	// some slack after the latest Leader, able to get past it, can have cleared it; -1 if Leader may not clear it or
-	// Train at its speed now could get there first. [cm/s]
-	float GetCrossingPaceSpeed(const AFGTrain* Train, const FATTrafficTrain& Leader, const AFGBuildableRailroadTrack* Track, float Start) const;
+	// Returns the speed at which Train, Start away from where Leader crosses its route on Track (or passes Joint),
+	// gets there with some slack after the latest Leader, able to get past it, can have cleared it; -1 if Leader may
+	// not clear it or Train at its speed now could get there first. [cm/s]
+	float GetCrossingPaceSpeed(const AFGTrain* Train, const FATTrafficTrain& Leader, const AFGBuildableRailroadTrack* Track, int32 Joint, float Start) const;
 
 	// Returns Braking, but no further than Leader may still travel: the end of its authority or its goal. [cm]
 	float GetLeaderTravel(const FATTrafficTrain& Leader, float Braking) const;
@@ -314,6 +314,10 @@ private:
 
 	// Returns the switch joint Connection belongs to, or INDEX_NONE.
 	int32 GetJoint(const UFGRailroadTrackConnectionComponent* Connection) const;
+
+	// Fouling zone of the switch at Connection along its track, and the longest of a joint's tracks. [cm]
+	float GetFoulDistance(const UFGRailroadTrackConnectionComponent* Connection) const;
+	float GetJointFoulDistance(int32 Joint) const;
 
 	// Stop margin before a track end leaving through Exit. [cm]
 	float GetStopMargin(const UFGRailroadTrackConnectionComponent* Exit) const;
@@ -416,6 +420,8 @@ private:
 
 	TMap<const AFGBuildableRailroadTrack*, TArray<AFGBuildableRailroadTrack*>> mConflicts;
 	TMap<const UFGRailroadTrackConnectionComponent*, int32> mJointOf;
+	TMap<const UFGRailroadTrackConnectionComponent*, float> mFoulOf;
+	TMap<int32, float> mJointFoul;
 	double mConflictsBuiltAt = -1e9;
 	// Set when a track missing from the conflict model was looked up.
 	mutable bool mConflictsStale = false;

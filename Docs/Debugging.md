@@ -314,3 +314,5 @@ train, then a row per train every 0.2 s:
   - Rerouting uses the same table: time-dependent earliest arrival with waits, comparing both routes with the same
     estimator.
 
+- Planner on by default (user, 2026-10-27); the setting's key is now PlannerControl so saved "off" values of the first
+  key don't carry over. Updates slower than 20 ms are logged.

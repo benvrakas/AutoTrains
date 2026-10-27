@@ -37,7 +37,7 @@ With traffic control on (the default), every self-driving train ignores signals 
   stop must be free once they have. Only then do the other trains give up their claims from there on; the log says
   `goes first`.
 - Deadlocks: if trains wait for each other in a circle for 20 s, the log says `DEADLOCK` with each train's reason.
-- Space-time planner (Mods menu "Space-time planner (experimental)" or `/at planner on|off`, off by default): replaces
+- Space-time planner (Mods menu "Space-time planner (experimental)" or `/at planner on|off`, on by default): replaces
   the claim rules above. Every 0.25 s each train in turn books the tracks and switch fouling zones on its route as
   time slots, around everyone else's bookings (nobody's existing booking is taken): self-driving trains along their
   route to the goal plus the stay there; docked trains their stay until the expected departure, then their next leg
@@ -65,7 +65,7 @@ Player driven trains aren't controlled; the others treat them as obstacles.
 
 - **Traffic control**: Auto Trains drives every self-driving train. Off gives the game's signals back.
 - **Congestion rerouting**
-- **Space-time planner (experimental)**: off by default; see above.
+- **Space-time planner (experimental)**: on by default; see above.
 - **Trains pass through each other**: while traffic control is on, trains that touch don't crash or derail; the
   log counts how often it happened (`passed through each other N times`).
 - **Aggressive timing**: plans braking with 95% of measured (80% of rated until measured), a 10 m buffer for the train giving way and claims 100 m past the braking distance instead

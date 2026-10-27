@@ -10,7 +10,7 @@ struct FATSettings
 	bool bTrafficControl = true;
 	bool bRerouting = true;
 	// The space-time planner drives instead of the claim system.
-	bool bPlannerControl = false;
+	bool bPlannerControl = true;
 	bool bPhaseThrough = true;
 	bool bAggressive = true;
 	// Extra time a train leaves when following another out of a junction or going ahead of another's claim. [s]

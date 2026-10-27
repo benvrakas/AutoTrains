@@ -582,6 +582,7 @@ private:
 	int32 mPlanUpdates = 0;
 	double mPlanSeconds = 0.0;
 	double mPlanSummaryAt = 0.0;
+	double mPlanSlowLoggedAt = -1e9;
 
 	// Vehicles the acceleration and top speed settings have changed.
 	TMap<TWeakObjectPtr<AFGRailroadVehicle>, FATVehicleBase> mVehicleBase;

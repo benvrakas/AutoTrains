@@ -44,6 +44,9 @@ namespace
 	constexpr int32 EntryMaxShifts = 16;
 	// Planner counters are logged this often. [s]
 	constexpr double PlanSummarySeconds = 60.0;
+	// An update slower than this is logged, at most once per SlowLogSeconds. [s]
+	constexpr double SlowUpdateSeconds = 0.02;
+	constexpr double SlowLogSeconds = 10.0;
 
 	bool IsOpen(double Time)
 	{
@@ -1312,7 +1315,13 @@ void AATTrafficSubsystem::UpdatePlannedTraffic(float DeltaSeconds)
 	}
 
 	++mPlanUpdates;
-	mPlanSeconds += FPlatformTime::Seconds() - Begin;
+	const double Took = FPlatformTime::Seconds() - Begin;
+	mPlanSeconds += Took;
+	if (Took > SlowUpdateSeconds && Now >= mPlanSlowLoggedAt + SlowLogSeconds)
+	{
+		UE_LOG(LogAutoTrains, Warning, TEXT("planner: an update took %.1f ms (%d trains)"), Took * 1000.0, Turns.Num());
+		mPlanSlowLoggedAt = Now;
+	}
 	if (Now >= mPlanSummaryAt)
 	{
 		int32 Driving = 0;

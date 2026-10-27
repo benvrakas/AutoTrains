@@ -394,3 +394,9 @@ train, then a row per train every 0.2 s:
   one whose route has this train's front on it before a resource has to pass this train first, so its booking there
   doesn't count. Granting: the same, and a hold by a train behind on the same line doesn't block. Routes are indexed
   (track and switch -> route step) every update.
+- Review of rules added for misdiagnosed problems, removed: the deadlock breaker ("goes first", 90 promotions across
+  the logs, the same trains every 30 s, none freed: the cycles were the physical overtaking jams, and with the order
+  fixed along each line the bookings can't form order-only cycles); not going back to a route left in the last
+  2 minutes (Heavy Oil Residue (120) rerouting in circles was a symptom of it being stuck); the log of the game giving a
+  driving train a new path (never fired in 10 sessions: wrong guess); waits per plan back to 32 (failures still happened
+  at 64).

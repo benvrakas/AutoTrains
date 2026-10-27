@@ -17,7 +17,7 @@ namespace
 	// Bookings on one resource keep this far apart beyond the safety margin, for trains drifting from their plans. [s]
 	constexpr double PlannerDriftSeconds = 2.0;
 	// A plan adds at most this many waits.
-	constexpr int32 PlanMaxWaits = 64;
+	constexpr int32 PlanMaxWaits = 32;
 	// An open-ended time: a stay nobody knows the end of, or everything after a wait for one. [s]
 	constexpr double OpenTime = 1e12;
 	// Stay expected at a station no train has been seen docking at from the start yet. [s]
@@ -38,8 +38,6 @@ namespace
 	constexpr float SearchMinGainSeconds = 10.f;
 	constexpr float SearchMinGainShare = 0.1f;
 	constexpr float SearchCooldownSeconds = 15.f;
-	// A train doesn't go back to a route it left for this long. [s]
-	constexpr double LeftRouteSeconds = 120.0;
 	// A track the search can only get onto after an open-ended booking costs this. [s]
 	constexpr float SearchBlockedSeconds = 1e6f;
 	// A train's booking is locked within this many times its stopping distance plus this much travel time and distance:
@@ -47,8 +45,6 @@ namespace
 	constexpr float LockStoppingShare = 1.2f;
 	constexpr float LockSeconds = 1.f;
 	constexpr float LockDistance = 6000.f;
-	// A train going first to break a deadlock locks its route this far past its stopping distance and length. [cm]
-	constexpr float PriorityReach = 40000.f;
 	// Trains that waited longer than WaitDumpSeconds are described in the log every WaitDumpInterval. [s]
 	constexpr double WaitDumpSeconds = 60.0;
 	constexpr double WaitDumpInterval = 30.0;
@@ -482,15 +478,10 @@ void AATTrafficSubsystem::PlanTrain(const FATTrafficTrain& State, double Now, co
 	{
 		++HeldIndex;
 	}
-	// Going first to break a deadlock: the route ahead is locked too, though still kept clear of other locked bookings.
-	const bool bPriority = State.PriorityUntil > Now;
-	const float PriorityWithin = Plan.Committed + State.Length + PriorityReach;
 	for (FPass& Pass : Base)
 	{
 		const bool bHolds = Pass.RouteIndex != INDEX_NONE && Pass.RouteIndex <= HeldIndex;
 		Pass.bLocked = Pass.RouteIndex == INDEX_NONE || Pass.EnterAt <= 0.f || Pass.EnterAt <= Plan.Committed || (bHolds && Pass.EnterAt <= LockedWithin);
-		Pass.bPriority = !Pass.bLocked && bPriority && Pass.EnterAt <= PriorityWithin;
-		Pass.bLocked = Pass.bLocked || Pass.bPriority;
 		Pass.bHeld = !Pass.bLocked && bHolds;
 	}
 	// Where the train can stand: the end of each route track, short by its stop margin.
@@ -526,16 +517,6 @@ void AATTrafficSubsystem::PlanTrain(const FATTrafficTrain& State, double Now, co
 			// Nothing is planned beyond a wait for good.
 			if (IsOpen(Pass.Enter))
 			{
-				continue;
-			}
-			if (Pass.bPriority)
-			{
-				Booking = FindConflict(State, Pass, Headway, EConflictScope::LockedOnly, NeedEnter);
-				if (Booking)
-				{
-					Conflicting = &Pass;
-					break;
-				}
 				continue;
 			}
 			if (Pass.bLocked)
@@ -1087,7 +1068,6 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 	State.BlockedBy = nullptr;
 	State.BlockedReason.Reset();
 	State.BlockedKey.Reset();
-	State.bBlockedByOrder = false;
 	const float Need = GetStoppingDistance(State, State.Speed) + State.Length + GrantLookahead;
 	auto TimeOf = [](const TArray<double>& Times, int32 Index) { return Times.IsValidIndex(Index) ? Times[Index] : OpenTime; };
 	auto LockOf = [](const TArray<bool>& Locks, int32 Index) { return Locks.IsValidIndex(Index) && Locks[Index]; };
@@ -1123,8 +1103,6 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 		}
 		if (bBlocked)
 		{
-			// Only a plan's booking, not a train in the way: one that stands there, holds it, or has it locked.
-			State.bBlockedByOrder = (Why.StartsWith(TEXT("booked first")) && !Why.Contains(TEXT("(locked"))) || Why.StartsWith(TEXT("its plan"));
 			State.BlockedAtTrack = Where.StartsWith(TEXT("the switch")) ? nullptr : Step.Track;
 			State.BlockedAtJoint = Where.StartsWith(TEXT("the switch")) ? Joint : INDEX_NONE;
 			State.BlockedAtIndex = Index;
@@ -1306,29 +1284,15 @@ void AATTrafficSubsystem::ConsiderPlannedReroute(FATTrafficTrain& State, double 
 	}
 	bool bSame = Alternative.Num() == State.Route.Num() - Commit;
 	float NewSeconds = StartSeconds;
-	uint32 NewHash = 0;
 	for (int32 Index = 1; Index < Alternative.Num(); ++Index)
 	{
 		NewSeconds += Step(Alternative[Index]->GetTrack(), Alternative[Index], NewSeconds);
 		bSame = bSame && Alternative[Index] == State.Route[Commit + Index].Exit;
-		NewHash = HashCombine(NewHash, GetTypeHash(Alternative[Index]));
 	}
 	if (bSame || NewSeconds > CurrentSeconds - FMath::Max(SearchMinGainSeconds, CurrentSeconds * SearchMinGainShare))
 	{
 		return;
 	}
-	// A route the train left a little while ago only looked slower then for a reason that may come back.
-	State.LeftRoutes.RemoveAll([Now](const TPair<uint32, double>& Left) { return Now - Left.Value > LeftRouteSeconds; });
-	if (State.LeftRoutes.ContainsByPredicate([NewHash](const TPair<uint32, double>& Left) { return Left.Key == NewHash; }))
-	{
-		return;
-	}
-	uint32 OldHash = 0;
-	for (int32 Index = Commit + 1; Index < State.Route.Num(); ++Index)
-	{
-		OldHash = HashCombine(OldHash, GetTypeHash(State.Route[Index].Exit));
-	}
-	State.LeftRoutes.Add(TPair<uint32, double>(OldHash, Now));
 
 	TArray<UFGRailroadTrackConnectionComponent*> Connections;
 	for (int32 Index = 0; Index <= Commit; ++Index)
@@ -1365,7 +1329,6 @@ void AATTrafficSubsystem::ConsiderPlannedReroute(FATTrafficTrain& State, double 
 	State.Route = MoveTemp(Route);
 	State.RoutePath = Train->mAtcData.Path.Get();
 	State.RouteFirstSegment = 0;
-	State.LastPath = State.RoutePath;
 	IndexRoute(State);
 }
 

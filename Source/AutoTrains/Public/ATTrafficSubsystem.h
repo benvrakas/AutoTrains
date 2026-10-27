@@ -176,23 +176,15 @@ struct FATTrafficTrain
 	float PredictedFrontAhead = 0.f;
 	TWeakObjectPtr<AFGBuildableRailroadStation> PredictedStation;
 	double PredictedAt = -1e9;
-	// The ATC path seen at the previous update and whether the train was driven then, to notice the game replacing it.
-	const void* LastPath = nullptr;
-	bool bLastManaged = false;
 	// The route step of each track on the route (first time) and of each switch, by track and by joint.
 	TMap<const AFGBuildableRailroadTrack*, int32> RouteIndexOf;
 	TMap<int32, int32> JointIndexOf;
-	// In a cycle of trains waiting for each other; until when it goes first to break one (world seconds).
+	// In a cycle of trains waiting for each other.
 	bool bDeadlocked = false;
-	double PriorityUntil = -1.0;
-	// Whether the train waits only for the booking order (not for a train standing on or holding what it needs), and
-	// the track or switch and route step it waits at.
-	bool bBlockedByOrder = false;
+	// The track or switch and route step the train waits at.
 	const AFGBuildableRailroadTrack* BlockedAtTrack = nullptr;
 	int32 BlockedAtJoint = INDEX_NONE;
 	int32 BlockedAtIndex = INDEX_NONE;
-	// Routes the planner's search left, by hash, with when (world seconds).
-	TArray<TPair<uint32, double>> LeftRoutes;
 };
 
 // Server only. Train traffic without signals, planned in space and time (ATPlanner.cpp): every train books the tracks
@@ -253,8 +245,6 @@ private:
 	void UpdateAuthority(FATTrafficTrain& State) const;
 	void RefreshClaimedJoints(FATTrafficTrain& State) const;
 	void LogDeadlocks();
-	// Lets one train of a deadlock cycle that only waits for the booking order go first for a while.
-	void BreakDeadlock(const TArray<const FATTrafficTrain*>& Chain);
 	// Logs what a long-waiting train waits for: its booking and every booking at that resource, with their trains.
 	void LogWaitDump(const FATTrafficTrain& State, double Now) const;
 
@@ -427,8 +417,6 @@ private:
 		int32 RouteIndex = INDEX_NONE;
 		bool bLocked = false;
 		bool bHeld = false;
-		// Locked only because the train goes first to break a deadlock.
-		bool bPriority = false;
 	};
 	// A wait in a plan: the front stands at At [cm along the route] until Until.
 	struct FWait

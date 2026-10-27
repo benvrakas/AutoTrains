@@ -89,8 +89,6 @@ namespace
 	constexpr float DeadlockShowSpeed = 50.f;
 	// A blocked train slower than this counts as waiting. [cm/s]
 	constexpr float PlannerWaitSpeed = 300.f;
-	// A train the planner lets go first to break a deadlock keeps that for this long. [s]
-	constexpr double DeadlockPrioritySeconds = 30.0;
 
 	// Learning how a train drives: per update, its cruising speed moves this share towards a higher speed and this share
 	// towards a lower one; its acceleration this share towards each sample. Plans use at least these. [cm/s] [cm/s^2]
@@ -351,13 +349,6 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 		FATTrafficTrain& State = mTrains.FindOrAdd(Train);
 		ReadTrain(State, Train);
 		TrackDocking(State, Train, WorldNow);
-		// A path this mod didn't set while the train was already driving: the game found it one of its own.
-		if (State.bManaged && State.bLastManaged && State.RoutePath != State.LastPath)
-		{
-			UE_LOG(LogAutoTrains, Warning, TEXT("planner: %s got a new path from the game while driving (%d tracks to its goal)"), *TrainName(Train), State.Route.Num());
-		}
-		State.LastPath = State.RoutePath;
-		State.bLastManaged = State.bManaged;
 		ApplyLocomotivePower(Train, Train->IsSelfDrivingEnabled() ? GAccelerationScale : 1.f, Train->IsSelfDrivingEnabled() ? GTopSpeed * 0.036f : 0.f);
 
 		// Measure full-brake deceleration per speed band between updates with full brake on at both; a catch ends at
@@ -1108,7 +1099,6 @@ void AATTrafficSubsystem::LogDeadlocks()
 		Sorted.Sort();
 		const FString Signature = FString::Join(Sorted, TEXT("|"));
 		Signatures.Add(Signature);
-		BreakDeadlock(Chain);
 		if (mLoggedDeadlocks.Contains(Signature))
 		{
 			continue;
@@ -1131,33 +1121,6 @@ void AATTrafficSubsystem::LogDeadlocks()
 	{
 		Pair.Value.bDeadlocked = InCycle.Contains(&Pair.Value);
 	}
-}
-
-void AATTrafficSubsystem::BreakDeadlock(const TArray<const FATTrafficTrain*>& Chain)
-{
-	// A cycle of trains each yielding to the next: one that only waits for the booking order (not for a train in its
-	// way) goes first. With none such, the trains block each other where they stand.
-	const double Now = GetWorld()->GetTimeSeconds();
-	if (Chain.ContainsByPredicate([Now](const FATTrafficTrain* Member) { return Member->PriorityUntil > Now; }))
-	{
-		return;
-	}
-	const FATTrafficTrain* Chosen = nullptr;
-	for (const FATTrafficTrain* Member : Chain)
-	{
-		if (Member->bBlockedByOrder && (!Chosen || TrainName(Member->Train.Get()) < TrainName(Chosen->Train.Get())))
-		{
-			Chosen = Member;
-		}
-	}
-	FATTrafficTrain* Promoted = Chosen ? mTrains.Find(Chosen->Train) : nullptr;
-	if (!Promoted)
-	{
-		return;
-	}
-	Promoted->PriorityUntil = Now + DeadlockPrioritySeconds;
-	UE_LOG(LogAutoTrains, Warning, TEXT("planner: %s goes first for %.0f s to break the deadlock (%s)"), *TrainName(Promoted->Train.Get()), DeadlockPrioritySeconds,
-		*Promoted->BlockedReason);
 }
 
 AATTrafficSubsystem::FRouteSpeed AATTrafficSubsystem::GetRouteSpeed(const FATTrafficTrain& State) const

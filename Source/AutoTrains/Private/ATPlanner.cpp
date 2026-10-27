@@ -476,8 +476,9 @@ void AATTrafficSubsystem::PlanTrain(const FATTrafficTrain& State, double Now, co
 	Plan.Committed = GetStoppingDistance(State, State.Speed);
 	TArray<FPass> Base;
 	CollectPasses(State, Base);
-	// Locked: what the train stands on or couldn't stop short of at service braking. Held: what it holds from its last
-	// grant (route steps it holds from its front on, and the switches between them).
+	// Held: what the train holds from its last grant (route steps it holds from its front on, and the switches between
+	// them). Locked: what it stands on, can't stop short of, or holds within reach of service braking; only what it
+	// holds or can't avoid, never a resource ahead it merely stands close to.
 	const float LockedWithin = Plan.Committed * LockStoppingShare + State.Speed * LockSeconds + LockDistance;
 	int32 HeldIndex = INDEX_NONE;
 	while (HeldIndex + 1 < State.Route.Num() && HoldsTrack(State, State.Route[HeldIndex + 1].Track))
@@ -486,8 +487,9 @@ void AATTrafficSubsystem::PlanTrain(const FATTrafficTrain& State, double Now, co
 	}
 	for (FPass& Pass : Base)
 	{
-		Pass.bLocked = Pass.RouteIndex == INDEX_NONE || Pass.EnterAt <= LockedWithin;
-		Pass.bHeld = !Pass.bLocked && Pass.RouteIndex <= HeldIndex;
+		const bool bHolds = Pass.RouteIndex != INDEX_NONE && Pass.RouteIndex <= HeldIndex;
+		Pass.bLocked = Pass.RouteIndex == INDEX_NONE || Pass.EnterAt <= 0.f || Pass.EnterAt <= Plan.Committed || (bHolds && Pass.EnterAt <= LockedWithin);
+		Pass.bHeld = !Pass.bLocked && bHolds;
 	}
 	// Where the train can stand: the end of each route track, short by its stop margin.
 	TArray<float> StopPoints;

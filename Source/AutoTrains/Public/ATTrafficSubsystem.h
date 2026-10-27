@@ -183,6 +183,8 @@ struct FATTrafficTrain
 	// The ATC path seen at the previous update and whether the train was driven then, to notice the game replacing it.
 	const void* LastPath = nullptr;
 	bool bLastManaged = false;
+	// In a cycle of trains waiting for each other.
+	bool bDeadlocked = false;
 	// Routes the planner's search left, by hash, with when (world seconds).
 	TArray<TPair<uint32, double>> LeftRoutes;
 };
@@ -633,6 +635,6 @@ private:
 	double mConflictsBuiltAt = -1e9;
 	// Set when a track missing from the conflict model was looked up.
 	mutable bool mConflictsStale = false;
-	// The last deadlock logged, to log each one once.
-	FString mLastDeadlock;
+	// The deadlocks logged and still going on, by their trains' names, to log each one once.
+	TSet<FString> mLoggedDeadlocks;
 };

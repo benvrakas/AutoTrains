@@ -98,8 +98,10 @@ namespace
 	// Other trains whose route passes a crossing or switch within this distance keep a train from stopping on it. [cm]
 	float NeedHorizon() { return GAggressive ? 150000.f : 300000.f; }
 
-	// A train that waited this long counts for deadlock detection. [s]
+	// A train that waited this long counts for deadlock detection; a deadlocked one slower than this shows the game's
+	// long-wait warning. [s] [cm/s]
 	constexpr float DeadlockWaitSeconds = 20.f;
+	constexpr float DeadlockShowSpeed = 50.f;
 
 	// Fair turns: once a train has waited this long, others leave the way to its next safe stop free for it; past the
 	// second limit it stops asking, in case its asking is what holds it up. At most this many route steps ahead. [s]
@@ -337,7 +339,7 @@ FString AATTrafficSubsystem::SetEnabled(bool bEnabled)
 	mOwnerBookings.Reset();
 	mUpdateTimer = 0.f;
 	mSinceUpdate = 0.f;
-	mLastDeadlock.Reset();
+	mLoggedDeadlocks.Reset();
 	if (bEnabled)
 	{
 		RebuildConflicts();
@@ -1997,11 +1999,14 @@ bool AATTrafficSubsystem::IsOutOfOthersWay(const FATTrafficTrain& Self, const FA
 
 void AATTrafficSubsystem::LogDeadlocks()
 {
-	// Follow each long-waiting train's chain of trains it waits for; a chain that comes back is a deadlock.
+	// Follow each long-waiting train's chain of trains it waits for; a chain that comes back is a deadlock. Every train
+	// in one is marked; a cycle is logged when it first shows up.
+	TSet<const FATTrafficTrain*> InCycle;
+	TSet<FString> Signatures;
 	for (const TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Pair : mTrains)
 	{
 		const FATTrafficTrain& Start = Pair.Value;
-		if (!Start.bManaged || Start.WaitingSeconds < DeadlockWaitSeconds)
+		if (!Start.bManaged || Start.WaitingSeconds < DeadlockWaitSeconds || InCycle.Contains(&Start))
 		{
 			continue;
 		}
@@ -2024,15 +2029,16 @@ void AATTrafficSubsystem::LogDeadlocks()
 		for (const FATTrafficTrain* Member : Chain)
 		{
 			Names.Add(TrainName(Member->Train.Get()));
+			InCycle.Add(Member);
 		}
 		TArray<FString> Sorted = Names;
 		Sorted.Sort();
 		const FString Signature = FString::Join(Sorted, TEXT("|"));
-		if (Signature == mLastDeadlock)
+		Signatures.Add(Signature);
+		if (mLoggedDeadlocks.Contains(Signature))
 		{
-			return;
+			continue;
 		}
-		mLastDeadlock = Signature;
 		UE_LOG(LogAutoTrains, Warning, TEXT("traffic: DEADLOCK: %s -> %s"), *FString::Join(Names, TEXT(" -> ")), *Names[0]);
 		for (const FATTrafficTrain* Member : Chain)
 		{
@@ -2044,7 +2050,12 @@ void AATTrafficSubsystem::LogDeadlocks()
 				Stuck->RerouteTimer = 0.f;
 			}
 		}
-		return;
+	}
+	// A cycle that breaks up is logged again if it comes back.
+	mLoggedDeadlocks = MoveTemp(Signatures);
+	for (TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Pair : mTrains)
+	{
+		Pair.Value.bDeadlocked = InCycle.Contains(&Pair.Value);
 	}
 }
 
@@ -2776,6 +2787,22 @@ void AATTrafficSubsystem::ApplyAuthority(AFGTrain* Train, float DeltaSeconds)
 			bArm ? TEXT("armed") : TEXT("released"), Atc.CurrentConnectionDistance / 100.f, StopOffset / 100.f, Speed * 0.036f);
 	}
 	State->bCatchArmed = bArm;
+
+	// A deadlocked train standing still shows the game's long-wait warning over it: its driver raises it while the
+	// restrictive point says Stop, once its wait passes the threshold (the deadlock has lasted long enough already).
+	if (State->bDeadlocked && Speed < DeadlockShowSpeed && Next)
+	{
+		if (!bArm)
+		{
+			Atc.NextRestrictiveSignalConnection = const_cast<UFGRailroadTrackConnectionComponent*>(Next);
+			Atc.NextRestrictiveSignalSpeed = 0.f;
+			Atc.NextRestrictiveSignalDistance = Atc.CurrentConnectionDistance;
+			Atc.NextRestrictiveSignalGrade = 0.f;
+			Atc.NextRestrictiveSignalStopOffset = Atc.CurrentConnectionDistance;
+		}
+		Atc.NextRestrictiveSignalAspect = ERailroadSignalAspect::RSA_Stop;
+		Train->mSelfDrivingData.TimeWaitingAtSignal = FMath::Max(Train->mSelfDrivingData.TimeWaitingAtSignal, Train->mLongWaitAtSignalThreshold);
+	}
 }
 
 void AATTrafficSubsystem::ApplyLocomotivePower(AFGTrain* Train, float Scale, float TopSpeed)

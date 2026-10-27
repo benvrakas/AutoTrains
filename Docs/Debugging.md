@@ -341,3 +341,16 @@ train, then a row per train every 0.2 s:
   rerouting between three routes every 20 s: waits are now capped at 64, a route left in the last 2 minutes isn't taken
   again, a train the planner names a blocker for counts as waiting for deadlock detection wherever it stands, and a
   path the game gives a driving train is logged (`got a new path from the game`), the suspected cause of the stop.
+- Fourth planner run (17:49): gridlock in the double-roundabout interchange, DEADLOCK cycles (EBeams GTHR Train <->
+  AI Limiter RSC; Rubber SNK [conc] -> Cable RSC -> Steel Pipe Xtra Steel), and Coated Plates RSC Train waiting 10 min
+  for Adaptive Control Unit GTHR Train B's booking that always said "enters in 34 s". Cause: everything within the
+  lock distance (60 m for a standing train) was locked, held or not, and a train's locked passes skip the conflict
+  check; so a standing train planned straight through resources it didn't hold, booked what lay beyond far too early,
+  and others yielded to those phantom times. Now only what a train stands on, can't stop short of, or holds within
+  reach of service braking is locked.
+- Deadlocked trains show the game's long-wait warning ("!"): RE'd `AFGTrain::TickSelfDriving_FollowPath` counts
+  `mSelfDrivingData.TimeWaitingAtSignal` while `NextRestrictiveSignalAspect` is Stop and the ATC speed is about 0, and
+  reports `SDLE_LongWaitAtSignal` past `mLongWaitAtSignalThreshold`; `TickSelfDriving` writes the error every tick, so
+  it can't be set directly. `AFGRailroadSubsystem`'s tick runs `TickAtc` (the mod's hook) before `TickSelfDriving`.
+  A standing train in a detected cycle gets a Stop restrictive point where it stands and the wait timer at the
+  threshold; when the cycle breaks the aspect goes back and the game clears the warning.

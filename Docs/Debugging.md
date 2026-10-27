@@ -277,3 +277,10 @@ train, then a row per train every 0.2 s:
   at least 20 m) (`GetFoulDistance` per connection, `GetJointFoulDistance` per joint). It's used for vehicles fouling a
   switch, stop margins before a switch (fouling zone + 10 m, at least 25 m), clear distances and valid stops. Log:
   `longest fouling zone N m`.
+- Review after the 07:01 session: (1) `RevalidateFollowClaims` dropped shared claims the follower could no longer
+  stop before (AI Limiter RSC gave up 4 claims behind a stopped at test 3 and was over its curve 11 ms later); it now
+  keeps claims up to the first stop beyond its stopping distance, the follow limit holding it behind the leader.
+  (2) A same-way leader counts for following only if the gap to its tail plus its travel before it could stop covers
+  the follower's stop (`IsSameWayLeader`), as the follow limit then requires: Cable RSC followed Heavy Oil Residue
+  [Coke Steel] pulling away from standstill 0 m ahead and was forced to stop. (3) Fair turns also exempt a train that
+  a train in the waiting train's way waits for, so that one can clear the way.

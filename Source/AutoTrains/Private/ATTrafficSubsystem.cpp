@@ -2,6 +2,7 @@
 #include "ATConfig.h"
 #include "ATControlSubsystem.h"
 #include "ATRouter.h"
+#include "Algo/AnyOf.h"
 #include "AutoTrains.h"
 #include "Buildables/FGBuildableRailroadTrack.h"
 #include "EngineUtils.h"
@@ -959,19 +960,37 @@ const FATTrafficTrain* AATTrafficSubsystem::FindRequester(const FATTrafficTrain&
 		{
 			continue;
 		}
-		bool bInWay = false;
-		for (const AFGBuildableRailroadTrack* Requested : Other.RequestTracks)
+		auto IsInWay = [this, &Other](const FATTrafficTrain& Candidate)
 		{
-			for (const AFGBuildableRailroadTrack* Conflict : GetConflicts(Requested))
+			for (const AFGBuildableRailroadTrack* Requested : Other.RequestTracks)
 			{
-				bInWay = bInWay || HoldsTrack(State, Conflict);
+				for (const AFGBuildableRailroadTrack* Conflict : GetConflicts(Requested))
+				{
+					if (HoldsTrack(Candidate, Conflict))
+					{
+						return true;
+					}
+				}
 			}
-		}
-		for (const int32 Requested : Other.RequestJoints)
+			for (const int32 Requested : Other.RequestJoints)
+			{
+				if (HoldsJoint(Candidate, Requested))
+				{
+					return true;
+				}
+			}
+			return false;
+		};
+		if (IsInWay(State))
 		{
-			bInWay = bInWay || HoldsJoint(State, Requested);
+			continue;
 		}
-		if (!bInWay)
+		// Nor one a train in its way waits for, so that train can clear it.
+		const bool bClearsTheWay = Algo::AnyOf(mTrains, [&State, &IsInWay](const TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Pair)
+		{
+			return &Pair.Value != &State && Pair.Value.BlockedBy == State.Train && IsInWay(Pair.Value);
+		});
+		if (!bClearsTheWay)
 		{
 			return &Other;
 		}
@@ -1491,7 +1510,16 @@ bool AATTrafficSubsystem::IsSameWayLeader(const FATTrafficTrain& Self, const FAT
 	{
 		if (Self.Route[Index].Track == HolderStep.Track)
 		{
-			return Self.Route[Index].Exit == HolderStep.Exit;
+			if (Self.Route[Index].Exit != HolderStep.Exit)
+			{
+				return false;
+			}
+			// Only a holder this train can stay behind: the gap to its tail and the distance it travels before it could
+			// stop must cover this train's own stop, as the follow limit will require.
+			const float HolderTail = Self.Route[Index].EndDistance - HolderStep.EndDistance + Holder.FrontAhead - Holder.Length;
+			const float Gap = HolderTail - Self.FrontAhead;
+			const float HolderTravel = GetLeaderTravel(Holder, GetStoppingDistance(Holder, Holder.Speed));
+			return Gap + HolderTravel >= GetStoppingDistance(Self, Self.Speed) + AuthorityStopMargin;
 		}
 	}
 	return false;
@@ -1537,8 +1565,20 @@ void AATTrafficSubsystem::RevalidateFollowClaims(FATTrafficTrain& State)
 		{
 			continue;
 		}
+		// Only claims the train can still stop before; the follow limit keeps it behind the leader on the rest.
+		const float Stopping = GetStoppingDistance(State, State.Speed);
+		int32 First = Index;
+		while (First < State.Route.Num() && First > 0
+			&& State.Route[First - 1].EndDistance - State.FrontAhead - GetStopMargin(State.Route[First - 1].Exit) < Stopping)
+		{
+			++First;
+		}
+		if (First >= State.Route.Num())
+		{
+			return;
+		}
 		TSet<const AFGBuildableRailroadTrack*> Dropped;
-		for (int32 Later = Index; Later < State.Route.Num(); ++Later)
+		for (int32 Later = First; Later < State.Route.Num(); ++Later)
 		{
 			if (!State.Occupied.Contains(State.Route[Later].Track))
 			{
@@ -1548,8 +1588,11 @@ void AATTrafficSubsystem::RevalidateFollowClaims(FATTrafficTrain& State)
 		const int32 Before = State.Claims.Num();
 		State.Claims.RemoveAll([&Dropped](const TWeakObjectPtr<AFGBuildableRailroadTrack>& Claim) { return Dropped.Contains(Claim.Get()); });
 		UpdateAuthority(State);
-		UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s gives up %d claims: %s has stopped on %s"), *TrainName(State.Train.Get()),
-			Before - State.Claims.Num(), *TrainName(Stopped->Train.Get()), *TrackName(Step.Track));
+		if (Before > State.Claims.Num())
+		{
+			UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s gives up %d claims: %s has stopped on %s"), *TrainName(State.Train.Get()),
+				Before - State.Claims.Num(), *TrainName(Stopped->Train.Get()), *TrackName(Step.Track));
+		}
 		return;
 	}
 }

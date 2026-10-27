@@ -1,14 +1,13 @@
 # Auto Trains
 
-A Satisfactory mod for train traffic without block or path signals. Every self-driving train reserves the track
-ahead of it and speeds up, slows down, waits or reroutes so that no two trains ever need the same track at the same
-time. Trains never stop inside a junction someone else needs, can follow each other through roundabouts, and take a
-faster route when theirs is held up.
+A Satisfactory mod for train traffic without block or path signals. Every self-driving train books the track and
+switches on its way as time slots around the other trains (space-time planning), and speeds up, slows down, waits or
+reroutes so that no two trains ever need the same track at the same time. Trains follow each other through
+roundabouts, take the fastest route through everyone's bookings, and docked trains' departures are booked ahead from
+their timetables.
 
 - Existing signals are ignored while traffic control is on; `/at removesignals confirm` removes them all.
 - Optional: colliding trains pass through each other instead of derailing.
-- Experimental: a space-time planner that books every track and switch as time slots, with docked trains' departures
-  predicted from their timetables, and routes each train the fastest way through those bookings.
 - Works with DynamicTimeTable and Freight Car Control; replaces DynamicTrainRoutes.
 - Nothing is written into save data; turning traffic control off (or uninstalling) gives trains back to signals.
 

@@ -9,11 +9,9 @@ struct FATSettings
 {
 	bool bTrafficControl = true;
 	bool bRerouting = true;
-	// The space-time planner drives instead of the claim system.
-	bool bPlannerControl = true;
 	bool bPhaseThrough = true;
 	bool bAggressive = true;
-	// Extra time a train leaves when following another out of a junction or going ahead of another's claim. [s]
+	// Extra time kept between two trains' bookings of the same track or switch. [s]
 	float SafetyMargin = 0.f;
 	// Top speed of every self-driving train, 0 for each train's own. [km/h]
 	float TopSpeedKmh = 0.f;
@@ -32,7 +30,6 @@ public:
 
 	static const FString TrafficControlKey;
 	static const FString ReroutingKey;
-	static const FString PlannerKey;
 	static const FString PhaseThroughKey;
 	static const FString AggressiveKey;
 	static const FString SafetyMarginKey;

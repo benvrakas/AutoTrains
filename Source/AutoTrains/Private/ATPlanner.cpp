@@ -54,8 +54,6 @@ namespace
 	constexpr double WaitDumpInterval = 30.0;
 	// A train slower than this whose follow limit leaves it less than this is named as held by its leader. [cm/s] [cm]
 	constexpr float FollowStuckSpeed = 50.f;
-	// A train blocked by another is followed onto shared track only while at least this fast. [cm/s]
-	constexpr float FollowMoveSpeed = 300.f;
 	constexpr float FollowStuckDistance = 3000.f;
 	// The earliest-entry search gives up after this many shifts.
 	constexpr int32 EntryMaxShifts = 16;
@@ -248,40 +246,6 @@ namespace
 		double EndDwell = OpenTime;
 		TArray<FLeg> Legs;
 	};
-}
-
-FString AATTrafficSubsystem::SetPlannerControl(bool bEnabled)
-{
-	mPlannerControl = bEnabled;
-	mBookings.Reset();
-	mOwnerBookings.Reset();
-	// The two systems' claims mean different things: start over.
-	for (TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Pair : mTrains)
-	{
-		FATTrafficTrain& State = Pair.Value;
-		State.Claims.Reset();
-		State.ClaimedJoints.Reset();
-		State.FollowLeaders.Reset();
-		State.FollowedTrains.Reset();
-		State.RequestTracks.Reset();
-		State.RequestJoints.Reset();
-		State.BlockedReason.Reset();
-		State.BlockedBy = nullptr;
-		State.ClearSeconds = -1.f;
-		State.PlanTrackEnter.Reset();
-		State.PlanJointEnter.Reset();
-		State.PlanFailure.Reset();
-		State.PlanCommitted.Reset();
-		State.PlanNote.Reset();
-		State.SearchedArrival = -1.0;
-	}
-	mPlans = mPlanWaits = mPlanFailures = mPlanCommitted = mPlanReroutes = mPlanPredictions = mPlanUpdates = 0;
-	mPlanSeconds = 0.0;
-	mPlanSummaryAt = GetWorld() ? GetWorld()->GetTimeSeconds() + PlanSummarySeconds : 0.0;
-	const FString Message = bEnabled ? TEXT("Space-time planner on: trains book track and switches in time and drive by their bookings.")
-		: TEXT("Space-time planner off: the claim system drives.");
-	UE_LOG(LogAutoTrains, Log, TEXT("%s"), *Message);
-	return Message;
 }
 
 void AATTrafficSubsystem::CollectPasses(const FATTrafficTrain& State, TArray<FPass>& Out) const
@@ -751,10 +715,7 @@ void AATTrafficSubsystem::TrackDocking(FATTrafficTrain& State, AFGTrain* Train, 
 			const float Before = GetExpectedDwell(Train, Station);
 			mDwell.Add(TPair<FObjectKey, FObjectKey>(FObjectKey(Train), FObjectKey(Station)), Dwell);
 			mStationDwell.Add(FObjectKey(Station), Dwell);
-			if (mPlannerControl)
-			{
-				UE_LOG(LogAutoTrains, Log, TEXT("planner: %s left %s after %.1f s (expected %.1f s)"), *NameOf(Train), *StationName(Station), Dwell, Before);
-			}
+			UE_LOG(LogAutoTrains, Log, TEXT("planner: %s left %s after %.1f s (expected %.1f s)"), *NameOf(Train), *StationName(Station), Dwell, Before);
 		}
 		State.DockedAt = -1.0;
 		State.PredictedRoute.Reset();
@@ -978,12 +939,9 @@ bool AATTrafficSubsystem::CanEnter(FATTrafficTrain& Self, const FResourceKey& Ke
 		OutWhy = TEXT("its plan has no slot there yet");
 		return false;
 	}
-	// A train ahead of this one on its route the same way is followed through the same track or switch the same way,
-	// while it moves or may move on; one that stands blocked isn't, so its followers don't hold track behind it.
-	auto IsFollowed = [this, &Self](const FATTrafficTrain* Other)
-	{
-		return Other && Other->bManaged && GetRouteOrder(Self, *Other) > 0 && (Other->Speed >= FollowMoveSpeed || !Other->BlockedBy.IsValid());
-	};
+	// A train ahead of this one on its route the same way is followed through the same track or switch the same way; the
+	// follow limit keeps the distance.
+	auto IsFollowed = [this, &Self](const FATTrafficTrain* Other) { return Other && Other->bManaged && GetRouteOrder(Self, *Other) > 0; };
 	TArray<FResourceKey, TInlineAllocator<4>> Keys;
 	if (Key.Joint != INDEX_NONE)
 	{
@@ -1126,7 +1084,8 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 		}
 		if (bBlocked)
 		{
-			State.bBlockedByOrder = Why.StartsWith(TEXT("booked first")) || Why.StartsWith(TEXT("its plan"));
+			// Only a plan's booking, not a train in the way: one that stands there, holds it, or has it locked.
+			State.bBlockedByOrder = (Why.StartsWith(TEXT("booked first")) && !Why.Contains(TEXT("(locked"))) || Why.StartsWith(TEXT("its plan"));
 			State.BlockedAtTrack = Where.StartsWith(TEXT("the switch")) ? nullptr : Step.Track;
 			State.BlockedAtJoint = Where.StartsWith(TEXT("the switch")) ? Joint : INDEX_NONE;
 			State.BlockedAtIndex = Index;

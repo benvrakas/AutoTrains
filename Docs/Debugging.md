@@ -372,3 +372,14 @@ train, then a row per train every 0.2 s:
   cycles are detected and shown. (3) Following onto shared track is granted only while the leader moves (3 m/s) or
   isn't blocked: followers granted behind a standing leader held crossings and switches for others while standing.
   The wait dump shows each train's authority, target speed and follow limit.
+- The claim system is gone (user, 2026-10-27: "strip it ... keep it in the GitHub history"); the planner is the only
+  mode, without its toggle or `/at planner`. Removed: claim extension, valid stops, preemption, fair turns, follow
+  revalidation, congestion rerouting and their settings' effects; Aggressive timing now sets the braking shares and the
+  waiting weight in the planning order, and the safety margin adds to the bookings' headway. The last claim-system
+  build is commit 612b43d.
+- Seventh planner run (18:40): trains crept and stopped in turn: at test 2 flipped every update between `stays behind`
+  and `waits for ... stands on` its leader 10 m ahead, because following was granted only while the leader moved or
+  wasn't blocked, and the leader creeping around those thresholds flipped it. Following the same way is granted again
+  whatever the leader does (the follow limit keeps the distance). The deadlock breaker no longer promotes a train whose
+  blocker has the resource locked (it stands there or can't avoid it): Rubber SNK [conc] and Cable RSC stood in each
+  other's way, Rubber's tail across Cable's path, which only moving one of them by hand can solve.

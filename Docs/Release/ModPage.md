@@ -15,25 +15,25 @@ Train traffic without block or path signals: trains slow down, wait or take anot
 
 ## Auto Trains
 
-No more signals. Auto Trains takes over the traffic of every self-driving train: each train reserves the track
-ahead of it, and speeds up, slows down, waits or reroutes so that no two trains ever need the same track at the same
-time. Build junctions, roundabouts, crossings and single track however you like, and let the trains sort it out.
+No more signals. Auto Trains takes over the traffic of every self-driving train: each train books the track and
+switches on its way as time slots around the other trains, and speeds up, slows down, waits or reroutes so that no
+two trains ever need the same track at the same time. Build junctions, roundabouts, crossings and single track however
+you like, and let the trains sort it out.
 
 ### How trains share the track
 
-- **Reservations instead of blocks.** A train reserves the track it is about to drive over and always keeps a speed
-  at which it can stop before the end of its reservation. As track frees up ahead, it reserves more and speeds up.
-- **Never stuck in a junction.** A train only stops where its whole length stands clear of the switches and crossings
-  other trains need, and never halfway along single track another train needs to use the other way.
-- **Following.** A train can follow another through a junction or roundabout instead of waiting until the whole way
-  is clear, keeping enough distance to stop if the train ahead does.
-- **Going first.** A short or fast train may slip through a junction ahead of a train that has only reserved it, if
-  it is clear again before the other train could get there and that train can still stop in time.
-- **Fair turns.** The train that would get through soonest goes first, and time spent waiting counts in a train's
-  favour, so nobody waits forever.
-- **Congestion rerouting.** Every few seconds a train times its route against the alternatives: driving time plus
-  the waits standing, moving and oncoming trains would cause it, and the time a stop costs. If another route gets
-  it there clearly sooner it takes that one, even when it's longer.
+- **Planned in space and time.** Every train books each track and switch on its route for the time it will be there,
+  around everyone else's bookings, and plans its waits where they cost least. A train only moves onto track that is
+  its turn and that nobody else is on, and always keeps a speed at which it can stop before the end of what it has
+  been given.
+- **Fastest route.** Trains search the fastest way through the other trains' bookings and switch to it when it gets
+  them there clearly sooner, even when it's longer.
+- **Timetables known ahead.** A docked train's departure is booked ahead from how long it stayed there last time and
+  where its timetable sends it next, so no train queues in the way it needs to leave.
+- **Following.** A train follows another through a junction or roundabout the same way, keeping enough distance to
+  stop if the train ahead does.
+- **Deadlocks shown.** Trains waiting for each other in a circle get the game's warning over them; if one of them
+  only waits its turn, it goes first.
 - **Brakes it can trust.** Each train measures how hard it really brakes at each speed and plans with that. If a
   train still can't stop in time, the mod brakes it harder than its brakes could, the way block signals do.
 
@@ -43,10 +43,9 @@ time. Build junctions, roundabouts, crossings and single track however you like,
 |---|---|---|
 | **Traffic control** | On | Auto Trains drives every self-driving train. Off gives the game's signals back. |
 | **Congestion rerouting** | On | Trains take another route when it gets them there sooner than waiting on theirs. |
-| **Space-time planner (experimental)** | On | Trains book every track and switch on their way as time slots, around each other, docked trains' expected departures and their timetable's next leg, and take the route that gets them there soonest. Off uses the claim system. |
 | **Trains pass through each other** | On | While traffic control is on, trains that touch pass through each other instead of crashing. A misjudged gap then only looks like a clip. |
-| **Aggressive timing** | On | Tighter margins: trains follow closer and slip through junctions more readily. Off is more cautious. |
-| **Safety margin (seconds)** | 0 | Extra time, 0 to 10 s, a train leaves when it follows another out of a junction or goes ahead of another train. Raise it if trains clip each other. |
+| **Aggressive timing** | On | Tighter margins: trains plan braking closer to what they really manage. Off is more cautious. |
+| **Safety margin (seconds)** | 0 | Extra time, 0 to 10 s, kept between two trains using the same track or switch, on top of 2 s. Raise it if trains clip each other. |
 | **Top speed (km/h)** | 0 | Top speed of every self-driving train, up to 500 km/h. 0 keeps each train's own. Above the speed at which a locomotive's traction runs out (about 120 km/h on flat track), its traction is stretched up to the setting and it draws that much more power. |
 | **Acceleration (x)** | 1 | Traction of self-driving trains' locomotives, 0.25 to 5 times their own: they accelerate that much faster and draw that much more power from the grid. Braking isn't changed. |
 
@@ -79,7 +78,7 @@ time. Build junctions, roundabouts, crossings and single track however you like,
 
 ### Chat commands
 
-`/at traffic on|off|status`, `/at reroute on|off`, `/at planner on|off`, `/at list`, `/at removesignals confirm`, `/at autopilot <train|all>
+`/at traffic on|off|status`, `/at reroute on|off`, `/at list`, `/at removesignals confirm`, `/at autopilot <train|all>
 on|off`, `/at session <new name>` (renames the running session, for a copy of a save), `/at log on|off` (writes
 telemetry for bug reports). In multiplayer only the host or a server admin can change anything; everyone can use
 `/at list` and `/at traffic status`.

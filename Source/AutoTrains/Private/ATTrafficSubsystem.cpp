@@ -107,6 +107,14 @@ namespace
 	constexpr float FairTurnMaxSeconds = 90.f;
 	constexpr int32 FairTurnMaxSteps = 64;
 
+	// Learning how a train drives: per update, its cruising speed moves this share towards a higher speed and this share
+	// towards a lower one; its acceleration this share towards each sample. Plans use at least these. [cm/s] [cm/s^2]
+	constexpr float CruiseRiseRate = 0.1f;
+	constexpr float CruiseFallRate = 0.005f;
+	constexpr float AccelSampleRate = 0.05f;
+	constexpr float MinPlanCruise = 833.f;
+	constexpr float MinPlanAcceleration = 10.f;
+
 	// How often each train's route is checked for congestion. [s]
 	constexpr float RerouteInterval = 5.f;
 	// Routes are compared by time. A standing train is expected to move off after this long: one docked, one this mod
@@ -408,6 +416,23 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 				}
 			}
 		}
+		// Motion as driven: the speed it runs at when nothing holds it back (rising quickly, falling slowly), and its
+		// acceleration while the driver is speeding up.
+		const float Target = Train->mAtcData.TargetSpeed;
+		const bool bFree = State.bManaged && !State.bFullBrake && !State.bWasFullBrake && !State.bForcedSinceUpdate && Target >= State.Speed - 50.f;
+		if (bFree && State.Speed > 500.f)
+		{
+			const float Rate = State.Speed > State.CruiseSeen ? CruiseRiseRate : CruiseFallRate;
+			State.CruiseSeen = State.CruiseSeen <= 0.f ? State.Speed : State.CruiseSeen + (State.Speed - State.CruiseSeen) * Rate;
+		}
+		if (bFree && DeltaSeconds > 0.f && Target > State.Speed + 100.f && State.Speed > State.LastSpeed)
+		{
+			const float Sample = (State.Speed - State.LastSpeed) / DeltaSeconds;
+			if (Sample > 5.f && Sample < 500.f)
+			{
+				State.AccelSeen = State.AccelSeen <= 0.f ? Sample : State.AccelSeen + (Sample - State.AccelSeen) * AccelSampleRate;
+			}
+		}
 		State.bWasFullBrake = State.bFullBrake;
 		State.bForcedSinceUpdate = State.bForcedBrake;
 		State.LastSpeed = State.Speed;
@@ -451,10 +476,12 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 		}
 		return TrainName(A.Train.Get()) < TrainName(B.Train.Get());
 	});
+	// The planner's reasons carry times: it logs again only when the train or place it waits at changes.
+	auto LogKey = [this](const FATTrafficTrain* State) { return mPlannerControl ? State->BlockedKey : State->BlockedReason; };
 	TMap<const FATTrafficTrain*, FString> PreviousReasons;
 	for (const FATTrafficTrain* State : Managed)
 	{
-		PreviousReasons.Add(State, State->BlockedReason);
+		PreviousReasons.Add(State, LogKey(State));
 	}
 	if (mPlannerControl)
 	{
@@ -487,7 +514,7 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 	}
 	for (FATTrafficTrain* State : Managed)
 	{
-		if (State->BlockedReason != PreviousReasons.FindRef(State) && !State->BlockedReason.IsEmpty())
+		if (LogKey(State) != PreviousReasons.FindRef(State) && !State->BlockedReason.IsEmpty())
 		{
 			UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s: %s"), *TrainName(State->Train.Get()), *State->BlockedReason);
 		}
@@ -2138,9 +2165,11 @@ float AATTrafficSubsystem::GetTrackSeconds(const TMap<const AFGBuildableRailroad
 AATTrafficSubsystem::FRouteSpeed AATTrafficSubsystem::GetRouteSpeed(const FATTrafficTrain& State) const
 {
 	FRouteSpeed Speed;
-	Speed.Cruise = FMath::Max(GetTopSpeed(State.Train.Get()), 500.f);
+	// As the train has been seen to drive, within its top speed; until then its top speed and half its rated acceleration.
+	const float Top = FMath::Max(GetTopSpeed(State.Train.Get()), 500.f);
+	Speed.Cruise = State.CruiseSeen > 0.f ? FMath::Clamp(State.CruiseSeen, FMath::Min(MinPlanCruise, Top), Top) : Top;
 	Speed.Length = State.Length;
-	const float Acceleration = GetAcceleration(State, 0.5f);
+	const float Acceleration = State.AccelSeen > 0.f ? FMath::Max(State.AccelSeen, MinPlanAcceleration) : GetAcceleration(State, 0.5f);
 	const float Deceleration = GetPlanningDeceleration(State, Speed.Cruise) * ServiceBrakeShare;
 	Speed.StopLoss = Speed.Cruise / (2.f * Acceleration) + Speed.Cruise / (2.f * FMath::Max(Deceleration, MinPlanDeceleration));
 	Speed.Accel = Acceleration;
@@ -2897,8 +2926,8 @@ TArray<FString> AATTrafficSubsystem::DescribeAll() const
 			continue;
 		}
 		const float Distance = GetAuthorityDistance(State.Train.Get());
-		Lines.Add(FString::Printf(TEXT("%s: %.0f km/h, %d claims, may drive %s, brakes at %.1f m/s2, waited %.0f s, rerouted %d times%s%s%s%s%s"), *TrainName(State.Train.Get()),
-			State.Speed * 0.036f, State.Claims.Num(),
+		Lines.Add(FString::Printf(TEXT("%s: %.0f km/h (cruises %.0f, accelerates %.2f m/s2), %d claims, may drive %s, brakes at %.1f m/s2, waited %.0f s, rerouted %d times%s%s%s%s%s"),
+			*TrainName(State.Train.Get()), State.Speed * 0.036f, State.CruiseSeen * 0.036f, State.AccelSeen / 100.f, State.Claims.Num(),
 			Distance < 0.f ? TEXT("to its stop") : *FString::Printf(TEXT("%.0f m"), FMath::Max(0.f, Distance - State.StopMargin) / 100.f),
 			GetPlanningDeceleration(State) / 100.f, State.WaitingSeconds, State.Reroutes, State.BlockedReason.IsEmpty() ? TEXT("") : TEXT(", "), *State.BlockedReason,
 			State.ClearSeconds > 0.f ? *FString::Printf(TEXT(" (clears in %.0f s)"), State.ClearSeconds) : TEXT(""),

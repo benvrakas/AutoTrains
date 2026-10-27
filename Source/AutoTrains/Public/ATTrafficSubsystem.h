@@ -106,6 +106,10 @@ struct FATTrafficTrain
 	float PlanDecel[ATBrakeBands] = {};
 	// Speed at the previous update. [cm/s]
 	float LastSpeed = 0.f;
+	// Speed the train runs at when nothing holds it back, and its acceleration while speeding up, as seen; 0 until seen.
+	// [cm/s] [cm/s^2]
+	float CruiseSeen = 0.f;
+	float AccelSeen = 0.f;
 	// Whether the train is on full brake, and whether it was at the previous update.
 	bool bFullBrake = false;
 	bool bWasFullBrake = false;
@@ -135,8 +139,10 @@ struct FATTrafficTrain
 	// free for it.
 	TSet<const AFGBuildableRailroadTrack*> RequestTracks;
 	TSet<int32> RequestJoints;
-	// Why the claims stop where they do, for the log and /at traffic.
+	// Why the claims stop where they do, for the log and /at traffic, and what of it is logged on change (the planner's
+	// reasons carry times).
 	FString BlockedReason;
+	FString BlockedKey;
 	TWeakObjectPtr<AFGTrain> BlockedBy;
 
 	// Space-time planner. The station the route leads to.
@@ -477,11 +483,13 @@ private:
 		const UFGRailroadTrackConnectionComponent* Exit = nullptr;
 		const UFGRailroadTrackConnectionComponent* Via = nullptr;
 		EBookingKind Kind = EBookingKind::Moving;
-		// Locked: the owner stands on it, holds it from its last grant, or can't stop short of it. Nobody books ahead of a
-		// locked booking, and it goes first.
+		// Locked: the owner stands on it or couldn't stop short of it at service braking; nobody books ahead of it, and it
+		// goes first. Held: the owner holds it from its last grant; others may still fit in ahead of it.
 		bool bLocked = false;
+		bool bHeld = false;
 	};
-	// Which other bookings a plan has to keep clear of: all, all but self-driving trains' unlocked ones, or locked ones.
+	// Which other bookings a plan has to keep clear of: all, all but self-driving trains' neither locked nor held ones, or
+	// locked ones.
 	enum class EConflictScope : uint8
 	{
 		All,
@@ -502,6 +510,7 @@ private:
 		double Clear = 0.0;
 		int32 RouteIndex = INDEX_NONE;
 		bool bLocked = false;
+		bool bHeld = false;
 	};
 	// A wait in a plan: the front stands at At [cm along the route] until Until.
 	struct FWait
@@ -594,6 +603,8 @@ private:
 	double mPlanSeconds = 0.0;
 	double mPlanSummaryAt = 0.0;
 	double mPlanSlowLoggedAt = -1e9;
+	// The last pair of trains logged holding conflicting resources.
+	FString mLastDoubleHold;
 
 	// Vehicles the acceleration and top speed settings have changed.
 	TMap<TWeakObjectPtr<AFGRailroadVehicle>, FATVehicleBase> mVehicleBase;

@@ -40,6 +40,11 @@ namespace
 	constexpr float SearchCooldownSeconds = 15.f;
 	// A track the search can only get onto after an open-ended booking costs this. [s]
 	constexpr float SearchBlockedSeconds = 1e6f;
+	// A train's booking is locked within this many times its stopping distance plus this much travel time and distance:
+	// that far ahead it may not be able to stop at service braking once it lost the slot. [s] [cm]
+	constexpr float LockStoppingShare = 1.2f;
+	constexpr float LockSeconds = 1.f;
+	constexpr float LockDistance = 6000.f;
 	// The earliest-entry search gives up after this many shifts.
 	constexpr int32 EntryMaxShifts = 16;
 	// Planner counters are logged this often. [s]
@@ -371,7 +376,7 @@ const AATTrafficSubsystem::FBooking* AATTrafficSubsystem::FindConflict(const AFG
 		for (const FBooking& Booking : *Bookings)
 		{
 			if (Booking.Owner == Self || (Scope == EConflictScope::LockedOnly && !Booking.bLocked)
-				|| (Scope == EConflictScope::NotUnlockedMoving && Booking.Kind == EBookingKind::Moving && !Booking.bLocked))
+				|| (Scope == EConflictScope::NotUnlockedMoving && Booking.Kind == EBookingKind::Moving && !Booking.bLocked && !Booking.bHeld))
 			{
 				continue;
 			}
@@ -430,16 +435,18 @@ void AATTrafficSubsystem::PlanTrain(const FATTrafficTrain& State, double Now, co
 	Plan.Committed = GetStoppingDistance(State, State.Speed);
 	TArray<FPass> Base;
 	CollectPasses(State, Base);
-	// Locked: what the train stands on, holds from its last grant (route steps it holds from its front on, and the switches
-	// between them), or can't stop short of.
-	int32 LockedIndex = INDEX_NONE;
-	while (LockedIndex + 1 < State.Route.Num() && HoldsTrack(State, State.Route[LockedIndex + 1].Track))
+	// Locked: what the train stands on or couldn't stop short of at service braking. Held: what it holds from its last
+	// grant (route steps it holds from its front on, and the switches between them).
+	const float LockedWithin = Plan.Committed * LockStoppingShare + State.Speed * LockSeconds + LockDistance;
+	int32 HeldIndex = INDEX_NONE;
+	while (HeldIndex + 1 < State.Route.Num() && HoldsTrack(State, State.Route[HeldIndex + 1].Track))
 	{
-		++LockedIndex;
+		++HeldIndex;
 	}
 	for (FPass& Pass : Base)
 	{
-		Pass.bLocked = Pass.RouteIndex == INDEX_NONE || Pass.RouteIndex <= LockedIndex || Pass.EnterAt <= Plan.Committed;
+		Pass.bLocked = Pass.RouteIndex == INDEX_NONE || Pass.EnterAt <= LockedWithin;
+		Pass.bHeld = !Pass.bLocked && Pass.RouteIndex <= HeldIndex;
 	}
 	// Where the train can stand: the end of each route track, short by its stop margin.
 	TArray<float> StopPoints;
@@ -489,7 +496,8 @@ void AATTrafficSubsystem::PlanTrain(const FATTrafficTrain& State, double Now, co
 				}
 				continue;
 			}
-			Booking = FindConflict(Self, Pass, Headway, Scope, NeedEnter);
+			// Held: kept unless a train that can't stop any more needs it.
+			Booking = FindConflict(Self, Pass, Headway, Pass.bHeld ? EConflictScope::LockedOnly : Scope, NeedEnter);
 			if (Booking)
 			{
 				Conflicting = &Pass;
@@ -587,6 +595,7 @@ void AATTrafficSubsystem::Book(const FATTrafficTrain& State, const TArray<FPass>
 		Booking.Via = Pass.Via;
 		Booking.Kind = Kind;
 		Booking.bLocked = Pass.bLocked;
+		Booking.bHeld = Pass.bHeld;
 		mBookings.FindOrAdd(Pass.Key).Add(Booking);
 		Own.Keys.Add(Pass.Key);
 	}
@@ -943,11 +952,13 @@ bool AATTrafficSubsystem::CanEnter(FATTrafficTrain& Self, const FResourceKey& Ke
 				continue;
 			}
 			OutBlocker = Other ? *Other : nullptr;
-			OutWhy = FString::Printf(TEXT("booked first on %s (clear in %s)"), *ResourceName(Checked.Track, Checked.Joint), *SecondsText(Booking.Clear - Now));
+			OutWhy = FString::Printf(TEXT("booked first on %s (%s, enters in %s, clear in %s)"), *ResourceName(Checked.Track, Checked.Joint),
+				Booking.bLocked ? TEXT("locked") : Booking.bHeld ? TEXT("held") : TEXT("planned"), *SecondsText(Booking.Enter - Now), *SecondsText(Booking.Clear - Now));
 			return false;
 		}
 	}
-	// Nobody else stands there, apart from a train followed the same way.
+	// Nobody else stands there or holds it from its own grant, apart from a train followed the same way: only one train
+	// at a time holds a resource, whatever the bookings say.
 	for (const TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Pair : mTrains)
 	{
 		const FATTrafficTrain& Other = Pair.Value;
@@ -955,24 +966,24 @@ bool AATTrafficSubsystem::CanEnter(FATTrafficTrain& Self, const FResourceKey& Ke
 		{
 			continue;
 		}
-		bool bStands = false;
+		bool bHolds = false;
 		const AFGBuildableRailroadTrack* On = nullptr;
 		if (Key.Joint != INDEX_NONE)
 		{
-			bStands = Other.OccupiedJoints.Contains(Key.Joint);
+			bHolds = HoldsJoint(Other, Key.Joint);
 		}
 		else
 		{
 			for (const FResourceKey& Checked : Keys)
 			{
-				if (!bStands && Other.Occupied.Contains(const_cast<AFGBuildableRailroadTrack*>(Checked.Track)))
+				if (!bHolds && HoldsTrack(Other, Checked.Track))
 				{
-					bStands = true;
+					bHolds = true;
 					On = Checked.Track;
 				}
 			}
 		}
-		if (!bStands)
+		if (!bHolds)
 		{
 			continue;
 		}
@@ -981,8 +992,9 @@ bool AATTrafficSubsystem::CanEnter(FATTrafficTrain& Self, const FResourceKey& Ke
 			Self.FollowedTrains.Add(Other.Train);
 			continue;
 		}
+		const bool bStands = Key.Joint != INDEX_NONE ? Other.OccupiedJoints.Contains(Key.Joint) : Other.Occupied.Contains(const_cast<AFGBuildableRailroadTrack*>(On));
 		OutBlocker = &Other;
-		OutWhy = FString::Printf(TEXT("stands on %s"), *ResourceName(On, Key.Joint));
+		OutWhy = FString::Printf(TEXT("%s %s"), bStands ? TEXT("stands on") : TEXT("holds"), *ResourceName(On, Key.Joint));
 		return false;
 	}
 	return true;
@@ -994,6 +1006,7 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 	State.FollowedTrains.Reset();
 	State.BlockedBy = nullptr;
 	State.BlockedReason.Reset();
+	State.BlockedKey.Reset();
 	const float Need = GetStoppingDistance(State, State.Speed) + State.Length + GrantLookahead;
 	auto TimeOf = [](const TArray<double>& Times, int32 Index) { return Times.IsValidIndex(Index) ? Times[Index] : OpenTime; };
 	auto LockOf = [](const TArray<bool>& Locks, int32 Index) { return Locks.IsValidIndex(Index) && Locks[Index]; };
@@ -1032,6 +1045,8 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 			State.BlockedBy = Blocker ? Blocker->Train : nullptr;
 			State.BlockedReason = FString::Printf(TEXT("waits for %s before %s, %.0f m ahead: %s"), *NameOf(Blocker ? Blocker->Train.Get() : nullptr), *Where,
 				FMath::Max(Begin, 0.f) / 100.f, *Why);
+			// Logged again only when the train or the place changes.
+			State.BlockedKey = NameOf(Blocker ? Blocker->Train.Get() : nullptr) + TEXT("|") + Where;
 			break;
 		}
 		State.Claims.Add(Step.Track);
@@ -1333,6 +1348,41 @@ void AATTrafficSubsystem::UpdatePlannedTraffic(float DeltaSeconds)
 		if (Turn.Kind == 2)
 		{
 			GrantFromPlan(*Turn.State, Now);
+		}
+	}
+	// Check: no two trains hold conflicting resources, apart from following the same way.
+	for (const FTurn& Turn : Turns)
+	{
+		const FATTrafficTrain& State = *Turn.State;
+		if (Turn.Kind != 2)
+		{
+			continue;
+		}
+		for (const TWeakObjectPtr<AFGBuildableRailroadTrack>& Claim : State.Claims)
+		{
+			const AFGBuildableRailroadTrack* Track = Claim.Get();
+			if (!Track || State.Occupied.Contains(const_cast<AFGBuildableRailroadTrack*>(Track)))
+			{
+				continue;
+			}
+			for (const AFGBuildableRailroadTrack* Conflict : GetConflicts(Track))
+			{
+				for (const TPair<const AFGTrain*, FATTrafficTrain*>& Pair : mStateOf)
+				{
+					const FATTrafficTrain& Other = *Pair.Value;
+					if (&Other == &State || !HoldsTrack(Other, Conflict) || (Conflict == Track && (State.FollowedTrains.Contains(Other.Train) || Other.FollowedTrains.Contains(State.Train))))
+					{
+						continue;
+					}
+					const FString Pair2 = NameOf(State.Train.Get()) + TEXT("|") + NameOf(Other.Train.Get());
+					if (Pair2 != mLastDoubleHold)
+					{
+						mLastDoubleHold = Pair2;
+						UE_LOG(LogAutoTrains, Warning, TEXT("planner: CHECK FAILED: %s was granted %s while %s holds %s"), *NameOf(State.Train.Get()), *ResourceName(Track, INDEX_NONE),
+							*NameOf(Other.Train.Get()), *ResourceName(Conflict, INDEX_NONE));
+					}
+				}
+			}
 		}
 	}
 

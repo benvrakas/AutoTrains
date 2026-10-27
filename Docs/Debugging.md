@@ -322,3 +322,16 @@ train, then a row per train every 0.2 s:
   test1 10 m before it). Fix: locked bookings (stood on, held from the last grant, or within the stopping distance):
   nobody books ahead of one, the owner's locked passes aren't re-checked against others' unlocked bookings, and at
   grant time locked bookings go first. The route search treats them the same way.
+- Second planner run (17:15, 11 min): 2-3.4 ms per update, no deadlocks, the user saw no emergency stops, but the log
+  had 164 forced brakings (11 over 50 m/s2, up to 834) and trains not taking gaps they could have. (1) A booking was
+  locked by the owner's stopping distance even where it had no grant, so two trains could be locked onto crossing
+  tracks and the one with the earlier time won over the one already granted (Heavy Oil Residue (120) lost a crossing
+  8 m before it to at test 3). Now a train is only granted a resource nobody else holds (stands on or was granted),
+  apart from following the same way: holding excludes, the bookings only order. A check logs `CHECK FAILED` if two
+  trains ever hold conflicting resources. (2) Locks were too broad: everything held from a grant was locked, so no train
+  could fit in ahead of a far-off holder. Now only what the owner stands on or couldn't stop short of at service
+  braking is locked (1.2 x stopping distance + 1 s + 60 m); what it holds beyond is held: others may fit in ahead and
+  the holder then gives it up with ordinary braking. (3) Plans assumed the 200 km/h top speed setting while trains
+  average about 92 km/h, so far-off trains looked much closer in time and others held back for them. Plans now use
+  each train's cruising speed and acceleration as seen. Wait reasons show the blocking booking's lock and entry time
+  and are logged only when the blocker or place changes.

@@ -297,3 +297,20 @@ train, then a row per train every 0.2 s:
 - Planner shadow: two passes the same way on the same track are compatible when the later one enters and clears a
   headway after the earlier one (following without overtaking); opposite ways, crossings and switches stay
   exclusive.
+- Planner step 3 (user, 2026-10-27: a rigid foundation instead of the conditional claim rules; space-time SIPP
+  routing, updated continuously; dwell times and timetables are known): shadow mode was never run in game and is
+  gone. The planner now drives behind a toggle. Why each piece:
+  - The reservation table persists between updates and each train only replaces its own bookings, so a booking is
+    never taken by someone else. That keeps the order on every resource consistent with one timeline, which is what
+    rules out precedence cycles (deadlocks) and starvation; times may drift, order doesn't.
+  - Execution follows booking order, not times: a train enters a track or switch only once every train booked there
+    earlier has passed, and nobody stands there (same-way following excepted, kept apart by the follow limit). Late
+    or early trains then only wait; they never meet.
+  - Docked trains book their predicted departure (timetable next stop, `FRailroadNavigation::FindPathSync` from each
+    locomotive, shortest) ahead of moving trains' unheld bookings, so no train queues in a throat the departing
+    train needs (the station-throat deadlock risk of 1.0). Stays are learned per train and station.
+  - The goal is booked until arrival + expected stay + pulling the train's length out, not open-ended, so others can
+  plan through stations.
+  - Rerouting uses the same table: time-dependent earliest arrival with waits, comparing both routes with the same
+    estimator.
+

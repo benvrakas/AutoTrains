@@ -13,6 +13,7 @@
 
 const FString UATConfig::TrafficControlKey = TEXT("TrafficControl");
 const FString UATConfig::ReroutingKey = TEXT("Rerouting");
+const FString UATConfig::PlannerKey = TEXT("SpaceTimePlanner");
 const FString UATConfig::PhaseThroughKey = TEXT("PhaseThrough");
 const FString UATConfig::AggressiveKey = TEXT("AggressiveTiming");
 const FString UATConfig::SafetyMarginKey = TEXT("SafetyMarginSeconds");
@@ -101,6 +102,9 @@ UATConfig::UATConfig()
 	AddBool(ReroutingKey, TEXT("Rerouting"), LOCTEXT("Rerouting", "Congestion rerouting"),
 		LOCTEXT("ReroutingTip", "Trains take another route, even a longer one, when it gets them there sooner than waiting for standing or oncoming trains on theirs."),
 		Defaults.bRerouting);
+	AddBool(PlannerKey, TEXT("SpaceTimePlanner"), LOCTEXT("Planner", "Space-time planner (experimental)"),
+		LOCTEXT("PlannerTip", "Trains book every track and switch on their way as time slots, around each other's bookings, docked trains' expected departures and their timetable's next leg, and pick the route that gets them there soonest. A train only moves onto track or a switch once every train booked there before it has passed. Off uses the claim system."),
+		Defaults.bPlannerControl);
 	AddBool(PhaseThroughKey, TEXT("PhaseThrough"), LOCTEXT("PhaseThrough", "Trains pass through each other"),
 		LOCTEXT("PhaseThroughTip", "While traffic control is on, trains that touch pass through each other instead of crashing and derailing, so a misjudged gap only looks like a clip."),
 		Defaults.bPhaseThrough);
@@ -210,6 +214,7 @@ bool UATConfig::Read(const UObject* WorldContext, FATSettings& OutSettings)
 	const FATSettings Defaults;
 	OutSettings.bTrafficControl = ReadBool(Root, TrafficControlKey, Defaults.bTrafficControl);
 	OutSettings.bRerouting = ReadBool(Root, ReroutingKey, Defaults.bRerouting);
+	OutSettings.bPlannerControl = ReadBool(Root, PlannerKey, Defaults.bPlannerControl);
 	OutSettings.bPhaseThrough = ReadBool(Root, PhaseThroughKey, Defaults.bPhaseThrough);
 	OutSettings.bAggressive = ReadBool(Root, AggressiveKey, Defaults.bAggressive);
 	OutSettings.SafetyMargin = FMath::Clamp(ReadFloat(Root, SafetyMarginKey, Defaults.SafetyMargin), MinSafetyMargin, MaxSafetyMargin);

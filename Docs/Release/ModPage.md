@@ -43,6 +43,7 @@ time. Build junctions, roundabouts, crossings and single track however you like,
 |---|---|---|
 | **Traffic control** | On | Auto Trains drives every self-driving train. Off gives the game's signals back. |
 | **Congestion rerouting** | On | Trains take another route when it gets them there sooner than waiting on theirs. |
+| **Space-time planner (experimental)** | Off | Trains book every track and switch on their way as time slots, around each other, docked trains' expected departures and their timetable's next leg, and take the route that gets them there soonest. Off uses the claim system. |
 | **Trains pass through each other** | On | While traffic control is on, trains that touch pass through each other instead of crashing. A misjudged gap then only looks like a clip. |
 | **Aggressive timing** | On | Tighter margins: trains follow closer and slip through junctions more readily. Off is more cautious. |
 | **Safety margin (seconds)** | 0 | Extra time, 0 to 10 s, a train leaves when it follows another out of a junction or goes ahead of another train. Raise it if trains clip each other. |
@@ -78,7 +79,7 @@ time. Build junctions, roundabouts, crossings and single track however you like,
 
 ### Chat commands
 
-`/at traffic on|off|status`, `/at reroute on|off`, `/at list`, `/at removesignals confirm`, `/at autopilot <train|all>
+`/at traffic on|off|status`, `/at reroute on|off`, `/at planner on|off`, `/at list`, `/at removesignals confirm`, `/at autopilot <train|all>
 on|off`, `/at session <new name>` (renames the running session, for a copy of a save), `/at log on|off` (writes
 telemetry for bug reports). In multiplayer only the host or a server admin can change anything; everyone can use
 `/at list` and `/at traffic status`.

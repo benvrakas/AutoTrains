@@ -37,11 +37,19 @@ With traffic control on (the default), every self-driving train ignores signals 
   stop must be free once they have. Only then do the other trains give up their claims from there on; the log says
   `goes first`.
 - Deadlocks: if trains wait for each other in a circle for 20 s, the log says `DEADLOCK` with each train's reason.
-- Planner shadow mode (`/at planner shadow on|off`, off by default): every second the space-time planner books
-  every train's route as time intervals on tracks and switch fouling zones and plans each train around the others
-  (priority order, waits at the ends of tracks), without controlling anything. It logs `planner: <train>: ...` where
-  its plan disagrees with the claims (the plan would hold a train the claims let go, or let go one they hold), plan
-  failures, two moving trains both committed to one resource, and waiting cycles, with a summary every 60 s.
+- Space-time planner (Mods menu "Space-time planner (experimental)" or `/at planner on|off`, off by default): replaces
+  the claim rules above. Every 0.25 s each train in turn books the tracks and switch fouling zones on its route as
+  time slots, around everyone else's bookings (nobody's existing booking is taken): self-driving trains along their
+  route to the goal plus the stay there; docked trains their stay until the expected departure, then their next leg
+  from the timetable as the game's pathfinder finds it; trains the mod doesn't drive where they stand, open-ended. A
+  conflict puts a wait at the last track end before it. Same way on the same track (or through a switch the same way)
+  is allowed with a headway (safety margin + 2 s) at both ends. A train may move onto a track or switch only once
+  every train booked there before it has passed (and nobody stands there), except one it follows the same way; the
+  braking, catch and follow limit are the same as with claims. Stays are learned per train and station from the last
+  dock (40 s until one is seen). Rerouting searches the fastest route through the bookings every 5 s, at once when the
+  planned arrival got 15 s worse or the plan failed, and takes it if 10 s and 10% faster. Log lines: `planner:`
+  (reroutes, failures, committed conflicts, stays, departure predictions, a summary every 60 s) and the usual
+  `traffic: <train>: waits for ...` and `DEADLOCK`.
 - Congestion rerouting (`/at reroute on|off`, on by default): every 5 s each moving train times its route from the
   end of its claims: each track at its top speed, plus the wait wherever another train is on it, or on a track
   crossing it, while it would be (a standing train for 40 s if docked, 120 s if not driven by the mod, else 20 s or
@@ -57,6 +65,7 @@ Player driven trains aren't controlled; the others treat them as obstacles.
 
 - **Traffic control**: Auto Trains drives every self-driving train. Off gives the game's signals back.
 - **Congestion rerouting**
+- **Space-time planner (experimental)**: off by default; see above.
 - **Trains pass through each other**: while traffic control is on, trains that touch don't crash or derail; the
   log counts how often it happened (`passed through each other N times`).
 - **Aggressive timing**: plans braking with 95% of measured (80% of rated until measured), a 10 m buffer for the train giving way and claims 100 m past the braking distance instead

@@ -4,6 +4,7 @@
 #include "ATRouter.h"
 #include "Algo/AnyOf.h"
 #include "AutoTrains.h"
+#include "Buildables/FGBuildableRailroadStation.h"
 #include "Buildables/FGBuildableRailroadTrack.h"
 #include "EngineUtils.h"
 #include "Curves/CurveFloat.h"
@@ -33,8 +34,6 @@ namespace
 	FString GPhaseNames;
 
 	constexpr float TrafficUpdateInterval = 0.25f;
-	// How often the planner plans in shadow mode. [s]
-	constexpr float PlannerShadowInterval = 1.f;
 	constexpr float SettingsInterval = 1.f;
 	// Claims reach this far past the braking distance plus the train's length; less when aggressive. [cm]
 	float ClaimLookahead() { return GAggressive ? 10000.f : 20000.f; }
@@ -218,15 +217,6 @@ void AATTrafficSubsystem::Tick(float DeltaSeconds)
 		mUpdateTimer = TrafficUpdateInterval;
 		UpdateTraffic(mSinceUpdate);
 		mSinceUpdate = 0.f;
-		if (mPlannerShadow)
-		{
-			mPlannerTimer -= TrafficUpdateInterval;
-			if (mPlannerTimer <= 0.f)
-			{
-				mPlannerTimer = PlannerShadowInterval;
-				UpdatePlanner();
-			}
-		}
 		if (GPhaseNamesPending)
 		{
 			// Name the trains standing on the tracks of the last contact.
@@ -289,6 +279,14 @@ void AATTrafficSubsystem::ApplySettings()
 			SetRerouteEnabled(Settings.bRerouting);
 		}
 	}
+	if (!mConfigPlanner.IsSet() || mConfigPlanner.GetValue() != Settings.bPlannerControl)
+	{
+		mConfigPlanner = Settings.bPlannerControl;
+		if (mPlannerControl != Settings.bPlannerControl)
+		{
+			SetPlannerControl(Settings.bPlannerControl);
+		}
+	}
 	const bool bPhaseThrough = mEnabled && Settings.bPhaseThrough;
 	const float TopSpeed = Settings.TopSpeedKmh / 0.036f;
 	if (bPhaseThrough != GPhaseThrough || Settings.bAggressive != GAggressive || Settings.SafetyMargin != GSafetyMargin || TopSpeed != GTopSpeed
@@ -327,6 +325,8 @@ FString AATTrafficSubsystem::SetEnabled(bool bEnabled)
 		RestoreLocomotivePower();
 	}
 	mTrains.Reset();
+	mBookings.Reset();
+	mOwnerBookings.Reset();
 	mUpdateTimer = 0.f;
 	mSinceUpdate = 0.f;
 	mLastDeadlock.Reset();
@@ -372,6 +372,7 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 		Railroad->GetAllTrains(Trains);
 	}
 
+	const double WorldNow = GetWorld()->GetTimeSeconds();
 	TSet<TWeakObjectPtr<AFGTrain>> Seen;
 	for (AFGTrain* Train : Trains)
 	{
@@ -382,6 +383,7 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 		Seen.Add(Train);
 		FATTrafficTrain& State = mTrains.FindOrAdd(Train);
 		ReadTrain(State, Train);
+		TrackDocking(State, Train, WorldNow);
 		ApplyLocomotivePower(Train, Train->IsSelfDrivingEnabled() ? GAccelerationScale : 1.f, Train->IsSelfDrivingEnabled() ? GTopSpeed * 0.036f : 0.f);
 
 		// Measure full-brake deceleration per speed band between updates with full brake on at both; a catch ends at
@@ -449,32 +451,45 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 		}
 		return TrainName(A.Train.Get()) < TrainName(B.Train.Get());
 	});
+	TMap<const FATTrafficTrain*, FString> PreviousReasons;
+	for (const FATTrafficTrain* State : Managed)
+	{
+		PreviousReasons.Add(State, State->BlockedReason);
+	}
+	if (mPlannerControl)
+	{
+		UpdatePlannedTraffic(DeltaSeconds);
+	}
+	else
+	{
+		for (FATTrafficTrain* State : Managed)
+		{
+			RevalidateFollowClaims(*State);
+			ExtendClaims(*State);
+			UpdateAuthority(*State);
+			UpdateFollowLeaders(*State);
+			State->ClearSeconds = State->BlockedBy.IsValid() ? GetBlockerClearSeconds(*State) : -1.f;
+			if (mRerouteEnabled)
+			{
+				if (State->RerouteTimer < 0.f)
+				{
+					// Spread the checks out over the interval.
+					State->RerouteTimer = FMath::FRandRange(0.f, RerouteInterval);
+				}
+				State->RerouteTimer -= DeltaSeconds;
+				if (State->RerouteTimer <= 0.f)
+				{
+					State->RerouteTimer = RerouteInterval;
+					ConsiderReroute(*State);
+				}
+			}
+		}
+	}
 	for (FATTrafficTrain* State : Managed)
 	{
-		const FString PreviousReason = State->BlockedReason;
-		RevalidateFollowClaims(*State);
-		ExtendClaims(*State);
-		UpdateAuthority(*State);
-		UpdateFollowLeaders(*State);
-		State->ClearSeconds = State->BlockedBy.IsValid() ? GetBlockerClearSeconds(*State) : -1.f;
-		if (State->BlockedReason != PreviousReason && !State->BlockedReason.IsEmpty())
+		if (State->BlockedReason != PreviousReasons.FindRef(State) && !State->BlockedReason.IsEmpty())
 		{
 			UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s: %s"), *TrainName(State->Train.Get()), *State->BlockedReason);
-		}
-
-		if (mRerouteEnabled)
-		{
-			if (State->RerouteTimer < 0.f)
-			{
-				// Spread the checks out over the interval.
-				State->RerouteTimer = FMath::FRandRange(0.f, RerouteInterval);
-			}
-			State->RerouteTimer -= DeltaSeconds;
-			if (State->RerouteTimer <= 0.f)
-			{
-				State->RerouteTimer = RerouteInterval;
-				ConsiderReroute(*State);
-			}
 		}
 
 		const float Distance = GetAuthorityDistance(State->Train.Get());
@@ -511,6 +526,7 @@ void AATTrafficSubsystem::ReadTrain(FATTrafficTrain& State, AFGTrain* Train) con
 	{
 		State.RoutePath = Atc.Path.Get();
 		State.RouteFirstSegment = Atc.CurrentPathSegment;
+		State.GoalStation = Atc.Path->Station;
 		float Distance = Atc.CurrentConnectionDistance;
 		for (int32 Index = Atc.CurrentPathSegment; Index < Atc.Path->PathPoints.Num(); ++Index)
 		{
@@ -2881,11 +2897,12 @@ TArray<FString> AATTrafficSubsystem::DescribeAll() const
 			continue;
 		}
 		const float Distance = GetAuthorityDistance(State.Train.Get());
-		Lines.Add(FString::Printf(TEXT("%s: %.0f km/h, %d claims, may drive %s, brakes at %.1f m/s2, waited %.0f s, rerouted %d times%s%s%s"), *TrainName(State.Train.Get()),
+		Lines.Add(FString::Printf(TEXT("%s: %.0f km/h, %d claims, may drive %s, brakes at %.1f m/s2, waited %.0f s, rerouted %d times%s%s%s%s%s"), *TrainName(State.Train.Get()),
 			State.Speed * 0.036f, State.Claims.Num(),
 			Distance < 0.f ? TEXT("to its stop") : *FString::Printf(TEXT("%.0f m"), FMath::Max(0.f, Distance - State.StopMargin) / 100.f),
 			GetPlanningDeceleration(State) / 100.f, State.WaitingSeconds, State.Reroutes, State.BlockedReason.IsEmpty() ? TEXT("") : TEXT(", "), *State.BlockedReason,
-			State.ClearSeconds > 0.f ? *FString::Printf(TEXT(" (clears in %.0f s)"), State.ClearSeconds) : TEXT("")));
+			State.ClearSeconds > 0.f ? *FString::Printf(TEXT(" (clears in %.0f s)"), State.ClearSeconds) : TEXT(""),
+			mPlannerControl && !State.PlanNote.IsEmpty() ? TEXT("; ") : TEXT(""), mPlannerControl ? *State.PlanNote : TEXT("")));
 	}
 	if (Lines.Num() == 0)
 	{

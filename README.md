@@ -7,6 +7,8 @@ faster route when theirs is held up.
 
 - Existing signals are ignored while traffic control is on; `/at removesignals confirm` removes them all.
 - Optional: colliding trains pass through each other instead of derailing.
+- Experimental: a space-time planner that books every track and switch as time slots, with docked trains' departures
+  predicted from their timetables, and routes each train the fastest way through those bookings.
 - Works with DynamicTimeTable and Freight Car Control; replaces DynamicTrainRoutes.
 - Nothing is written into save data; turning traffic control off (or uninstalling) gives trains back to signals.
 

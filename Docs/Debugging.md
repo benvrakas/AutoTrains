@@ -110,4 +110,15 @@ train, then a row per train every 0.2 s:
   count for (1.25x rated).
 - Two full brakes right after a 57 s pause (the game didn't tick): trains moved past their authority in one step.
   Not a logic bug.
+- Next session (15 min): no deadlocks, 22 full brakes, 4 pass-through bursts. Both overlaps were at stations: EBeams
+  GTHR Train followed MF Resource Train into Encased Pipe SRC, and Steel Pipe Xtra Steel followed Train into
+  Encased Pipe Conk/Steel SNK, while the first train docked. IsSameWayLeader followed a train into its own station,
+  and a docked train is unmanaged, so it stopped being anyone's leader: the follow cap vanished and the follower's
+  authority already ran to its goal. Now a train isn't followed the same way when its goal track is on the
+  follower's route; a train this mod doesn't drive (docked, player driven) standing on claimed track counts as a
+  stopped leader (claims dropped from there) and as an obstacle for the follow cap; and the follow cap measures the
+  gap to the nearest vehicle of a leader on the follower's path (`Vehicles`), not the leader's snapshot tail.
+- The follow cap is now two-level: the speed cap gives a leader moving on ahead its braking distance with the
+  strongest braking a sample counts for, and full brake only comes when over the curve with the leader's planning
+  braking. The strict cap alone put followers over the curve whenever they followed closer than it allowed.
 

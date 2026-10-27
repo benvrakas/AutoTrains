@@ -12,6 +12,15 @@ class UFGRailroadTrackConnectionComponent;
 constexpr float ATBrakeBandWidth = 1000.f;
 constexpr int32 ATBrakeBands = 8;
 
+// Where one vehicle of a train stands.
+struct FATVehicleSpot
+{
+	AFGBuildableRailroadTrack* Track = nullptr;
+	// Position of the vehicle's centre along the track, and half the vehicle's length. [cm]
+	float Offset = 0.f;
+	float HalfLength = 0.f;
+};
+
 // One track on a train's route, from the track its front is on to its goal.
 struct FATRouteStep
 {
@@ -30,6 +39,7 @@ struct FATTrafficTrain
 	bool bManaged = false;
 	TArray<FATRouteStep> Route;
 	TSet<AFGBuildableRailroadTrack*> Occupied;
+	TArray<FATVehicleSpot> Vehicles;
 	// Switch joints with a vehicle of this train within their fouling zone.
 	TSet<int32> OccupiedJoints;
 	// Tracks ahead granted to this train, in route order; kept between updates until the train is past them.
@@ -189,12 +199,18 @@ private:
 	// Drops Self's claims from the first one shared with a train that has stopped.
 	void RevalidateFollowClaims(FATTrafficTrain& State);
 
-	// Sets State's follow leaders: other trains holding track it has claimed.
+	// Sets State's follow leaders: leaders holding track it has claimed, and trains it doesn't drive standing on it.
 	void UpdateFollowLeaders(FATTrafficTrain& State) const;
 
-	// Returns how far Train may go behind its follow leaders: to the first track along its path one of them holds,
-	// plus that leader's braking distance; -1 if it follows none. [cm]
-	float GetFollowLimit(const AFGTrain* Train, const FATTrafficTrain& State) const;
+	// Returns how far Train may go behind its follow leaders: to the nearest vehicle of one along its path (or the
+	// first track along it one holds), plus the braking distance of a leader moving on ahead the same way, counted
+	// with the strongest braking a sample counts for; -1 if it follows none. OutHardLimit is the same with the
+	// leaders' planning braking, for full brake. [cm]
+	float GetFollowLimit(const AFGTrain* Train, const FATTrafficTrain& State, float& OutHardLimit) const;
+
+	// Returns the distance from Train's front along its path to the nearest vehicle of Other ahead of it, or -1 if
+	// none is within GapSearchDistance. [cm]
+	float GetGapToVehicles(const AFGTrain* Train, const FATTrafficTrain& State, const FATTrafficTrain& Other) const;
 
 	// Returns the distance from Train's front to the start of Track along its path (negative once on it), or a large
 	// negative number if Track isn't on it. [cm]

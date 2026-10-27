@@ -58,7 +58,8 @@ Player driven trains aren't controlled; the others treat them as obstacles.
   or going ahead of another train's claim.
 - **Top speed (km/h)**: 0 to 500, default 0 (each train's own). Above a locomotive's own top speed the mod keeps
   accelerating the train to the setting.
-- **Acceleration (x)**: 0.25 to 5, default 1: scales how fast trains gain speed. Braking isn't changed.
+- **Acceleration (x)**: 0.25 to 5, default 1: scales each self-driving train's locomotives' traction and their power
+  draw (idle and full) by the same factor, so they accelerate and consume that much more. Braking isn't changed.
 
 `/at traffic` and `/at reroute` switch for the session; changing the setting in the Mods menu applies again.
 

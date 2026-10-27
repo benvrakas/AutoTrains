@@ -1,11 +1,15 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Curves/RichCurve.h"
 #include "Subsystem/ModSubsystem.h"
 #include "ATTrafficSubsystem.generated.h"
 
 class AFGBuildableRailroadTrack;
+class AFGLocomotive;
 class AFGTrain;
+class UCurveFloat;
+class UFGLocomotiveMovementComponent;
 class UFGRailroadTrackConnectionComponent;
 
 // Full-brake braking is measured and planned per speed band of this width, up to ATBrakeBands bands; the top band
@@ -20,6 +24,17 @@ struct FATVehicleSpot
 	// Position of the vehicle's centre along the track, and half the vehicle's length. [cm]
 	float Offset = 0.f;
 	float HalfLength = 0.f;
+};
+
+// A locomotive's own traction curve, maximum tractive effort and power draw, kept while the acceleration setting
+// scales them.
+struct FATLocomotiveBase
+{
+	FRichCurve Traction;
+	TWeakObjectPtr<UCurveFloat> TractionAsset;
+	float MaxTractiveEffort = 0.f;
+	FFloatInterval PowerConsumption;
+	float Scale = 1.f;
 };
 
 // One track on a train's route, from the track its front is on to its goal.
@@ -147,7 +162,7 @@ public:
 	// Called after the game's AFGTrain::TickAtc for managed trains; caps the target speed to the train's authority.
 	void ApplyAuthority(AFGTrain* Train, float DeltaSeconds);
 
-	// Called after ApplyAuthority: applies the top speed and acceleration settings to a self-driving train.
+	// Called after ApplyAuthority: applies the top speed setting to a self-driving train.
 	void ApplySpeedSettings(AFGTrain* Train, float DeltaSeconds);
 
 	// Returns the distance from Train's front to the end of its authority track, or -1 for no limit. [cm]
@@ -236,6 +251,10 @@ private:
 	// leaders' planning braking, for full brake. [cm]
 	float GetFollowLimit(const AFGTrain* Train, const FATTrafficTrain& State, float& OutHardLimit, FATFollowInfo* OutInfo = nullptr) const;
 
+	// Returns true if Leader, at its speed now and able to get there, has cleared Track before Train, Start away at
+	// its speed now, reaches it.
+	bool IsCrossingClearedFirst(const AFGTrain* Train, const FATTrafficTrain& Leader, const AFGBuildableRailroadTrack* Track, float Start) const;
+
 	// Returns Braking, but no further than Leader may still travel: the end of its authority or its goal. [cm]
 	float GetLeaderTravel(const FATTrafficTrain& Leader, float Braking) const;
 
@@ -312,6 +331,16 @@ private:
 
 	// Time to cover Distance from Speed accelerating at Acceleration up to MaxSpeed. [s]
 	static float TimeToCover(float Distance, float Speed, float Acceleration, float MaxSpeed);
+
+	// Scales the traction curve, maximum tractive effort and power draw of every locomotive of Train by Scale (1 gives
+	// them back their own), then has the train recalculate its consist.
+	void ApplyLocomotivePower(AFGTrain* Train, float Scale);
+	static void SetLocomotiveScale(AFGLocomotive& Locomotive, UFGLocomotiveMovementComponent& Movement, FATLocomotiveBase& Base, float Scale);
+	// Gives every scaled locomotive its own traction and power back.
+	void RestoreLocomotivePower();
+
+	// Locomotives the acceleration setting has scaled.
+	TMap<TWeakObjectPtr<AFGLocomotive>, FATLocomotiveBase> mLocomotiveBase;
 
 	bool mEnabled = false;
 	bool mRerouteEnabled = true;

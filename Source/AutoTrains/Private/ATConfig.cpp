@@ -124,7 +124,7 @@ UATConfig::UATConfig()
 
 	UConfigPropertyFloat* Acceleration = CreateDefaultSubobject<UConfigPropertyFloat>(TEXT("AccelerationMultiplier"));
 	Acceleration->DisplayName = LOCTEXT("Acceleration", "Acceleration (x)");
-	Acceleration->Tooltip = LOCTEXT("AccelerationTip", "How fast self-driving trains gain speed, 0.25 to 5 times their own, while traffic control is on. Braking isn't changed.");
+	Acceleration->Tooltip = LOCTEXT("AccelerationTip", "Traction of self-driving trains' locomotives, 0.25 to 5 times their own, while traffic control is on: they accelerate that much faster and draw that much more power. Braking isn't changed.");
 	Acceleration->DefaultValue = Defaults.Acceleration;
 	Acceleration->Value = Defaults.Acceleration;
 	RootSection->SectionProperties.Add(AccelerationKey, Acceleration);

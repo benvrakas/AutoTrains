@@ -5,7 +5,9 @@
 #include "AutoTrains.h"
 #include "Buildables/FGBuildableRailroadTrack.h"
 #include "EngineUtils.h"
+#include "Curves/CurveFloat.h"
 #include "FGLocomotive.h"
+#include "FGLocomotiveMovementComponent.h"
 #include "FGRailroadSubsystem.h"
 #include "FGRailroadTrackConnectionComponent.h"
 #include "FGRailroadVehicle.h"
@@ -193,6 +195,7 @@ void AATTrafficSubsystem::Tick(float DeltaSeconds)
 void AATTrafficSubsystem::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	GPhaseThrough = false;
+	RestoreLocomotivePower();
 	Super::EndPlay(EndPlayReason);
 }
 
@@ -251,6 +254,7 @@ FString AATTrafficSubsystem::SetEnabled(bool bEnabled)
 	if (!bEnabled)
 	{
 		GPhaseThrough = false;
+		RestoreLocomotivePower();
 	}
 	mTrains.Reset();
 	mUpdateTimer = 0.f;
@@ -303,6 +307,7 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 		Seen.Add(Train);
 		FATTrafficTrain& State = mTrains.FindOrAdd(Train);
 		ReadTrain(State, Train);
+		ApplyLocomotivePower(Train, Train->IsSelfDrivingEnabled() ? GAccelerationScale : 1.f);
 
 		// Measure full-brake deceleration per speed band between updates with full brake on at both; a catch ends at
 		// standstill, and docking catches and crashes are far above 20 m/s^2.
@@ -1443,12 +1448,15 @@ float AATTrafficSubsystem::GetFollowLimit(const AFGTrain* Train, const FATTraffi
 		// crosses).
 		for (const FATRouteStep& Step : State.Route)
 		{
-			bool bHeld = false;
+			const AFGBuildableRailroadTrack* Held = nullptr;
 			for (const AFGBuildableRailroadTrack* Conflict : GetConflicts(Step.Track))
 			{
-				bHeld = bHeld || HoldsTrack(*Leader, Conflict);
+				if (!Held && HoldsTrack(*Leader, Conflict))
+				{
+					Held = Conflict;
+				}
 			}
-			if (!bHeld)
+			if (!Held)
 			{
 				continue;
 			}
@@ -1457,16 +1465,36 @@ float AATTrafficSubsystem::GetFollowLimit(const AFGTrain* Train, const FATTraffi
 			{
 				break;
 			}
-			// A leader merging the same way moves on ahead; one crossing leaves the conflict only once it has passed.
+			// A leader merging the same way moves on ahead; one crossing leaves the conflict only once it has passed,
+			// so it doesn't count while it clears the crossing before this train, at its speed now, gets there.
 			const bool bSameWay = Leader->Route.ContainsByPredicate([&Step](const FATRouteStep& LeaderStep)
 			{
 				return LeaderStep.Track == Step.Track && LeaderStep.Exit == Step.Exit;
 			});
+			if (!bSameWay && IsCrossingClearedFirst(Train, *Leader, Held, Start))
+			{
+				break;
+			}
 			Add(FMath::Max(Start, 0.f), bSameWay ? SoftBrake : 0.f, bSameWay ? HardBrake : 0.f, false);
 			break;
 		}
 	}
 	return Limit;
+}
+
+bool AATTrafficSubsystem::IsCrossingClearedFirst(const AFGTrain* Train, const FATTrafficTrain& Leader, const AFGBuildableRailroadTrack* Track, float Start) const
+{
+	const AFGTrain* LeaderTrain = Leader.Train.Get();
+	const float LeaderSpeed = LeaderTrain ? FMath::Abs(LeaderTrain->mSimulationData.Velocity) : 0.f;
+	const float Speed = FMath::Abs(Train->mSimulationData.Velocity);
+	if (!LeaderTrain || LeaderSpeed < FollowMinSpeed || Speed <= 0.f)
+	{
+		return false;
+	}
+	const float ClearDistance = GetClearDistance(Leader, Track, INDEX_NONE);
+	const float Reach = Leader.bAuthorityToGoal ? (Leader.Route.Num() > 0 ? Leader.Route.Last().EndDistance - Leader.FrontAhead : 0.f)
+		: GetAuthorityDistance(LeaderTrain) - Leader.StopMargin;
+	return Reach >= ClearDistance && ClearDistance / LeaderSpeed + FollowTimeMargin() < Start / Speed;
 }
 
 float AATTrafficSubsystem::GetLeaderTravel(const FATTrafficTrain& Leader, float Braking) const
@@ -2005,7 +2033,7 @@ float AATTrafficSubsystem::GetAcceleration(const FATTrafficTrain& State, float S
 	const AFGTrain* Train = State.Train.Get();
 	const float Mass = Train ? FMath::Max(Train->mConsistData.Mass, 1.f) : 1.f;
 	const float Tractive = Train ? Train->mConsistData.MaxTractiveEffort : 0.f;
-	return FMath::Clamp(Tractive / Mass * Share, 20.f, 600.f) * GAccelerationScale;
+	return FMath::Clamp(Tractive / Mass * Share, 20.f, 1200.f);
 }
 
 float AATTrafficSubsystem::TimeToCover(float Distance, float Speed, float Acceleration, float MaxSpeed)
@@ -2112,17 +2140,18 @@ void AATTrafficSubsystem::ApplyAuthority(AFGTrain* Train, float DeltaSeconds)
 		const float Seconds = State->ClearSeconds;
 		Target = FMath::Min(Target, Deceleration * (FMath::Sqrt(FMath::Square(Seconds) + 2.f * Usable / Deceleration) - Seconds));
 	}
-	const bool bWasFullBrake = State->bFullBrake;
-	State->bFullBrake = Speed > AllowedHard + OverspeedTolerance;
-	Atc.TargetSpeed = State->bFullBrake ? 0.f : FMath::Min(Atc.TargetSpeed, Target);
-	State->SpeedCap = State->bFullBrake ? 0.f : Target;
-
 	// Forced braking: when its own brakes won't stop the train in time, take off the rest of the speed directly, at
-	// the deceleration that stops it at the stop point, the way the game's block signals hold a train.
+	// the deceleration that stops it at the stop point, the way the game's block signals hold a train. Once started
+	// it holds, with full brake, until the train's own brakes suffice.
 	const float StopWithin = FMath::Min(Distance >= 0.f ? Usable : MAX_flt, HardFollowLimit >= 0.f ? HardFollowLimit - AuthorityStopMargin : MAX_flt);
 	const float Needed = StopWithin < MAX_flt ? FMath::Square(Speed) / (2.f * FMath::Max(StopWithin, ForcedBrakeMinDistance)) : 0.f;
+	const bool bOverCurve = Speed > AllowedHard + OverspeedTolerance;
+	const bool bWasFullBrake = State->bFullBrake;
 	const bool bWasForced = State->bForcedBrake;
-	State->bForcedBrake = State->bFullBrake && DeltaSeconds > 0.f && Needed > Deceleration;
+	State->bForcedBrake = DeltaSeconds > 0.f && Speed > 0.f && Needed > Deceleration && (bOverCurve || bWasForced);
+	State->bFullBrake = bOverCurve || State->bForcedBrake;
+	Atc.TargetSpeed = State->bFullBrake ? 0.f : FMath::Min(Atc.TargetSpeed, Target);
+	State->SpeedCap = State->bFullBrake ? 0.f : Target;
 	if (State->bForcedBrake)
 	{
 		const float Velocity = Train->mSimulationData.Velocity;
@@ -2179,6 +2208,97 @@ void AATTrafficSubsystem::ApplyAuthority(AFGTrain* Train, float DeltaSeconds)
 	State->bCatchArmed = bArm;
 }
 
+void AATTrafficSubsystem::ApplyLocomotivePower(AFGTrain* Train, float Scale)
+{
+	bool bChanged = false;
+	for (AFGRailroadSubsystem::TTrainIterator It(Train->GetFirstVehicle()); It; ++It)
+	{
+		AFGLocomotive* Locomotive = Cast<AFGLocomotive>(*It);
+		UFGLocomotiveMovementComponent* Movement = Locomotive ? Locomotive->GetLocomotiveMovementComponent() : nullptr;
+		if (!Movement)
+		{
+			continue;
+		}
+		FATLocomotiveBase* Base = mLocomotiveBase.Find(Locomotive);
+		// The game has set its own values again: start over from those.
+		const float Applied = Base ? Base->MaxTractiveEffort * Base->Scale : 0.f;
+		if (Base && !FMath::IsNearlyEqual(Movement->mMaxTractiveEffort, Applied, FMath::Abs(Applied) * 1e-4f + 1.f))
+		{
+			mLocomotiveBase.Remove(Locomotive);
+			Base = nullptr;
+		}
+		if (!Base)
+		{
+			if (Scale == 1.f)
+			{
+				continue;
+			}
+			Base = &mLocomotiveBase.Add(Locomotive);
+			Base->Traction = *Movement->mTractiveEffortCurve.GetRichCurveConst();
+			Base->TractionAsset = Movement->mTractiveEffortCurve.ExternalCurve;
+			Base->MaxTractiveEffort = Movement->mMaxTractiveEffort;
+			Base->PowerConsumption = Locomotive->mPowerConsumption;
+		}
+		if (Base->Scale == Scale)
+		{
+			continue;
+		}
+		SetLocomotiveScale(*Locomotive, *Movement, *Base, Scale);
+		bChanged = true;
+		if (Scale == 1.f)
+		{
+			mLocomotiveBase.Remove(Locomotive);
+		}
+	}
+	if (bChanged)
+	{
+		Train->RecalculateConsistData();
+		UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s locomotives at x%.2f traction and power draw (train tractive effort %.0f kN)"), *TrainName(Train), Scale,
+			Train->mConsistData.MaxTractiveEffort / 100000.f);
+	}
+}
+
+void AATTrafficSubsystem::SetLocomotiveScale(AFGLocomotive& Locomotive, UFGLocomotiveMovementComponent& Movement, FATLocomotiveBase& Base, float Scale)
+{
+	FRuntimeFloatCurve& Curve = Movement.mTractiveEffortCurve;
+	FRichCurve Traction = Base.Traction;
+	for (FRichCurveKey& Key : Traction.Keys)
+	{
+		Key.Value *= Scale;
+		Key.ArriveTangent *= Scale;
+		Key.LeaveTangent *= Scale;
+	}
+	Curve.EditorCurveData = Traction;
+	// The scaled curve is this locomotive's own; the shared asset goes back once the scale is 1 again.
+	Curve.ExternalCurve = Scale == 1.f ? Base.TractionAsset.Get() : nullptr;
+	Movement.mMaxTractiveEffort = Base.MaxTractiveEffort * Scale;
+	Locomotive.mPowerConsumption = FFloatInterval(Base.PowerConsumption.Min * Scale, Base.PowerConsumption.Max * Scale);
+	Base.Scale = Scale;
+}
+
+void AATTrafficSubsystem::RestoreLocomotivePower()
+{
+	TSet<AFGTrain*> Trains;
+	for (TPair<TWeakObjectPtr<AFGLocomotive>, FATLocomotiveBase>& Pair : mLocomotiveBase)
+	{
+		AFGLocomotive* Locomotive = Pair.Key.Get();
+		UFGLocomotiveMovementComponent* Movement = Locomotive ? Locomotive->GetLocomotiveMovementComponent() : nullptr;
+		if (Movement)
+		{
+			SetLocomotiveScale(*Locomotive, *Movement, Pair.Value, 1.f);
+			Trains.Add(Locomotive->GetTrain());
+		}
+	}
+	mLocomotiveBase.Reset();
+	for (AFGTrain* Train : Trains)
+	{
+		if (IsValid(Train))
+		{
+			Train->RecalculateConsistData();
+		}
+	}
+}
+
 void AATTrafficSubsystem::ApplySpeedSettings(AFGTrain* Train, float DeltaSeconds)
 {
 	FATTrafficTrain* State = mEnabled ? mTrains.Find(Train) : nullptr;
@@ -2190,7 +2310,7 @@ void AATTrafficSubsystem::ApplySpeedSettings(AFGTrain* Train, float DeltaSeconds
 	const float Speed = FMath::Abs(Velocity);
 	const float Previous = State->TickSpeed;
 	State->TickSpeed = Speed;
-	if (!Train->IsSelfDrivingEnabled() || Train->IsDocked() || DeltaSeconds <= 0.f || (GTopSpeed <= 0.f && GAccelerationScale == 1.f))
+	if (!Train->IsSelfDrivingEnabled() || Train->IsDocked() || DeltaSeconds <= 0.f || GTopSpeed <= 0.f)
 	{
 		return;
 	}
@@ -2200,34 +2320,19 @@ void AATTrafficSubsystem::ApplySpeedSettings(AFGTrain* Train, float DeltaSeconds
 	FTrainAtcData& Atc = Train->mAtcData;
 	const float OwnTop = Train->mConsistData.MaxSpeed;
 	float Desired = Atc.TargetSpeed;
-	if (GTopSpeed > 0.f)
+	if (GTopSpeed > OwnTop && Desired >= OwnTop - 100.f)
 	{
-		if (GTopSpeed > OwnTop && Desired >= OwnTop - 100.f)
-		{
-			Desired = FMath::Min(GTopSpeed, State->SpeedCap);
-		}
-		Desired = FMath::Min(Desired, GTopSpeed);
-		Atc.TargetSpeed = Desired;
+		Desired = FMath::Min(GTopSpeed, State->SpeedCap);
 	}
-	if (Previous < 0.f || State->bFullBrake || Speed <= 0.f || Speed >= Desired)
-	{
-		return;
-	}
-	// Scale what the train gained on its own since the last tick; at or above its own top speed it gains nothing,
-	// so it accelerates with its estimated acceleration instead.
-	float Gained = 0.f;
-	if (Speed >= OwnTop - 50.f && Desired > OwnTop)
-	{
-		Gained = GetAcceleration(*State, 1.f) * DeltaSeconds;
-	}
-	else if (Speed > Previous)
-	{
-		Gained = (Speed - Previous) * (GAccelerationScale - 1.f);
-	}
-	if (Gained == 0.f)
+	Desired = FMath::Min(Desired, GTopSpeed);
+	Atc.TargetSpeed = Desired;
+	// At its own top speed the locomotives deliver no more traction, so the mod carries it on to the setting with the
+	// train's estimated acceleration.
+	if (Previous < 0.f || State->bFullBrake || Speed <= 0.f || Speed >= Desired || Speed < OwnTop - 50.f)
 	{
 		return;
 	}
+	const float Gained = GetAcceleration(*State, 1.f) * DeltaSeconds;
 	const float NewSpeed = FMath::Clamp(Speed + Gained, Previous, Desired);
 	Train->mSimulationData.Velocity = Velocity < 0.f ? -NewSpeed : NewSpeed;
 	State->TickSpeed = NewSpeed;

@@ -46,7 +46,7 @@ time. Build junctions, roundabouts, crossings and single track however you like,
 | **Aggressive timing** | On | Tighter margins: trains follow closer and slip through junctions more readily. Off is more cautious. |
 | **Safety margin (seconds)** | 0 | Extra time, 0 to 10 s, a train leaves when it follows another out of a junction or goes ahead of another train. Raise it if trains clip each other. |
 | **Top speed (km/h)** | 0 | Top speed of every self-driving train, up to 500 km/h. 0 keeps each train's own; above a locomotive's own top speed trains keep accelerating to this one. |
-| **Acceleration (x)** | 1 | How fast self-driving trains gain speed, 0.25 to 5 times their own. Braking isn't changed. |
+| **Acceleration (x)** | 1 | Traction of self-driving trains' locomotives, 0.25 to 5 times their own: they accelerate that much faster and draw that much more power from the grid. Braking isn't changed. |
 
 ### Getting started
 

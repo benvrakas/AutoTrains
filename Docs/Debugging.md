@@ -154,3 +154,16 @@ train, then a row per train every 0.2 s:
   at the top speed, or raised to it when the driver runs flat out at the locomotive's own top speed; above that, or
   scaled by the multiplier, speed is added to `mSimulationData.Velocity`. Timing uses the top speed and scaled
   acceleration.
+- Acceleration now scales the locomotives themselves (`ApplyLocomotivePower`, every update): the tractive effort curve
+  (copied into the component's own curve, keys and tangents scaled), `mMaxTractiveEffort` and `mPowerConsumption`
+  (min and max), then `AFGTrain::RecalculateConsistData`. Power draw follows throttle as a share of the scaled
+  maximum, so it scales with traction. A locomotive whose `mMaxTractiveEffort` no longer matches what was set is
+  taken as reset by the game and captured again. Restored when traffic control goes off, self-driving goes off, or
+  the world ends; nothing is saved. Log: `locomotives at xN traction and power draw`.
+- Forced braking flapped every tick: it took off just enough to fall under the full-brake curve, switched off, and
+  came back the next tick (321 log lines). It now holds, with full brake, until the train's own brakes suffice.
+- Remaining full brakes all had "first track it holds, its braking 0 m": a crossing leader the train followed held
+  the crossing ahead (its claim) until it had passed it, so the follower braked to stop there although the leader
+  clears it long before. A crossing leader is now ignored while it clears the crossing before the follower, at its
+  speed now, gets there (`IsCrossingClearedFirst`); if it stops, the stopped-leader rule drops the claims.
+

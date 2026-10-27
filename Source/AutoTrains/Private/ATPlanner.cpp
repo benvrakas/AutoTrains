@@ -52,6 +52,11 @@ namespace
 	// Trains that waited longer than WaitDumpSeconds are described in the log every WaitDumpInterval. [s]
 	constexpr double WaitDumpSeconds = 60.0;
 	constexpr double WaitDumpInterval = 30.0;
+	// A train slower than this whose follow limit leaves it less than this is named as held by its leader. [cm/s] [cm]
+	constexpr float FollowStuckSpeed = 50.f;
+	// A train blocked by another is followed onto shared track only while at least this fast. [cm/s]
+	constexpr float FollowMoveSpeed = 300.f;
+	constexpr float FollowStuckDistance = 3000.f;
 	// The earliest-entry search gives up after this many shifts.
 	constexpr int32 EntryMaxShifts = 16;
 	// Planner counters are logged this often. [s]
@@ -962,8 +967,9 @@ void AATTrafficSubsystem::PlanMoving(FATTrafficTrain& State, double Now)
 	}
 }
 
-bool AATTrafficSubsystem::CanEnter(FATTrafficTrain& Self, const FResourceKey& Key, double Enter, bool bLocked, const UFGRailroadTrackConnectionComponent* Via,
-	const UFGRailroadTrackConnectionComponent* Exit, double Now, const FATTrafficTrain*& OutBlocker, FString& OutWhy) const
+bool AATTrafficSubsystem::CanEnter(FATTrafficTrain& Self, const FResourceKey& Key, double Enter, bool bLocked, bool bHeldBefore,
+	const UFGRailroadTrackConnectionComponent* Via, const UFGRailroadTrackConnectionComponent* Exit, double Now, const FATTrafficTrain*& OutBlocker,
+	FString& OutWhy) const
 {
 	const AFGTrain* SelfTrain = Self.Train.Get();
 	if (IsOpen(Enter))
@@ -972,8 +978,12 @@ bool AATTrafficSubsystem::CanEnter(FATTrafficTrain& Self, const FResourceKey& Ke
 		OutWhy = TEXT("its plan has no slot there yet");
 		return false;
 	}
-	// A train ahead of this one on its route the same way is followed through the same track or switch the same way.
-	auto IsFollowed = [this, &Self](const FATTrafficTrain* Other) { return Other && Other->bManaged && GetRouteOrder(Self, *Other) > 0; };
+	// A train ahead of this one on its route the same way is followed through the same track or switch the same way,
+	// while it moves or may move on; one that stands blocked isn't, so its followers don't hold track behind it.
+	auto IsFollowed = [this, &Self](const FATTrafficTrain* Other)
+	{
+		return Other && Other->bManaged && GetRouteOrder(Self, *Other) > 0 && (Other->Speed >= FollowMoveSpeed || !Other->BlockedBy.IsValid());
+	};
 	TArray<FResourceKey, TInlineAllocator<4>> Keys;
 	if (Key.Joint != INDEX_NONE)
 	{
@@ -988,9 +998,12 @@ bool AATTrafficSubsystem::CanEnter(FATTrafficTrain& Self, const FResourceKey& Ke
 			Keys.Add(Crossing);
 		}
 	}
+	// Held from its last grant and locked (it may not stop short of it at service braking): the train keeps it whatever
+	// was booked since; only a train standing there or holding it stops it.
+	const bool bKeeps = bHeldBefore && bLocked;
 	for (const FResourceKey& Checked : Keys)
 	{
-		const TArray<FBooking>* Bookings = mBookings.Find(Checked);
+		const TArray<FBooking>* Bookings = bKeeps ? nullptr : mBookings.Find(Checked);
 		if (!Bookings)
 		{
 			continue;
@@ -1065,6 +1078,13 @@ bool AATTrafficSubsystem::CanEnter(FATTrafficTrain& Self, const FResourceKey& Ke
 
 void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 {
+	// What the train held from its last grant.
+	TSet<const AFGBuildableRailroadTrack*> HeldTracks;
+	for (const TWeakObjectPtr<AFGBuildableRailroadTrack>& Claim : State.Claims)
+	{
+		HeldTracks.Add(Claim.Get());
+	}
+	const TSet<int32> HeldJoints = State.ClaimedJoints;
 	State.Claims.Reset();
 	State.FollowedTrains.Reset();
 	State.BlockedBy = nullptr;
@@ -1088,7 +1108,7 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 		{
 			FResourceKey Key;
 			Key.Joint = Joint;
-			if (!CanEnter(State, Key, TimeOf(State.PlanJointEnter, Index), LockOf(State.PlanJointLocked, Index), Entry, Step.Exit, Now, Blocker, Why))
+			if (!CanEnter(State, Key, TimeOf(State.PlanJointEnter, Index), LockOf(State.PlanJointLocked, Index), HeldJoints.Contains(Joint), Entry, Step.Exit, Now, Blocker, Why))
 			{
 				Where = FString::Printf(TEXT("the switch before %s"), *ResourceName(Step.Track, INDEX_NONE));
 				bBlocked = true;
@@ -1098,7 +1118,7 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 		{
 			FResourceKey Key;
 			Key.Track = Step.Track;
-			if (!CanEnter(State, Key, TimeOf(State.PlanTrackEnter, Index), LockOf(State.PlanTrackLocked, Index), nullptr, Step.Exit, Now, Blocker, Why))
+			if (!CanEnter(State, Key, TimeOf(State.PlanTrackEnter, Index), LockOf(State.PlanTrackLocked, Index), HeldTracks.Contains(Step.Track), nullptr, Step.Exit, Now, Blocker, Why))
 			{
 				Where = ResourceName(Step.Track, INDEX_NONE);
 				bBlocked = true;
@@ -1125,6 +1145,23 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 	}
 	UpdateAuthority(State);
 	UpdateFollowLeaders(State);
+	// Standing behind a train in its way that holds it there: named, so a cycle of such trains shows as a deadlock.
+	if (!bBlocked && State.Speed < FollowStuckSpeed)
+	{
+		if (const AFGTrain* Train = State.Train.Get())
+		{
+			float HardLimit = -1.f;
+			float PaceSpeed = MAX_flt;
+			FATFollowInfo Info;
+			GetFollowLimit(Train, State, HardLimit, PaceSpeed, &Info);
+			if (HardLimit >= 0.f && HardLimit < FollowStuckDistance && Info.Leader.IsValid())
+			{
+				State.BlockedBy = Info.Leader;
+				State.BlockedReason = FString::Printf(TEXT("stays behind %s, %.0f m ahead"), *NameOf(Info.Leader.Get()), Info.Gap / 100.f);
+				State.BlockedKey = NameOf(Info.Leader.Get()) + TEXT("|behind");
+			}
+		}
+	}
 	// Held where the plan waits: roll up to arrive as it moves off.
 	State.ClearSeconds = bBlocked && State.PlanDepart > Now && !IsOpen(State.PlanDepart) ? State.PlanDepart - Now : -1.f;
 }
@@ -1518,8 +1555,21 @@ void AATTrafficSubsystem::LogWaitDump(const FATTrafficTrain& State, double Now) 
 		{
 			return TEXT("?");
 		}
-		return FString::Printf(TEXT("%s (%s, %.0f km/h, waited %.0f s, %d claims%s%s)"), *NameOf(Other->Train.Get()), Other->bManaged ? TEXT("driving") : TEXT("not driven"),
-			Other->Speed * 0.036f, Other->WaitingSeconds, Other->Claims.Num(), Other->BlockedReason.IsEmpty() ? TEXT("") : TEXT(", "), *Other->BlockedReason);
+		const AFGTrain* Train = Other->Train.Get();
+		FString Drive;
+		if (Train && Other->bManaged)
+		{
+			float HardLimit = -1.f;
+			float PaceSpeed = MAX_flt;
+			FATFollowInfo Info;
+			GetFollowLimit(Train, *Other, HardLimit, PaceSpeed, &Info);
+			const float Authority = GetAuthorityDistance(Train);
+			Drive = FString::Printf(TEXT(", may drive %s, target %.0f km/h%s"), Authority < 0.f ? TEXT("to its goal") : *FString::Printf(TEXT("%.0f m"), Authority / 100.f),
+				Train->mAtcData.TargetSpeed * 0.036f,
+				HardLimit >= 0.f ? *FString::Printf(TEXT(", follows %s with %.0f m"), *NameOf(Info.Leader.Get()), HardLimit / 100.f) : TEXT(""));
+		}
+		return FString::Printf(TEXT("%s (%s, %.0f km/h, waited %.0f s, %d claims%s%s%s)"), *NameOf(Train), Other->bManaged ? TEXT("driving") : TEXT("not driven"),
+			Other->Speed * 0.036f, Other->WaitingSeconds, Other->Claims.Num(), *Drive, Other->BlockedReason.IsEmpty() ? TEXT("") : TEXT(", "), *Other->BlockedReason);
 	};
 	const int32 Index = State.BlockedAtIndex;
 	const bool bJoint = State.BlockedAtJoint != INDEX_NONE;

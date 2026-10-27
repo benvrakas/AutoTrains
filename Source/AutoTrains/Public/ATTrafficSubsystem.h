@@ -591,9 +591,10 @@ private:
 	// Sets State's claims: the route resources from its front up to its stopping distance plus lookahead that it may
 	// enter now: booked for it, no other train booked there first or standing there, except one it follows the same way.
 	void GrantFromPlan(FATTrafficTrain& State, double Now);
-	// Returns true if Self may enter Key now with its booking entering at Enter (locked or not); otherwise sets the train
-	// in the way and why. A train it follows the same way is added to its followed trains.
-	bool CanEnter(FATTrafficTrain& Self, const FResourceKey& Key, double Enter, bool bLocked, const UFGRailroadTrackConnectionComponent* Via,
+	// Returns true if Self may enter Key now with its booking entering at Enter (locked or not; held from its last grant
+	// or not); otherwise sets the train in the way and why. A train it follows the same way is added to its followed
+	// trains.
+	bool CanEnter(FATTrafficTrain& Self, const FResourceKey& Key, double Enter, bool bLocked, bool bHeldBefore, const UFGRailroadTrackConnectionComponent* Via,
 		const UFGRailroadTrackConnectionComponent* Exit, double Now, const FATTrafficTrain*& OutBlocker, FString& OutWhy) const;
 	// Searches State's fastest route through the bookings when due, and takes it if clearly faster.
 	void ConsiderPlannedReroute(FATTrafficTrain& State, double Now, float DeltaSeconds);

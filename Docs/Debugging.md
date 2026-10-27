@@ -363,3 +363,12 @@ train, then a row per train every 0.2 s:
   length and 400 m) is locked, still kept clear of other locked bookings, so the others plan behind it
   (`goes first ... to break the deadlock`). Trains that waited over 60 s are described every 30 s (`planner: WAIT`):
   their booking at the resource, and every booking there with its train's state.
+- Sixth planner run (18:24): no DEADLOCK although 8 trains waited 2-5 min; the dumps showed the trains they waited for
+  standing at 0 km/h with 7-11 granted tracks and no reason of their own, so no waiting chain closed. (1) MF Resource
+  Train lost a track it held at 144 km/h (799 m/s2) to EBeams GTHR Train, whose booking was locked only because it
+  couldn't stop short of it, and both ended in switch 9's fouling zone holding each other back by their follow limits.
+  A train now keeps what it held from its last grant and has locked; no booking outranks that, only a train standing
+  there or holding it. (2) A train held back only by its follow limit now names its leader (`stays behind`), so such
+  cycles are detected and shown. (3) Following onto shared track is granted only while the leader moves (3 m/s) or
+  isn't blocked: followers granted behind a standing leader held crossings and switches for others while standing.
+  The wait dump shows each train's authority, target speed and follow limit.

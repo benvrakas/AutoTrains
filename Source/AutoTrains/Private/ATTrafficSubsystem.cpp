@@ -25,9 +25,11 @@ namespace
 	float GTopSpeed = 0.f;
 	float GAccelerationScale = 1.f;
 	int32 GPhaseThroughCount = 0;
-	// Tracks the two vehicles of the last contact let through were on.
+	// Tracks the two vehicles of the last contact let through were on, and the trains on them at the next update.
 	TWeakObjectPtr<AFGBuildableRailroadTrack> GPhaseTrack;
 	TWeakObjectPtr<AFGBuildableRailroadTrack> GPhaseOtherTrack;
+	bool GPhaseNamesPending = false;
+	FString GPhaseNames;
 
 	constexpr float TrafficUpdateInterval = 0.25f;
 	constexpr float SettingsInterval = 1.f;
@@ -59,6 +61,8 @@ namespace
 	// ahead. [cm/s] [s]
 	constexpr float OverspeedTolerance = 100.f;
 	constexpr float TargetLeadSeconds = 0.5f;
+	// Share of the planned full-brake deceleration the target speed's curve brakes with.
+	constexpr float ServiceBrakeShare = 0.75f;
 	constexpr double ConflictRebuildSeconds = 30.0;
 	constexpr double ConflictRebuildMinSeconds = 2.0;
 
@@ -206,12 +210,7 @@ void AATTrafficSubsystem::Tick(float DeltaSeconds)
 		mUpdateTimer = TrafficUpdateInterval;
 		UpdateTraffic(mSinceUpdate);
 		mSinceUpdate = 0.f;
-	}
-	mPhaseReportTimer -= DeltaSeconds;
-	if (mPhaseReportTimer <= 0.f)
-	{
-		mPhaseReportTimer = 10.f;
-		if (GPhaseThroughCount > 0)
+		if (GPhaseNamesPending)
 		{
 			// Name the trains standing on the tracks of the last contact.
 			auto NamesOn = [this](const AFGBuildableRailroadTrack* Track)
@@ -226,8 +225,18 @@ void AATTrafficSubsystem::Tick(float DeltaSeconds)
 				}
 				return Names.Num() > 0 ? FString::Join(Names, TEXT("/")) : FString(TEXT("?"));
 			};
-			UE_LOG(LogAutoTrains, Log, TEXT("traffic: trains passed through each other %d times in the last 10 s; last %s on %s and %s on %s"), GPhaseThroughCount,
-				*NamesOn(GPhaseTrack.Get()), *TrackName(GPhaseTrack.Get()), *NamesOn(GPhaseOtherTrack.Get()), *TrackName(GPhaseOtherTrack.Get()));
+			GPhaseNames = FString::Printf(TEXT("%s on %s and %s on %s"), *NamesOn(GPhaseTrack.Get()), *TrackName(GPhaseTrack.Get()), *NamesOn(GPhaseOtherTrack.Get()),
+				*TrackName(GPhaseOtherTrack.Get()));
+			GPhaseNamesPending = false;
+		}
+	}
+	mPhaseReportTimer -= DeltaSeconds;
+	if (mPhaseReportTimer <= 0.f)
+	{
+		mPhaseReportTimer = 10.f;
+		if (GPhaseThroughCount > 0)
+		{
+			UE_LOG(LogAutoTrains, Log, TEXT("traffic: trains passed through each other %d times in the last 10 s; last %s"), GPhaseThroughCount, *GPhaseNames);
 			GPhaseThroughCount = 0;
 		}
 	}
@@ -289,6 +298,7 @@ void AATTrafficSubsystem::CountPhaseThrough(AFGBuildableRailroadTrack* Track, AF
 	++GPhaseThroughCount;
 	GPhaseTrack = Track;
 	GPhaseOtherTrack = OtherTrack;
+	GPhaseNamesPending = true;
 }
 
 FString AATTrafficSubsystem::SetEnabled(bool bEnabled)
@@ -2247,7 +2257,7 @@ float AATTrafficSubsystem::GetStoppingDistance(const FATTrafficTrain& State, flo
 	return Distance;
 }
 
-float AATTrafficSubsystem::GetAllowedSpeed(const FATTrafficTrain& State, float Distance)
+float AATTrafficSubsystem::GetAllowedSpeed(const FATTrafficTrain& State, float Distance, float Share)
 {
 	if (Distance <= 0.f)
 	{
@@ -2259,7 +2269,7 @@ float AATTrafficSubsystem::GetAllowedSpeed(const FATTrafficTrain& State, float D
 	{
 		const float Low = Band * ATBrakeBandWidth;
 		const float High = Low + ATBrakeBandWidth;
-		const float Deceleration = FMath::Max(State.PlanDecel[Band], MinPlanDeceleration);
+		const float Deceleration = FMath::Max(State.PlanDecel[Band], MinPlanDeceleration) * Share;
 		// The speed in this band whose stop takes Distance: Below + (v^2 - Low^2) / (2 a) + v * Lag = Distance.
 		const float Constant = Below - FMath::Square(Low) / (2.f * Deceleration) - Distance;
 		const float Speed = Deceleration * (FMath::Sqrt(FMath::Square(BrakeLagSeconds) - 2.f * Constant / Deceleration) - BrakeLagSeconds);
@@ -2376,31 +2386,32 @@ void AATTrafficSubsystem::ApplyAuthority(AFGTrain* Train, float DeltaSeconds)
 	const float Usable = Distance - State->StopMargin;
 	// The follow limit with the leaders' strongest braking caps the speed; with their planning braking it decides
 	// full brake.
-	// Lead: the target runs that far ahead of the curve, so the game's driver, braking a little behind its target,
-	// stays under the curve that decides full brake.
-	auto GetAllowed = [State, Distance, Usable](float Follow, float Lead)
+	// The target follows a service-brake curve that far ahead, so the game's driver, braking gently and a little
+	// behind its target, stays under the full-brake curve that decides full brake.
+	auto GetAllowed = [State, Distance, Usable](float Follow, float Lead, float Share)
 	{
 		float Result = MAX_flt;
 		if (Distance >= 0.f)
 		{
-			Result = GetAllowedSpeed(*State, Usable - Lead);
+			Result = GetAllowedSpeed(*State, Usable - Lead, Share);
 		}
 		if (Follow >= 0.f)
 		{
-			Result = FMath::Min(Result, GetAllowedSpeed(*State, Follow - AuthorityStopMargin - Lead));
+			Result = FMath::Min(Result, GetAllowedSpeed(*State, Follow - AuthorityStopMargin - Lead, Share));
 		}
 		return Result;
 	};
 	const float Deceleration = GetPlanningDeceleration(*State, Speed);
-	const float Allowed = GetAllowed(FollowLimit, Speed * TargetLeadSeconds);
-	const float AllowedHard = GetAllowed(HardFollowLimit, 0.f);
+	const float Allowed = GetAllowed(FollowLimit, Speed * TargetLeadSeconds, ServiceBrakeShare);
+	const float AllowedHard = GetAllowed(HardFollowLimit, 0.f, 1.f);
 	float Target = FMath::Min(Allowed, PaceSpeed);
 	// Waiting for a train that will clear: drive at the speed that reaches the braking point as it clears, so the
 	// train rolls on instead of stopping.
 	if (Distance >= 0.f && Usable > 0.f && State->ClearSeconds > 0.f)
 	{
 		const float Seconds = State->ClearSeconds;
-		Target = FMath::Min(Target, Deceleration * (FMath::Sqrt(FMath::Square(Seconds) + 2.f * Usable / Deceleration) - Seconds));
+		const float Service = Deceleration * ServiceBrakeShare;
+		Target = FMath::Min(Target, Service * (FMath::Sqrt(FMath::Square(Seconds) + 2.f * Usable / Service) - Seconds));
 	}
 	// Forced braking: when its own brakes won't stop the train in time, take off the rest of the speed directly, at
 	// the deceleration that stops it at the stop point, the way the game's block signals hold a train. Once started

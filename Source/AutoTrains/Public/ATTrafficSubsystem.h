@@ -357,8 +357,8 @@ private:
 	// Distance State needs to stop from Speed: the brakes building up, then each band's planned deceleration. [cm]
 	static float GetStoppingDistance(const FATTrafficTrain& State, float Speed);
 
-	// Highest speed from which State stops within Distance. [cm/s]
-	static float GetAllowedSpeed(const FATTrafficTrain& State, float Distance);
+	// Highest speed from which State stops within Distance, braking at Share of its planned deceleration. [cm/s]
+	static float GetAllowedSpeed(const FATTrafficTrain& State, float Distance, float Share = 1.f);
 
 	// Claim order score, lower first: seconds until the train's tail has passed the first track it still needs, minus
 	// a share of the time it has waited.

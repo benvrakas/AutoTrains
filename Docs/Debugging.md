@@ -243,3 +243,12 @@ train, then a row per train every 0.2 s:
 - Most of the 40 forced brakes were trains driving on the full-brake curve itself: the target was the curve, the
   game's driver brakes slightly behind its target, went 1 m/s over, and got full brake with forced braking needing
   about the planned deceleration. The target now runs 0.5 s ahead of the curve (`TargetLeadSeconds`).
+- Session 2026-10-27 06:26, 12 min: no deadlocks, no full brakes over the curve. Fair turns held 18 times (e.g. Heavy
+  Oil Residue [Coke Steel] and Circuit Board Gather Train for at test1, Train and at test 2 for Coated Plates RSC
+  Train); the longest wait, Coated Plates RSC B 42 s, queued for Coated Plates RSC Train at their shared station.
+  Forced braking still came on and off within one stop (at test 3 five times from 67 to 16 km/h, needing 1.4-1.7
+  m/s2, its plan): the target followed the full-brake curve, so the game's driver braking gently drifted over it.
+  The target now follows a service-brake curve at 0.75 of the planned deceleration (`ServiceBrakeShare`, also for
+  pacing behind a clearing blocker); the full-brake curve only decides full brake.
+- Pass-through reports named "?": the trains were looked up at the 10 s report, after they had moved. The names are
+  now taken at the traffic update after the contact.

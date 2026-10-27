@@ -224,3 +224,22 @@ train, then a row per train every 0.2 s:
   test failed 27 m from the crossing. The pace and following in time (`IsClearingInTime`) now take the latest the
   leader can clear it: slowing evenly to stop at the end of its authority (`GetLatestClearSeconds`), which only
   gets sooner as time passes.
+- Session 2026-10-27 06:04 correction: `mass_t` (vehicles with cargo) equals the consist mass for every train, so the
+  consist mass does include cargo and the cargo explanation above is wrong; the plan's air-brake share is still
+  right (steady full-brake deceleration after 1 s is 2.1-3.2 m/s2 at every speed). The low first samples (0.6-2.0)
+  are the brakes building up in the first 0.5 s, which `BrakeLagSeconds` already covers.
+- Adaptive Control Unit GTHR Train A waited 31 s at a busy junction: its next safe stop was 590 m (32 tracks) on,
+  and Rubber SNK, Coated Plates RSC B and AI Limiter RSC kept claiming parts of that stretch in turn; waiting time
+  only ordered the claims within each update. Fair turns: a train that has waited 12 s for another train records the
+  tracks and switches to its next safe stop (`UpdateRequest`); trains that have waited less don't claim them, or
+  tracks crossing them (`FindRequester`), unless they hold one of them already, or the waiting train waits for or
+  follows them. The request lapses after 90 s of waiting, in case it is what holds the train up. Log: `has waited N
+  s; other trains leave its way free`, and `lets X through first`.
+- at test 2 full brake at 98 km/h behind Cable RSC, which had turned off into its station: Cable's tail overhung a
+  switch onto at test 2's branch, a track off Cable's route, whose clear distance was taken as Cable's length plus
+  20 m (84 m) against 60 m left to its stop, so Cable "might stop on it". The clear distance of a track off the
+  route now comes from the vehicles: the rear of the last one on it past its forward end, or the overhang ending
+  (`GetTailClearDistance`).
+- Most of the 40 forced brakes were trains driving on the full-brake curve itself: the target was the curve, the
+  game's driver brakes slightly behind its target, went 1 m/s over, and got full brake with forced braking needing
+  about the planned deceleration. The target now runs 0.5 s ahead of the curve (`TargetLeadSeconds`).

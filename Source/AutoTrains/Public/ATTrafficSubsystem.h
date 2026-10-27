@@ -129,6 +129,10 @@ struct FATTrafficTrain
 	bool bAuthorityToGoal = false;
 	// How far before the end of the authority track the train stops: more when a switch is there. [cm]
 	float StopMargin = 1000.f;
+	// While the train has waited long: the tracks and switches it needs to its next safe stop, which other trains leave
+	// free for it.
+	TSet<const AFGBuildableRailroadTrack*> RequestTracks;
+	TSet<int32> RequestJoints;
 	// Why the claims stop where they do, for the log and /at traffic.
 	FString BlockedReason;
 	TWeakObjectPtr<AFGTrain> BlockedBy;
@@ -198,6 +202,14 @@ private:
 	void ReadTrain(FATTrafficTrain& State, AFGTrain* Train) const;
 	void ReleasePassedClaims(FATTrafficTrain& State) const;
 	void ExtendClaims(FATTrafficTrain& State);
+
+	// Sets State's request: the tracks and switches from route step First to its next safe stop, while it has waited
+	// long for another train.
+	void UpdateRequest(FATTrafficTrain& State, int32 First) const;
+
+	// Returns the train that has waited longer than State and needs Track (or a track crossing it), or Joint, to get
+	// to its next safe stop, unless State is in its way or it waits for or follows State; null if none.
+	const FATTrafficTrain* FindRequester(const FATTrafficTrain& State, const AFGBuildableRailroadTrack* Track, int32 Joint) const;
 	void UpdateAuthority(FATTrafficTrain& State) const;
 	void RefreshClaimedJoints(FATTrafficTrain& State) const;
 	void LogDeadlocks();
@@ -235,6 +247,10 @@ private:
 
 	// Returns how far Holder's front still travels until its tail has cleared Track (or Joint's fouling zone). [cm]
 	float GetClearDistance(const FATTrafficTrain& Holder, const AFGBuildableRailroadTrack* Track, int32 Joint) const;
+
+	// Returns how far Holder still travels until none of its vehicles is on Track, a track off its route, or reaches
+	// onto it past an end; -1 if none does. [cm]
+	float GetTailClearDistance(const FATTrafficTrain& Holder, const AFGBuildableRailroadTrack* Track) const;
 
 	// Returns the seconds until the train blocking State has cleared the first track (or switch) beyond State's
 	// claims that it holds, or -1 if it may stop before then.

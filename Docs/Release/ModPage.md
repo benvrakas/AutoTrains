@@ -45,7 +45,7 @@ you like, and let the trains sort it out.
 | **Congestion rerouting** | On | Trains take another route when it gets them there sooner than waiting on theirs. |
 | **Trains pass through each other** | On | While traffic control is on, trains that touch pass through each other instead of crashing. A misjudged gap then only looks like a clip. |
 | **Aggressive timing** | On | Tighter margins: trains plan braking closer to what they really manage. Off is more cautious. |
-| **Safety margin (seconds)** | 0 | Extra time, 0 to 10 s, kept between two trains using the same track or switch, on top of 2 s. Raise it if trains clip each other. |
+| **Safety margin (seconds)** | 0 | Time, 0 to 10 s, kept between two trains using the same track or switch. 0 lets a train in as soon as the one before it has cleared; raise it if trains clip each other. |
 | **Top speed (km/h)** | 0 | Top speed of every self-driving train, up to 500 km/h. 0 keeps each train's own. Above the speed at which a locomotive's traction runs out (about 120 km/h on flat track), its traction is stretched up to the setting and it draws that much more power. |
 | **Acceleration (x)** | 1 | Traction of self-driving trains' locomotives, 0.25 to 5 times their own: they accelerate that much faster and draw that much more power from the grid. Braking isn't changed. |
 

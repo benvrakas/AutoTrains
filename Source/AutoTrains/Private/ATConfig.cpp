@@ -110,7 +110,7 @@ UATConfig::UATConfig()
 
 	UConfigPropertyFloat* Margin = CreateDefaultSubobject<UConfigPropertyFloat>(TEXT("SafetyMarginSeconds"));
 	Margin->DisplayName = LOCTEXT("SafetyMargin", "Safety margin (seconds)");
-	Margin->Tooltip = LOCTEXT("SafetyMarginTip", "Extra time, 0 to 10 seconds, kept between two trains using the same track or switch, on top of 2 seconds. Raise it if trains clip each other.");
+	Margin->Tooltip = LOCTEXT("SafetyMarginTip", "Time, 0 to 10 seconds, kept between two trains using the same track or switch. 0 lets a train in as soon as the one before it has cleared; raise it if trains clip each other.");
 	Margin->DefaultValue = Defaults.SafetyMargin;
 	Margin->Value = Defaults.SafetyMargin;
 	RootSection->SectionProperties.Add(SafetyMarginKey, Margin);

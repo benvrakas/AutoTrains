@@ -400,3 +400,12 @@ train, then a row per train every 0.2 s:
   2 minutes (Heavy Oil Residue (120) rerouting in circles was a symptom of it being stuck); the log of the game giving a
   driving train a new path (never fired in 10 sessions: wrong guess); waits per plan back to 32 (failures still happened
   at 64).
+- Ninth run (19:13): at test1 at 127 km/h was granted past a crossing (500 m) and lost it again every update or two
+  (187 m), forced braking each time; Coated Plates RSC B had been granted the crossing track and then had to stop on
+  it, waiting for at test1's tail to clear the track it needed next, which at test1 couldn't clear without crossing.
+  Track a train holds isn't re-planned, so once something ahead stalled it drove on and stood on the crossing. A
+  merge switch held by a stopped train's tail is the same thing. Fix (safe stops): a held-up train's grant ends only
+  where it stands clear of every track (and crossing track) and switch zone another train is booked on before the
+  train can move on (trains queueing behind it the same way, or that have to pass it first, don't count); otherwise
+  it is cut back to the last such place it can still stop at, and the train waits before the junction.
+- The safety margin is the whole headway between bookings (user, 2026-10-27): no extra seconds on top.

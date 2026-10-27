@@ -7,7 +7,7 @@ With traffic control on (the default), every self-driving train ignores signals,
   goal plus the stay there; docked trains their stay until the expected departure, then their next leg from the
   timetable as the game's pathfinder finds it; trains the mod doesn't drive where they stand, open-ended. A conflict
   puts a wait at the last track end before it. Same way on the same track (or through a switch the same way) is
-  allowed with a headway (safety margin + 2 s) at both ends. Stays are learned per train and station from the last
+  allowed with the safety margin as headway at both ends. Stays are learned per train and station from the last
   dock (40 s until one is seen). Plans use each train's cruising speed and acceleration as seen.
 - Locks: what a train stands on, can't stop short of, or holds within reach of service braking is locked: nobody books
   ahead of it. What it holds beyond that is held: another train may fit in ahead, and the holder then gives it up with
@@ -42,7 +42,7 @@ Player driven trains aren't controlled; the others treat them as obstacles.
   train has waited as half a second sooner in planning order. Off: 85%, 60%, a full second.
 
 - **Safety margin (seconds)**: 0 to 10, default 0: extra time kept between two trains' bookings of the same track or
-  switch (on top of 2 s).
+  switch.
 - **Top speed (km/h)**: 0 to 500, default 0 (each train's own). Above the speed at which a locomotive's traction runs
   out (about 120 km/h on flat track), its traction curve is stretched up to the setting, and its power draw with it;
   every vehicle's own speed limit is raised to the setting.

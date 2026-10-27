@@ -14,8 +14,6 @@
 
 namespace
 {
-	// Bookings on one resource keep this far apart beyond the safety margin, for trains drifting from their plans. [s]
-	constexpr double PlannerDriftSeconds = 2.0;
 	// A plan adds at most this many waits.
 	constexpr int32 PlanMaxWaits = 32;
 	// An open-ended time: a stay nobody knows the end of, or everything after a wait for one. [s]
@@ -462,7 +460,7 @@ void AATTrafficSubsystem::PlanTrain(const FATTrafficTrain& State, double Now, co
 	FPlan& Plan) const
 {
 	const FRouteSpeed Speed = GetRouteSpeed(State);
-	const double Headway = GetSafetyMarginSeconds() + PlannerDriftSeconds;
+	const double Headway = GetSafetyMarginSeconds();
 	const AFGTrain* Self = State.Train.Get();
 	Plan = FPlan();
 	Plan.Waits = FixedWaits;
@@ -1119,6 +1117,28 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 			break;
 		}
 	}
+	// Held up, the train stops at the end of its grant: only where it stands clear of every track and switch another
+	// train is booked on before it can move on. Else the grant is cut back to the last such place it can still stop at.
+	if (bBlocked)
+	{
+		const float Stopping = GetStoppingDistance(State, State.Speed);
+		const double LeaveBy = State.PlanDepart > Now ? State.PlanDepart : OpenTime;
+		for (int32 Last = State.Claims.Num() - 1; Last > 0; --Last)
+		{
+			const FATRouteStep& End = State.Route[Last];
+			const FATTrafficTrain* Needer = nullptr;
+			FString Where;
+			if (End.EndDistance - State.FrontAhead - GetStopMargin(End.Exit) < Stopping || IsSafeStop(State, Last, LeaveBy, Needer, Where))
+			{
+				break;
+			}
+			State.Claims.Pop();
+			State.BlockedBy = Needer ? Needer->Train : nullptr;
+			State.BlockedReason = FString::Printf(TEXT("waits for %s before %s: it would stand on %s, which that train is booked on"), *NameOf(Needer ? Needer->Train.Get() : nullptr),
+				*ResourceName(End.Track, INDEX_NONE), *Where);
+			State.BlockedKey = NameOf(Needer ? Needer->Train.Get() : nullptr) + TEXT("|stand|") + Where;
+		}
+	}
 	UpdateAuthority(State);
 	UpdateFollowLeaders(State);
 	// Standing behind a train in its way that holds it there: named, so a cycle of such trains shows as a deadlock.
@@ -1145,7 +1165,7 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 float AATTrafficSubsystem::GetSearchStepSeconds(const AFGTrain* Self, const AFGBuildableRailroadTrack* Track, const UFGRailroadTrackConnectionComponent* Exit,
 	double Now, float Arrival, const FRouteSpeed& Speed) const
 {
-	const double Headway = GetSafetyMarginSeconds() + PlannerDriftSeconds;
+	const double Headway = GetSafetyMarginSeconds();
 	const float Length = Track->GetLength();
 	const float Drive = Length / Speed.Cruise;
 	const double Reached = Now + Arrival;
@@ -1614,4 +1634,77 @@ bool AATTrafficSubsystem::IsBehind(const FATTrafficTrain& Other, const FATTraffi
 	}
 	const int32* KeyAt = Key.Joint != INDEX_NONE ? Other.JointIndexOf.Find(Key.Joint) : Other.RouteIndexOf.Find(Key.Track);
 	return KeyAt && SelfAt < *KeyAt;
+}
+
+bool AATTrafficSubsystem::IsSafeStop(const FATTrafficTrain& State, int32 Last, double LeaveBy, const FATTrafficTrain*& OutNeeder, FString& OutWhere) const
+{
+	const AFGTrain* SelfTrain = State.Train.Get();
+	// Another train booked on Key (or a track crossing it) before LeaveBy, other than one queueing behind this train the
+	// same way or one that has to pass it first.
+	auto Needed = [&](const FResourceKey& Key, const UFGRailroadTrackConnectionComponent* Via, const UFGRailroadTrackConnectionComponent* Exit) -> bool
+	{
+		TArray<FResourceKey, TInlineAllocator<4>> Keys;
+		if (Key.Joint != INDEX_NONE)
+		{
+			Keys.Add(Key);
+		}
+		else
+		{
+			for (const AFGBuildableRailroadTrack* Conflict : GetConflicts(Key.Track))
+			{
+				FResourceKey Crossing;
+				Crossing.Track = Conflict;
+				Keys.Add(Crossing);
+			}
+		}
+		for (const FResourceKey& Checked : Keys)
+		{
+			const TArray<FBooking>* Bookings = mBookings.Find(Checked);
+			for (const FBooking& Booking : Bookings ? *Bookings : TArray<FBooking>())
+			{
+				if (Booking.Owner == SelfTrain || Booking.Enter >= LeaveBy || (Checked == Key && Exit && Booking.Exit == Exit && Booking.Via == Via))
+				{
+					continue;
+				}
+				FATTrafficTrain* const* Other = mStateOf.Find(Booking.Owner);
+				if (Other && IsBehind(**Other, State, Checked))
+				{
+					continue;
+				}
+				OutNeeder = Other ? *Other : nullptr;
+				OutWhere = ResourceName(Checked.Track, Checked.Joint);
+				return true;
+			}
+		}
+		return false;
+	};
+	const float Front = State.Route[Last].EndDistance - State.FrontAhead - GetStopMargin(State.Route[Last].Exit);
+	const float Tail = Front - State.Length;
+	for (int32 Index = Last; Index >= 0; --Index)
+	{
+		const FATRouteStep& Step = State.Route[Index];
+		const float End = Step.EndDistance - State.FrontAhead;
+		if (End <= Tail)
+		{
+			break;
+		}
+		FResourceKey Key;
+		Key.Track = Step.Track;
+		if (Needed(Key, nullptr, Step.Exit))
+		{
+			return false;
+		}
+		// The switch at the end of this track, if the train would stand within its fouling zone.
+		const int32 Joint = Index < Last ? GetJoint(Step.Exit) : INDEX_NONE;
+		if (Joint != INDEX_NONE && End > Tail - GetJointFoulDistance(Joint))
+		{
+			FResourceKey JointKey;
+			JointKey.Joint = Joint;
+			if (Needed(JointKey, Step.Exit, State.Route[Index + 1].Exit))
+			{
+				return false;
+			}
+		}
+	}
+	return true;
 }

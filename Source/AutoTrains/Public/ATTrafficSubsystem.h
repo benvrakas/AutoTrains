@@ -464,6 +464,10 @@ private:
 	void IndexRoute(FATTrafficTrain& State) const;
 	// Returns the step of Of's route at which Other's front stands, the same way, or INDEX_NONE.
 	int32 FrontIndexOn(const FATTrafficTrain& Of, const FATTrafficTrain& Other) const;
+	// Returns true if State, standing at the end of route step Last until LeaveBy (world seconds), stands clear of every
+	// track (and track crossing it) and switch another train is booked on before then, apart from trains queueing behind
+	// it the same way or that have to pass it first; otherwise sets that train and the resource.
+	bool IsSafeStop(const FATTrafficTrain& State, int32 Last, double LeaveBy, const FATTrafficTrain*& OutNeeder, FString& OutWhere) const;
 	// Returns true if Other has to pass Self before it gets to Key: Self's front stands on Other's route, the same way,
 	// before Key does.
 	bool IsBehind(const FATTrafficTrain& Other, const FATTrafficTrain& Self, const FResourceKey& Key) const;

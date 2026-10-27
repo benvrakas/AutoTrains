@@ -4,22 +4,26 @@
 
 First release.
 
-- **Train traffic without block or path signals.** Self-driving trains reserve the track ahead and slow down, wait
-  or go so they never need the same track at the same time. Existing signals are ignored while traffic control is
-  on.
-- **Trains never stop inside a junction** or on single track another train needs.
-- **Following** through junctions and roundabouts, with a moving safe distance to the train ahead.
-- **Going first:** a train that clears a junction in time may go ahead of a train that has only reserved it.
-- **Congestion rerouting:** trains take another route, even a longer one, when theirs is busy.
-- **Trains roll on instead of stopping** when the train in their way will be clear in time: they slow down early and
-  arrive just as the way frees.
-- **Braking learned per train,** per speed band and allowing for cargo, so stops are planned with what the train
+- **Train traffic without block or path signals.** Every self-driving train books the tracks and switches on its way
+  as time slots around the other trains, and slows down, waits or goes so no two trains ever need the same track at
+  the same time. Existing signals are ignored while traffic control is on.
+- **A train moves only onto track that is its turn and that nobody else holds,** and only stops where it leaves the
+  crossings and switches other trains are booked on free.
+- **Following** through junctions and roundabouts the same way, keeping enough distance to stop behind the train
+  ahead; trains on one line never overtake each other in their plans.
+- **Fastest-route search** through everyone's bookings: trains take another route, even a longer one, when it gets
+  them there clearly sooner.
+- **Docked trains' departures are booked ahead,** from how long each train stayed at that station last time and the
+  next stop in its timetable, so nobody queues in the way it needs to leave.
+- **Deadlocks shown:** trains waiting for each other in a circle get the game's warning over them.
+- **Braking and acceleration learned per train,** per speed band and allowing for cargo, so plans use what the train
   really manages.
 - **Trains pass through each other** instead of crashing (setting, on by default).
 - **Forced braking:** a train that can't stop in time with its own brakes is stopped anyway, at the point it must
   stop.
 - Mods menu settings: Traffic control, Congestion rerouting, Trains pass through each other, Aggressive timing,
-  Safety margin, Top speed, Acceleration.
+  Safety margin, Top speed, Acceleration, and for fine-tuning: rerouting thresholds, lookahead, stop distance, normal
+  braking and the station stay estimate.
 - `/at removesignals confirm` dismantles every block and path signal in the world.
 - Works with DynamicTimeTable and Freight Car Control.
 

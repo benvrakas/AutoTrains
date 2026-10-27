@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "ATConfig.h"
 #include "Curves/RichCurve.h"
 #include "Subsystem/ModSubsystem.h"
 #include "UObject/ObjectKey.h"
@@ -238,6 +239,10 @@ public:
 private:
 	// Applies the Mods menu settings; a changed switch overrides what /at set for this session.
 	void ApplySettings();
+	// From the settings: how far trains stop short of track they haven't been given [cm], and the share of their planned
+	// braking normal stops use.
+	float GetStopDistance() const { return mSettings.StopDistanceMetres * 100.f; }
+	float GetNormalBrakingShare() const { return mSettings.NormalBrakingPercent / 100.f; }
 	void UpdateTraffic(float DeltaSeconds);
 	void ReadTrain(FATTrafficTrain& State, AFGTrain* Train) const;
 	void ReleasePassedClaims(FATTrafficTrain& State) const;
@@ -469,7 +474,7 @@ private:
 	// it the same way or that have to pass it first; otherwise sets that train and the resource.
 	bool IsSafeStop(const FATTrafficTrain& State, int32 Last, double LeaveBy, const FATTrafficTrain*& OutNeeder, FString& OutWhere) const;
 	// Returns true if Other has to pass Self before it gets to Key: Self's front stands on Other's route, the same way,
-	// before Key does.
+	// before Key, and both routes run over the same tracks from there up to Key.
 	bool IsBehind(const FATTrafficTrain& Other, const FATTrafficTrain& Self, const FResourceKey& Key) const;
 	void Book(const FATTrafficTrain& State, const TArray<FPass>& Passes, EBookingKind Kind);
 	// Books what State stands on, from Now until Until.
@@ -538,6 +543,8 @@ private:
 	// Settings as last read, to notice changes; unset until first read.
 	TOptional<bool> mConfigTraffic;
 	TOptional<bool> mConfigRerouting;
+	// The Mods menu settings as last read.
+	FATSettings mSettings;
 	TMap<TWeakObjectPtr<AFGTrain>, FATTrafficTrain> mTrains;
 
 	TMap<const AFGBuildableRailroadTrack*, TArray<AFGBuildableRailroadTrack*>> mConflicts;

@@ -409,3 +409,13 @@ train, then a row per train every 0.2 s:
   train can move on (trains queueing behind it the same way, or that have to pass it first, don't count); otherwise
   it is cut back to the last such place it can still stop at, and the train waits before the junction.
 - The safety margin is the whole headway between bookings (user, 2026-10-27): no extra seconds on top.
+- Tenth run (19:25, build c2c98d5): hard stops again (Rubber SNK [conc] 455 m/s2 at 147 km/h, Heavy Oil Residue [Coke
+  Steel] 369, AI Limiter RSC 52 at 192 km/h), all at the crossing cluster around track 2146621121, each waiting for a
+  train that "stands on" a crossing track, and CHECK FAILED every ~20 s. The line-order rule's "behind" test only asked
+  whether this train's front lies on the other's route before the resource; where routes share a stretch and then
+  cross further on, a crossing train counted as behind, its hold on the crossing was ignored, and both were granted
+  it. Now a train is behind only when both routes run over the same tracks from this train's front up to the
+  resource.
+- Rerouting made conservative (user: prefer the usual, shorter route): a new route must save 30 s and 20%, and is
+  kept 60 s. These, the lookahead past the braking distance, the stop distance, the normal braking share and the
+  station stay estimate are now Mods menu settings (number settings are one table in ATConfig.cpp).

@@ -48,6 +48,13 @@ you like, and let the trains sort it out.
 | **Safety margin (seconds)** | 0 | Time, 0 to 10 s, kept between two trains using the same track or switch. 0 lets a train in as soon as the one before it has cleared; raise it if trains clip each other. |
 | **Top speed (km/h)** | 0 | Top speed of every self-driving train, up to 500 km/h. 0 keeps each train's own. Above the speed at which a locomotive's traction runs out (about 120 km/h on flat track), its traction is stretched up to the setting and it draws that much more power. |
 | **Acceleration (x)** | 1 | Traction of self-driving trains' locomotives, 0.25 to 5 times their own: they accelerate that much faster and draw that much more power from the grid. Braking isn't changed. |
+| **Reroute: minimum time saved (seconds)** | 30 | A train only takes another route if it gets there at least this much sooner. Higher keeps trains on their usual route. |
+| **Reroute: minimum share saved (%)** | 20 | ...and if it saves at least this share of the trip's time. |
+| **Reroute: keep a new route for (seconds)** | 60 | After taking another route, a train doesn't change again for this long. |
+| **Lookahead (m)** | 100 | Track a train is given past its braking distance. More lets trains run faster towards traffic; less keeps track free for others. |
+| **Stop distance (m)** | 10 | How far a waiting train stops short of track it hasn't been given (before a switch at least 25 m and the switch's fouling zone plus this). |
+| **Normal braking (%)** | 85 | How hard trains brake for normal stops, as a share of the braking they plan with. |
+| **Station stay estimate (seconds)** | 40 | How long a train is expected to stay at a station before it has been seen there; after that its own last stay counts. |
 
 ### Getting started
 

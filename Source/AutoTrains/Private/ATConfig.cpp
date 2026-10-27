@@ -15,12 +15,47 @@ const FString UATConfig::TrafficControlKey = TEXT("TrafficControl");
 const FString UATConfig::ReroutingKey = TEXT("Rerouting");
 const FString UATConfig::PhaseThroughKey = TEXT("PhaseThrough");
 const FString UATConfig::AggressiveKey = TEXT("AggressiveTiming");
-const FString UATConfig::SafetyMarginKey = TEXT("SafetyMarginSeconds");
-const FString UATConfig::TopSpeedKey = TEXT("TopSpeedKmh");
-const FString UATConfig::AccelerationKey = TEXT("AccelerationMultiplier");
 
 namespace
 {
+	// A number setting: its key, field, accepted range, Mods menu name and tooltip.
+	struct FNumberSetting
+	{
+		const TCHAR* Key;
+		float FATSettings::* Field;
+		float Min;
+		float Max;
+		FText Name;
+		FText Tooltip;
+	};
+
+	const TArray<FNumberSetting>& GetNumberSettings()
+	{
+		static const TArray<FNumberSetting> Settings = {
+			{TEXT("SafetyMarginSeconds"), &FATSettings::SafetyMargin, 0.f, 10.f, LOCTEXT("SafetyMargin", "Safety margin (seconds)"),
+				LOCTEXT("SafetyMarginTip", "Time, 0 to 10 seconds, kept between two trains using the same track or switch. 0 lets a train in as soon as the one before it has cleared; raise it if trains clip each other.")},
+			{TEXT("TopSpeedKmh"), &FATSettings::TopSpeedKmh, 0.f, 500.f, LOCTEXT("TopSpeed", "Top speed (km/h)"),
+				LOCTEXT("TopSpeedTip", "Top speed of every self-driving train, 0 to 500 km/h, while traffic control is on. 0 keeps each train's own top speed. Above the speed at which a locomotive's traction runs out (about 120 km/h on flat track), its traction is stretched up to this speed and it draws that much more power.")},
+			{TEXT("AccelerationMultiplier"), &FATSettings::Acceleration, 0.25f, 5.f, LOCTEXT("Acceleration", "Acceleration (x)"),
+				LOCTEXT("AccelerationTip", "Traction of self-driving trains' locomotives, 0.25 to 5 times their own, while traffic control is on: they accelerate that much faster and draw that much more power. Braking isn't changed.")},
+			{TEXT("RerouteMinGainSeconds"), &FATSettings::RerouteMinGainSeconds, 0.f, 600.f, LOCTEXT("RerouteGain", "Reroute: minimum time saved (seconds)"),
+				LOCTEXT("RerouteGainTip", "A train only takes another route if it gets there at least this much sooner, 0 to 600 seconds. Higher keeps trains on their usual route more often.")},
+			{TEXT("RerouteMinGainPercent"), &FATSettings::RerouteMinGainPercent, 0.f, 100.f, LOCTEXT("RerouteShare", "Reroute: minimum share saved (%)"),
+				LOCTEXT("RerouteShareTip", "A train only takes another route if it saves at least this share of the trip's time as well, 0 to 100%.")},
+			{TEXT("RerouteHoldSeconds"), &FATSettings::RerouteHoldSeconds, 0.f, 600.f, LOCTEXT("RerouteHold", "Reroute: keep a new route for (seconds)"),
+				LOCTEXT("RerouteHoldTip", "After taking another route, a train doesn't change route again for this long, 0 to 600 seconds.")},
+			{TEXT("LookaheadMetres"), &FATSettings::LookaheadMetres, 0.f, 2000.f, LOCTEXT("Lookahead", "Lookahead (m)"),
+				LOCTEXT("LookaheadTip", "Track a train is given past its braking distance and its own length, 0 to 2000 m. More lets trains run faster towards traffic; less keeps track free for others.")},
+			{TEXT("StopDistanceMetres"), &FATSettings::StopDistanceMetres, 1.f, 100.f, LOCTEXT("StopDistance", "Stop distance (m)"),
+				LOCTEXT("StopDistanceTip", "How far a waiting train stops short of track it hasn't been given, 1 to 100 m. Before a switch it keeps at least 25 m and the switch's fouling zone plus this.")},
+			{TEXT("NormalBrakingPercent"), &FATSettings::NormalBrakingPercent, 30.f, 100.f, LOCTEXT("NormalBraking", "Normal braking (%)"),
+				LOCTEXT("NormalBrakingTip", "How hard trains brake for normal stops, 30 to 100% of the braking they plan with. Higher stops later and gets there sooner; lower is gentler and leaves room for error.")},
+			{TEXT("DefaultStaySeconds"), &FATSettings::DefaultStaySeconds, 0.f, 600.f, LOCTEXT("DefaultStay", "Station stay estimate (seconds)"),
+				LOCTEXT("DefaultStayTip", "How long a train is expected to stay at a station before it has been seen there, 0 to 600 seconds. After that each train's own last stay at that station counts.")},
+		};
+		return Settings;
+	}
+
 	FConfigId MakeConfigId()
 	{
 		FConfigId Id;
@@ -108,47 +143,27 @@ UATConfig::UATConfig()
 		LOCTEXT("AggressiveTip", "Tighter margins: trains plan braking closer to what they really manage, and a train that has waited moves up the planning order more slowly. Best with trains passing through each other. Off is more cautious."),
 		Defaults.bAggressive);
 
-	UConfigPropertyFloat* Margin = CreateDefaultSubobject<UConfigPropertyFloat>(TEXT("SafetyMarginSeconds"));
-	Margin->DisplayName = LOCTEXT("SafetyMargin", "Safety margin (seconds)");
-	Margin->Tooltip = LOCTEXT("SafetyMarginTip", "Time, 0 to 10 seconds, kept between two trains using the same track or switch. 0 lets a train in as soon as the one before it has cleared; raise it if trains clip each other.");
-	Margin->DefaultValue = Defaults.SafetyMargin;
-	Margin->Value = Defaults.SafetyMargin;
-	RootSection->SectionProperties.Add(SafetyMarginKey, Margin);
-
-	UConfigPropertyFloat* TopSpeed = CreateDefaultSubobject<UConfigPropertyFloat>(TEXT("TopSpeedKmh"));
-	TopSpeed->DisplayName = LOCTEXT("TopSpeed", "Top speed (km/h)");
-	TopSpeed->Tooltip = LOCTEXT("TopSpeedTip", "Top speed of every self-driving train, 0 to 500 km/h, while traffic control is on. 0 keeps each train's own top speed. Above the speed at which a locomotive's traction runs out (about 120 km/h on flat track), its traction is stretched up to this speed and it draws that much more power.");
-	TopSpeed->DefaultValue = Defaults.TopSpeedKmh;
-	TopSpeed->Value = Defaults.TopSpeedKmh;
-	RootSection->SectionProperties.Add(TopSpeedKey, TopSpeed);
-
-	UConfigPropertyFloat* Acceleration = CreateDefaultSubobject<UConfigPropertyFloat>(TEXT("AccelerationMultiplier"));
-	Acceleration->DisplayName = LOCTEXT("Acceleration", "Acceleration (x)");
-	Acceleration->Tooltip = LOCTEXT("AccelerationTip", "Traction of self-driving trains' locomotives, 0.25 to 5 times their own, while traffic control is on: they accelerate that much faster and draw that much more power. Braking isn't changed.");
-	Acceleration->DefaultValue = Defaults.Acceleration;
-	Acceleration->Value = Defaults.Acceleration;
-	RootSection->SectionProperties.Add(AccelerationKey, Acceleration);
+	for (const FNumberSetting& Setting : GetNumberSettings())
+	{
+		UConfigPropertyFloat* Property = CreateDefaultSubobject<UConfigPropertyFloat>(Setting.Key);
+		Property->DisplayName = Setting.Name;
+		Property->Tooltip = Setting.Tooltip;
+		Property->DefaultValue = Defaults.*Setting.Field;
+		Property->Value = Defaults.*Setting.Field;
+		RootSection->SectionProperties.Add(Setting.Key, Property);
+	}
 }
 
 bool UATConfig::GetRange(const FString& Key, float& OutMin, float& OutMax)
 {
-	if (Key == SafetyMarginKey)
+	for (const FNumberSetting& Setting : GetNumberSettings())
 	{
-		OutMin = MinSafetyMargin;
-		OutMax = MaxSafetyMargin;
-		return true;
-	}
-	if (Key == TopSpeedKey)
-	{
-		OutMin = MinTopSpeed;
-		OutMax = MaxTopSpeed;
-		return true;
-	}
-	if (Key == AccelerationKey)
-	{
-		OutMin = MinAcceleration;
-		OutMax = MaxAcceleration;
-		return true;
+		if (Key == Setting.Key)
+		{
+			OutMin = Setting.Min;
+			OutMax = Setting.Max;
+			return true;
+		}
 	}
 	return false;
 }
@@ -212,9 +227,10 @@ bool UATConfig::Read(const UObject* WorldContext, FATSettings& OutSettings)
 	OutSettings.bRerouting = ReadBool(Root, ReroutingKey, Defaults.bRerouting);
 	OutSettings.bPhaseThrough = ReadBool(Root, PhaseThroughKey, Defaults.bPhaseThrough);
 	OutSettings.bAggressive = ReadBool(Root, AggressiveKey, Defaults.bAggressive);
-	OutSettings.SafetyMargin = FMath::Clamp(ReadFloat(Root, SafetyMarginKey, Defaults.SafetyMargin), MinSafetyMargin, MaxSafetyMargin);
-	OutSettings.TopSpeedKmh = FMath::Clamp(ReadFloat(Root, TopSpeedKey, Defaults.TopSpeedKmh), MinTopSpeed, MaxTopSpeed);
-	OutSettings.Acceleration = FMath::Clamp(ReadFloat(Root, AccelerationKey, Defaults.Acceleration), MinAcceleration, MaxAcceleration);
+	for (const FNumberSetting& Setting : GetNumberSettings())
+	{
+		OutSettings.*Setting.Field = FMath::Clamp(ReadFloat(Root, Setting.Key, Defaults.*Setting.Field), Setting.Min, Setting.Max);
+	}
 	return true;
 }
 

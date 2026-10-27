@@ -18,24 +18,16 @@ namespace
 	constexpr int32 PlanMaxWaits = 32;
 	// An open-ended time: a stay nobody knows the end of, or everything after a wait for one. [s]
 	constexpr double OpenTime = 1e12;
-	// Stay expected at a station no train has been seen docking at from the start yet. [s]
-	constexpr float DefaultDwellSeconds = 40.f;
 	// A docked train past its expected departure is expected to leave this soon, renewed every update. [s]
 	constexpr double OverdueDepartSeconds = 1.0;
 	// A departure that couldn't be predicted is tried again after this long. [s]
 	constexpr double PredictRetrySeconds = 10.0;
-	// Movement authority reaches this far past the stopping distance plus the train's length. [cm]
-	constexpr float GrantLookahead = 10000.f;
 	// Route search: each train every SearchIntervalSeconds (spread out), at once when its planned arrival has got
-	// SearchWorseSeconds later than at its last search, and at least every SearchFailedSeconds while its plan fails; a
-	// new route must be faster by SearchMinGainSeconds and SearchMinGainShare, and a train that took one keeps it for
-	// SearchCooldownSeconds. [s]
+	// SearchWorseSeconds later than at its last search, and at least every SearchFailedSeconds while its plan fails;
+	// the gain a new route needs and how long it's kept are settings. [s]
 	constexpr float SearchIntervalSeconds = 5.f;
 	constexpr double SearchWorseSeconds = 15.0;
 	constexpr float SearchFailedSeconds = 1.f;
-	constexpr float SearchMinGainSeconds = 10.f;
-	constexpr float SearchMinGainShare = 0.1f;
-	constexpr float SearchCooldownSeconds = 15.f;
 	// A track the search can only get onto after an open-ended booking costs this. [s]
 	constexpr float SearchBlockedSeconds = 1e6f;
 	// A train's booking is locked within this many times its stopping distance plus this much travel time and distance:
@@ -683,7 +675,7 @@ float AATTrafficSubsystem::GetExpectedDwell(const AFGTrain* Train, const AFGBuil
 {
 	if (!Station)
 	{
-		return DefaultDwellSeconds;
+		return mSettings.DefaultStaySeconds;
 	}
 	if (const float* Own = mDwell.Find(TPair<FObjectKey, FObjectKey>(FObjectKey(Train), FObjectKey(Station))))
 	{
@@ -693,7 +685,7 @@ float AATTrafficSubsystem::GetExpectedDwell(const AFGTrain* Train, const AFGBuil
 	{
 		return *Any;
 	}
-	return DefaultDwellSeconds;
+	return mSettings.DefaultStaySeconds;
 }
 
 void AATTrafficSubsystem::TrackDocking(FATTrafficTrain& State, AFGTrain* Train, double Now)
@@ -1066,7 +1058,7 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 	State.BlockedBy = nullptr;
 	State.BlockedReason.Reset();
 	State.BlockedKey.Reset();
-	const float Need = GetStoppingDistance(State, State.Speed) + State.Length + GrantLookahead;
+	const float Need = GetStoppingDistance(State, State.Speed) + State.Length + mSettings.LookaheadMetres * 100.f;
 	auto TimeOf = [](const TArray<double>& Times, int32 Index) { return Times.IsValidIndex(Index) ? Times[Index] : OpenTime; };
 	auto LockOf = [](const TArray<bool>& Locks, int32 Index) { return Locks.IsValidIndex(Index) && Locks[Index]; };
 	bool bBlocked = false;
@@ -1309,7 +1301,7 @@ void AATTrafficSubsystem::ConsiderPlannedReroute(FATTrafficTrain& State, double 
 		NewSeconds += Step(Alternative[Index]->GetTrack(), Alternative[Index], NewSeconds);
 		bSame = bSame && Alternative[Index] == State.Route[Commit + Index].Exit;
 	}
-	if (bSame || NewSeconds > CurrentSeconds - FMath::Max(SearchMinGainSeconds, CurrentSeconds * SearchMinGainShare))
+	if (bSame || NewSeconds > CurrentSeconds - FMath::Max(mSettings.RerouteMinGainSeconds, CurrentSeconds * mSettings.RerouteMinGainPercent / 100.f))
 	{
 		return;
 	}
@@ -1324,7 +1316,7 @@ void AATTrafficSubsystem::ConsiderPlannedReroute(FATTrafficTrain& State, double 
 	const bool bApplied = FATRouter::ApplyPath(Train, Path, Goal);
 	++State.Reroutes;
 	++mPlanReroutes;
-	State.RerouteCooldown = SearchCooldownSeconds;
+	State.RerouteCooldown = mSettings.RerouteHoldSeconds;
 	State.SearchedArrival = -1.0;
 	UE_LOG(LogAutoTrains, Log, TEXT("planner: %s rerouted after %s: %.0f -> %.0f s to its goal through the bookings, %d -> %d tracks, applied %s (%.2f ms)"),
 		*NameOf(Train), *ResourceName(State.Route[Commit].Track, INDEX_NONE), CurrentSeconds, NewSeconds, State.Route.Num() - Commit - 1, Alternative.Num() - 1,
@@ -1627,13 +1619,27 @@ int32 AATTrafficSubsystem::FrontIndexOn(const FATTrafficTrain& Of, const FATTraf
 
 bool AATTrafficSubsystem::IsBehind(const FATTrafficTrain& Other, const FATTrafficTrain& Self, const FResourceKey& Key) const
 {
+	// Self's front on Other's route, Key further along it, and both routes the same tracks from there up to Key: Self
+	// gets there first along one line.
 	const int32 SelfAt = FrontIndexOn(Other, Self);
 	if (SelfAt == INDEX_NONE)
 	{
 		return false;
 	}
-	const int32* KeyAt = Key.Joint != INDEX_NONE ? Other.JointIndexOf.Find(Key.Joint) : Other.RouteIndexOf.Find(Key.Track);
-	return KeyAt && SelfAt < *KeyAt;
+	const int32* OtherKeyAt = Key.Joint != INDEX_NONE ? Other.JointIndexOf.Find(Key.Joint) : Other.RouteIndexOf.Find(Key.Track);
+	const int32* SelfKeyAt = Key.Joint != INDEX_NONE ? Self.JointIndexOf.Find(Key.Joint) : Self.RouteIndexOf.Find(Key.Track);
+	if (!OtherKeyAt || !SelfKeyAt || *OtherKeyAt <= SelfAt || *OtherKeyAt - SelfAt != *SelfKeyAt)
+	{
+		return false;
+	}
+	for (int32 Step = 0; Step <= *SelfKeyAt; ++Step)
+	{
+		if (Other.Route[SelfAt + Step].Track != Self.Route[Step].Track)
+		{
+			return false;
+		}
+	}
+	return true;
 }
 
 bool AATTrafficSubsystem::IsSafeStop(const FATTrafficTrain& State, int32 Last, double LeaveBy, const FATTrafficTrain*& OutNeeder, FString& OutWhere) const

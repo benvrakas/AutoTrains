@@ -11,15 +11,29 @@ struct FATSettings
 	bool bRerouting = true;
 	bool bPhaseThrough = true;
 	bool bAggressive = true;
-	// Extra time kept between two trains' bookings of the same track or switch. [s]
+	// Time kept between two trains' bookings of the same track or switch. [s]
 	float SafetyMargin = 0.f;
 	// Top speed of every self-driving train, 0 for each train's own. [km/h]
 	float TopSpeedKmh = 0.f;
 	// Multiplier on how fast self-driving trains gain speed.
 	float Acceleration = 1.f;
+	// Rerouting: a new route must save at least this much time and this share of the trip, and a train keeps a new
+	// route this long. [s] [%] [s]
+	float RerouteMinGainSeconds = 30.f;
+	float RerouteMinGainPercent = 20.f;
+	float RerouteHoldSeconds = 60.f;
+	// Track a train is granted past its braking distance and its length. [m]
+	float LookaheadMetres = 100.f;
+	// How far a train stops short of the end of its granted track; before a switch at least 25 m and its fouling zone
+	// plus this. [m]
+	float StopDistanceMetres = 10.f;
+	// Share of its planned braking a train's normal stops use. [%]
+	float NormalBrakingPercent = 85.f;
+	// Stay assumed at a station until one there has been measured. [s]
+	float DefaultStaySeconds = 40.f;
 };
 
-// Auto Trains' mod configuration: on/off switches shown in the Mods menu and Satisfactory Mod Manager.
+// Auto Trains' mod configuration: switches and numbers shown in the Mods menu and Satisfactory Mod Manager.
 UCLASS()
 class AUTOTRAINS_API UATConfig : public UModConfiguration
 {
@@ -32,17 +46,6 @@ public:
 	static const FString ReroutingKey;
 	static const FString PhaseThroughKey;
 	static const FString AggressiveKey;
-	static const FString SafetyMarginKey;
-	static const FString TopSpeedKey;
-	static const FString AccelerationKey;
-
-	// Accepted ranges: safety margin [s], top speed [km/h], acceleration multiplier.
-	static constexpr float MinSafetyMargin = 0.f;
-	static constexpr float MaxSafetyMargin = 10.f;
-	static constexpr float MinTopSpeed = 0.f;
-	static constexpr float MaxTopSpeed = 500.f;
-	static constexpr float MinAcceleration = 0.25f;
-	static constexpr float MaxAcceleration = 5.f;
 
 	// Sets OutMin and OutMax to the accepted range of the number setting Key; returns false if Key isn't one.
 	static bool GetRange(const FString& Key, float& OutMin, float& OutMax);

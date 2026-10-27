@@ -21,8 +21,8 @@ With traffic control on (the default), every self-driving train ignores signals,
   own catch stops it dead at its stop point. Trains stop 25 m before a switch (or the switch's fouling zone plus 10 m)
   and 10 m before other track ends. Held where its plan waits, a train rolls up to arrive as the slot opens.
 - Rerouting (`/at reroute on|off`, on by default): every 5 s, at once when its planned arrival got 15 s worse or its
-  plan failed, a train searches the fastest route through the bookings, and takes it if 10 s and 10% faster; it
-  doesn't go back to a route it left in the last 2 minutes.
+  plan failed, a train searches the fastest route through the bookings, and takes it if faster by both reroute
+  settings; after a reroute it keeps its route for the reroute hold time.
 - Deadlocks: trains waiting for each other in a circle for 20 s are logged (`DEADLOCK`) and get the game's long-wait
   warning ("!") over them; if one only waits for the booking order it goes first for 30 s
   (`goes first ... to break the deadlock`). Trains blocking each other where they stand need moving by hand.
@@ -48,6 +48,13 @@ Player driven trains aren't controlled; the others treat them as obstacles.
   every vehicle's own speed limit is raised to the setting.
 - **Acceleration (x)**: 0.25 to 5, default 1: scales each self-driving train's locomotives' traction and their power
   draw (idle and full) by the same factor, so they accelerate and consume that much more. Braking isn't changed.
+- **Reroute: minimum time saved (seconds)** (30) and **minimum share saved (%)** (20): a new route must beat the
+  current one by both. **Reroute: keep a new route for (seconds)** (60): no rerouting again for that long.
+- **Lookahead (m)** (100): track a train is given past its braking distance and its length.
+- **Stop distance (m)** (10): how far a waiting train stops short of track it hasn't been given; before a switch at
+  least 25 m and the switch's fouling zone plus this.
+- **Normal braking (%)** (85): share of the planned braking a normal stop uses (full brake is the backstop).
+- **Station stay estimate (seconds)** (40): assumed stay at a station until one there has been measured.
 
 `/at traffic` and `/at reroute` switch for the session; changing the setting in the Mods menu applies again.
 

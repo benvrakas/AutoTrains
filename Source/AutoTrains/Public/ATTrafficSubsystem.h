@@ -179,6 +179,9 @@ struct FATTrafficTrain
 	// The ATC path seen at the previous update and whether the train was driven then, to notice the game replacing it.
 	const void* LastPath = nullptr;
 	bool bLastManaged = false;
+	// The route step of each track on the route (first time) and of each switch, by track and by joint.
+	TMap<const AFGBuildableRailroadTrack*, int32> RouteIndexOf;
+	TMap<int32, int32> JointIndexOf;
 	// In a cycle of trains waiting for each other; until when it goes first to break one (world seconds).
 	bool bDeadlocked = false;
 	double PriorityUntil = -1.0;
@@ -468,7 +471,14 @@ private:
 	// Returns another train's booking that Pass conflicts with on its resource (or a track crossing it), or null,
 	// and the time Pass would have to enter instead: after it has cleared, or, following it the same way, a headway
 	// after it both enters and clears; never ahead of a locked one. Only bookings in Scope count.
-	const FBooking* FindConflict(const AFGTrain* Self, const FPass& Pass, double Headway, EConflictScope Scope, double& OutNeedEnter) const;
+	const FBooking* FindConflict(const FATTrafficTrain& Self, const FPass& Pass, double Headway, EConflictScope Scope, double& OutNeedEnter) const;
+	// Indexes State's route: the route step of each track (first time on the route) and of the switch before it.
+	void IndexRoute(FATTrafficTrain& State) const;
+	// Returns the step of Of's route at which Other's front stands, the same way, or INDEX_NONE.
+	int32 FrontIndexOn(const FATTrafficTrain& Of, const FATTrafficTrain& Other) const;
+	// Returns true if Other has to pass Self before it gets to Key: Self's front stands on Other's route, the same way,
+	// before Key does.
+	bool IsBehind(const FATTrafficTrain& Other, const FATTrafficTrain& Self, const FResourceKey& Key) const;
 	void Book(const FATTrafficTrain& State, const TArray<FPass>& Passes, EBookingKind Kind);
 	// Books what State stands on, from Now until Until.
 	void BookStanding(const FATTrafficTrain& State, double Now, double Until, EBookingKind Kind);
@@ -488,10 +498,10 @@ private:
 	// Sets State's claims: the route resources from its front up to its stopping distance plus lookahead that it may
 	// enter now: booked for it, no other train booked there first or standing there, except one it follows the same way.
 	void GrantFromPlan(FATTrafficTrain& State, double Now);
-	// Returns true if Self may enter Key now with its booking entering at Enter (locked or not; held from its last grant
-	// or not); otherwise sets the train in the way and why. A train it follows the same way is added to its followed
+	// Returns true if Self may enter Key, at its route step Index, now with its booking entering at Enter (locked or not;
+	// held from its last grant or not); otherwise sets the train in the way and why. A train it follows the same way is added to its followed
 	// trains.
-	bool CanEnter(FATTrafficTrain& Self, const FResourceKey& Key, double Enter, bool bLocked, bool bHeldBefore, const UFGRailroadTrackConnectionComponent* Via,
+	bool CanEnter(FATTrafficTrain& Self, const FResourceKey& Key, int32 Index, double Enter, bool bLocked, bool bHeldBefore, const UFGRailroadTrackConnectionComponent* Via,
 		const UFGRailroadTrackConnectionComponent* Exit, double Now, const FATTrafficTrain*& OutBlocker, FString& OutWhy) const;
 	// Searches State's fastest route through the bookings when due, and takes it if clearly faster.
 	void ConsiderPlannedReroute(FATTrafficTrain& State, double Now, float DeltaSeconds);

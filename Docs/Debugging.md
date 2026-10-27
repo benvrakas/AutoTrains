@@ -383,3 +383,14 @@ train, then a row per train every 0.2 s:
   whatever the leader does (the follow limit keeps the distance). The deadlock breaker no longer promotes a train whose
   blocker has the resource locked (it stands there or can't avoid it): Rubber SNK [conc] and Cable RSC stood in each
   other's way, Rubber's tail across Cable's path, which only moving one of them by hand can solve.
+- Root cause of the repeated deadlocks (eighth run, 18:56): nearly every cycle was a pair on one line, A behind B: B
+  "waits for A before track X, 9 m ahead: holds track X / its plan has no slot" and A "stays behind B, 10 m ahead"
+  (Rubber SNK [conc]/Cable RSC, Reinforced Plates Train/at test 3, ACU GTHR B/at test 2, Train/Circuit Board Gather
+  Train, Coated Plates RSC Train/at test1, at test1/at test 3). The plan times a train's motion ignoring the trains
+  ahead of it on its line, so while B had a wait ahead, A's plan reached B's next track first (overtaking it in time),
+  A was booked first there, and the following rule let A be granted it behind B: B then waited for A's hold, and A
+  for B physically. Fix: along one line the order is fixed. Planning: another train whose front stands on this route,
+  the same way, comes first on every booking it has at that point of the route or later (nobody books ahead of it);
+  one whose route has this train's front on it before a resource has to pass this train first, so its booking there
+  doesn't count. Granting: the same, and a hold by a train behind on the same line doesn't block. Routes are indexed
+  (track and switch -> route step) every update.

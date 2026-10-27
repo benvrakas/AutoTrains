@@ -4,7 +4,6 @@ Text for the Auto Trains page on ficsit.app (Satisfactory Mod Repository).
 - "Full description" field: everything under FULL DESCRIPTION.
 - The two transparency fields: the text under NETWORK ACTIVITY TRANSPARENCY and AI USAGE TRANSPARENCY.
 - Logo: Docs/Images/icon-1080.png (full resolution; icon-512.png is the same image smaller).
-Replace the [bracketed] placeholder before publishing.
 -->
 
 # SHORT DESCRIPTION
@@ -25,15 +24,19 @@ you like, and let the trains sort it out.
 - **Planned in space and time.** Every train books each track and switch on its route for the time it will be there,
   around everyone else's bookings, and plans its waits where they cost least. A train only moves onto track that is
   its turn and that nobody else is on, and always keeps a speed at which it can stop before the end of what it has
-  been given.
+  been given. It's given enough track ahead to reach its cruising speed.
+- **Going first.** A train may go through a crossing or switch ahead of a train that is still far enough away to stop,
+  when it's clear before that train arrives.
+- **Never stuck in a junction.** A train that has to wait stops where it leaves the crossings and switches other
+  trains are booked on free.
 - **Fastest route.** Trains search the fastest way through the other trains' bookings and switch to it when it gets
   them there clearly sooner, even when it's longer.
 - **Timetables known ahead.** A docked train's departure is booked ahead from how long it stayed there last time and
   where its timetable sends it next, so no train queues in the way it needs to leave.
 - **Following.** A train follows another through a junction or roundabout the same way, keeping enough distance to
   stop if the train ahead does.
-- **Deadlocks shown.** Trains waiting for each other in a circle get the game's warning over them; if one of them
-  only waits its turn, it goes first.
+- **Deadlocks shown.** Trains waiting for each other in a circle get the game's warning over them, so you know where
+  to step in.
 - **Brakes it can trust.** Each train measures how hard it really brakes at each speed and plans with that. If a
   train still can't stop in time, the mod brakes it harder than its brakes could, the way block signals do.
 
@@ -102,8 +105,6 @@ trains through the game's own connection. There's no telemetry or analytics: `/a
 own computer only.
 
 # AI USAGE TRANSPARENCY
-
-[Edit to match how you made the mod.]
 
 This mod was built with the help of an AI coding assistant (Anthropic's Claude):
 

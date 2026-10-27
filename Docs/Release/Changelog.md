@@ -8,7 +8,9 @@ First release.
   as time slots around the other trains, and slows down, waits or goes so no two trains ever need the same track at
   the same time. Existing signals are ignored while traffic control is on.
 - **A train moves only onto track that is its turn and that nobody else holds,** and only stops where it leaves the
-  crossings and switches other trains are booked on free.
+  crossings and switches other trains are booked on free. It's given enough track ahead to reach its cruising speed.
+- **Going first:** a train may go through a crossing or switch ahead of a train still far enough away to stop, when
+  it's clear before that train arrives.
 - **Following** through junctions and roundabouts the same way, keeping enough distance to stop behind the train
   ahead; trains on one line never overtake each other in their plans.
 - **Fastest-route search** through everyone's bookings: trains take another route, even a longer one, when it gets

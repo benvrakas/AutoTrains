@@ -1986,6 +1986,12 @@ void AATTrafficSubsystem::LogDeadlocks()
 		for (const FATTrafficTrain* Member : Chain)
 		{
 			UE_LOG(LogAutoTrains, Warning, TEXT("traffic: DEADLOCK:   %s: %s"), *TrainName(Member->Train.Get()), *Member->BlockedReason);
+			// Every train in the cycle looks for another way at once; a train waiting for it counts as impassable.
+			if (FATTrafficTrain* Stuck = mTrains.Find(Member->Train))
+			{
+				Stuck->RerouteCooldown = 0.f;
+				Stuck->RerouteTimer = 0.f;
+			}
 		}
 		return;
 	}

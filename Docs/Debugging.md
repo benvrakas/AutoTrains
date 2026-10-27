@@ -292,3 +292,8 @@ train, then a row per train every 0.2 s:
   open-ended; moving trains book what lies within their stopping distance (committed); then in claim-priority order
   each train is planned: the first conflict (overlap plus the safety margin and 2 s drift) puts a wait at the last
   track end (stop margin short) before the resource so it enters after the booking clears; up to 32 waits.
+- A detected deadlock now has every train in the cycle check for another route at once (cooldown reset); routes
+  through a train waiting for it count as impassable, so a cycle with an alternative way out can unlock itself.
+- Planner shadow: two passes the same way on the same track are compatible when the later one enters and clears a
+  headway after the earlier one (following without overtaking); opposite ways, crossings and switches stay
+  exclusive.

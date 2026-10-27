@@ -89,6 +89,8 @@ struct FATTrafficTrain
 	TSet<TWeakObjectPtr<AFGTrain>> FollowedTrains;
 	float Length = 0.f;
 	float Speed = 0.f;
+	// Mass with cargo, from the vehicles. [kg]
+	float Mass = 0.f;
 	// How far the train's front is ahead of its MU master, which the ATC distances are measured from. [cm]
 	float FrontAhead = 0.f;
 	// The ATC path the route was read from and the path segment of its first step.
@@ -227,6 +229,10 @@ private:
 	bool IsClearingInTime(const FATTrafficTrain& Self, const FATTrafficTrain& Holder, const AFGBuildableRailroadTrack* Track, int32 Joint,
 		float SelfDistance) const;
 
+	// Returns the latest Holder, at Speed, has travelled ClearDistance if it never stops before the end of its
+	// authority (or its goal), or -1 if that comes first. [s]
+	float GetLatestClearSeconds(const FATTrafficTrain& Holder, float ClearDistance, float Speed) const;
+
 	// Returns how far Holder's front still travels until its tail has cleared Track (or Joint's fouling zone). [cm]
 	float GetClearDistance(const FATTrafficTrain& Holder, const AFGBuildableRailroadTrack* Track, int32 Joint) const;
 
@@ -264,8 +270,8 @@ private:
 	float GetFollowLimit(const AFGTrain* Train, const FATTrafficTrain& State, float& OutHardLimit, float& OutPaceSpeed, FATFollowInfo* OutInfo = nullptr) const;
 
 	// Returns the speed at which Train, Start away from where Leader crosses its route on Track, gets there with
-	// some slack after Leader, able to get there at its speed now, has cleared it; -1 if Leader may not clear it or
-	// Train at its speed now would get there first. [cm/s]
+	// some slack after the latest Leader, able to get past it, can have cleared it; -1 if Leader may not clear it or
+	// Train at its speed now could get there first. [cm/s]
 	float GetCrossingPaceSpeed(const AFGTrain* Train, const FATTrafficTrain& Leader, const AFGBuildableRailroadTrack* Track, float Start) const;
 
 	// Returns Braking, but no further than Leader may still travel: the end of its authority or its goal. [cm]
@@ -325,8 +331,8 @@ private:
 
 	// Sets State.PlanDecel: a share of the deceleration measured in each band; a band without a measurement takes the
 	// nearest measured band above it (braking is weaker at higher speed), or above every measured band the highest
-	// one's scaled down with speed; a train never measured plans with a share of its rating, scaled down above
-	// FallbackFullSpeed.
+	// one's but no more than a share of the air brakes' force over the train's mass with cargo; a train never
+	// measured plans with that share of the air brakes.
 	void RefreshBrakePlan(FATTrafficTrain& State) const;
 
 	// Deceleration planned with at Speed (the train's own speed if negative). [cm/s^2]

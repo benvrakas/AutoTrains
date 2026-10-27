@@ -478,7 +478,7 @@ FString AATControlSubsystem::SetLogging(bool bLog)
 			Consist.MaxTractiveEffort / 100000.f, Consist.MaxAirBrakingEffort / 100000.f, Consist.MaxDynamicBrakingEffort / 100000.f,
 			Consist.MaxBrakeDeceleration / 100.f, Consist.MaxBrakeDistance / 100.f));
 	}
-	mPendingRows.Add(TEXT("time_s,train,self_driving,status,command,ignore_signals,speed_kmh,game_target_kmh,final_target_kmh,accel_ms2,odometer_m,stop_remaining_m,goal_distance_m,restrictive_aspect,restrictive_distance_m,next_signal_aspect,next_signal_distance_m,front_track,front_offset_m,rear_track,rear_offset_m,docking,error,traffic_managed,authority_m,claims,waiting_s,blocked_by,full_brake,catch_armed,plan_brake_ms2,throttle,tractive_kN,brake_kN,resistive_kN,gradient_kN"));
+	mPendingRows.Add(TEXT("time_s,train,self_driving,status,command,ignore_signals,speed_kmh,game_target_kmh,final_target_kmh,accel_ms2,odometer_m,stop_remaining_m,goal_distance_m,restrictive_aspect,restrictive_distance_m,next_signal_aspect,next_signal_distance_m,front_track,front_offset_m,rear_track,rear_offset_m,docking,error,traffic_managed,authority_m,claims,waiting_s,blocked_by,full_brake,catch_armed,plan_brake_ms2,throttle,tractive_kN,brake_kN,resistive_kN,gradient_kN,mass_t"));
 	FlushTelemetry();
 	UE_LOG(LogAutoTrains, Log, TEXT("Telemetry started: %s"), *mTelemetryPath);
 	return FString::Printf(TEXT("Logging telemetry to %s"), *mTelemetryPath);
@@ -599,8 +599,15 @@ void AATControlSubsystem::SampleTelemetry(float SampleSeconds)
 		const FTrainSimulationData& Simulation = Train->mSimulationData;
 		const AFGLocomotive* Master = Train->GetMultipleUnitMaster();
 		const UFGLocomotiveMovementComponent* MasterMovement = Master ? Master->GetLocomotiveMovementComponent() : nullptr;
-		const FString Forces = FString::Printf(TEXT("%.2f,%.0f,%.0f,%.0f,%.0f"), MasterMovement ? MasterMovement->GetThrottle() : -1.f, Simulation.TractiveForce / 100000.f,
-			(Simulation.AirBrakingForce + Simulation.DynamicBrakingForce) / 100000.f, Simulation.ResistiveForce / 100000.f, Simulation.GradientForce / 100000.f);
+		// Mass with cargo, from the vehicles. [kg]
+		float Mass = 0.f;
+		for (AFGRailroadSubsystem::TTrainIterator It(Train->GetFirstVehicle()); It; ++It)
+		{
+			const UFGRailroadVehicleMovementComponent* Movement = *It ? (*It)->GetRailroadVehicleMovementComponent() : nullptr;
+			Mass += Movement ? Movement->GetMass() : 0.f;
+		}
+		const FString Forces = FString::Printf(TEXT("%.2f,%.0f,%.0f,%.0f,%.0f,%.1f"), MasterMovement ? MasterMovement->GetThrottle() : -1.f, Simulation.TractiveForce / 100000.f,
+			(Simulation.AirBrakingForce + Simulation.DynamicBrakingForce) / 100000.f, Simulation.ResistiveForce / 100000.f, Simulation.GradientForce / 100000.f, Mass / 1000.f);
 		mPendingRows.Add(FString::Printf(TEXT("%.2f,%s,%d,%s,%s,%d,%.2f,%.2f,%.2f,%.3f,%.2f,%.2f,%.1f,%s,%.1f,%s,%.1f,%s,%s,%s,%s,%s,%s"),
 			mLogTime, *Train->GetTrainName().ToString(), Train->IsSelfDrivingEnabled() ? 1 : 0, *EnumName(Train->GetTrainStatus()),
 			ModeName(State.Mode), State.bIgnoreSignals ? 1 : 0, Speed * CmPerSecondToKmh, State.GameTargetSpeed * CmPerSecondToKmh,

@@ -209,3 +209,18 @@ train, then a row per train every 0.2 s:
   way it ran. A new route now costs 100 km per track it runs against another train's held route
   (`HeadOnPenalty`, `FCongestion::HeldExits`); the current route doesn't, so single track with passing loops keeps
   working. The pass-through at 05:29:33-53 (Coated Plates RSC Train / at test 3) was at test 3 driven by hand.
+- Same session: forced braking 15 times in 13 min, mostly at 150-180 km/h needing only 1.1-1.5 m/s2, against plans
+  of 0.6-0.7 m/s2. Those were the never-measured fallback, 0.8x rated scaled down in proportion above 50 km/h. Measured
+  in telemetry, full brake gives 2100-2500 kN at every speed (air brakes, rated force, plus dynamic brakes, about
+  2000 kN below 40 km/h and 400-600 above 120) and 2.3-3.4 m/s2 at 120-180 km/h. The rating
+  (`MaxBrakeDeceleration`) is the air brakes' force over the consist mass, and the consist mass leaves out cargo
+  loaded later: at test 4 braked at 2.4 m/s2 with 2500 kN, about 1050 t, against a consist of 730 t. That, not speed,
+  is why loaded trains measured 1.2 m/s2 at 100 km/h earlier. The plan now uses the vehicles' own mass with cargo
+  (`FATTrafficTrain::Mass`, also for acceleration and brake samples), and plans an unmeasured band with 0.8x the air
+  brakes' force over that mass, at every speed (dynamic brakes are left as margin); above every measured band no
+  more than the highest measured. Telemetry has `mass_t` (vehicles with cargo).
+- Reinforced Plates Train was forced from 92 km/h to a stop in a second (181 m/s2) while pacing behind Cable RSC
+  crossing at 150 km/h: Cable slowed, its clear time (distance / speed now) grew, the pace became too fast and the
+  test failed 27 m from the crossing. The pace and following in time (`IsClearingInTime`) now take the latest the
+  leader can clear it: slowing evenly to stop at the end of its authority (`GetLatestClearSeconds`), which only
+  gets sooner as time passes.

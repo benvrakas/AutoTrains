@@ -9,11 +9,12 @@ With traffic control on (the default), every self-driving train ignores signals,
   puts a wait at the last track end before it. Same way on the same track (or through a switch the same way) is
   allowed with the safety margin as headway at both ends. Stays are learned per train and station from the last
   dock (40 s until one is seen). Plans use each train's cruising speed and acceleration as seen.
-- Locks: what a train stands on, can't stop short of, or holds within reach of service braking is locked: nobody books
-  ahead of it. What it holds beyond that is held: another train may fit in ahead, and the holder then gives it up with
-  ordinary braking.
+- Locks: what a train stands on, can't stop short of, or holds within its full-brake stopping distance plus the stop
+  distance is locked: nobody books ahead of it. What it holds beyond that is held: another train may go first if it is
+  clear in time, and the holder then gives it up and brakes.
 - Moving: a train is granted a track or switch only when nobody else stands on it or holds it, and no other train is
-  booked there before it (locked bookings first); a train it follows the same way is the exception, kept apart by the
+  booked there before it (locked bookings first); a train is given track as far as it needs to stop from the speed
+  it is heading for, plus its length and the lookahead; a train it follows the same way is the exception, kept apart by the
   follow limit (it can always stop behind the leader's tail plus the leader's braking distance). A train keeps what it
   holds and has locked whatever was booked since. It always keeps the speed at which it can stop before the end of its
   grants, planning with 80% of its rated braking until it has braked hard once, then 95% of what it actually managed

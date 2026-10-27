@@ -30,11 +30,6 @@ namespace
 	constexpr float SearchFailedSeconds = 1.f;
 	// A track the search can only get onto after an open-ended booking costs this. [s]
 	constexpr float SearchBlockedSeconds = 1e6f;
-	// A train's booking is locked within this many times its stopping distance plus this much travel time and distance:
-	// that far ahead it may not be able to stop at service braking once it lost the slot. [s] [cm]
-	constexpr float LockStoppingShare = 1.2f;
-	constexpr float LockSeconds = 1.f;
-	constexpr float LockDistance = 6000.f;
 	// Trains that waited longer than WaitDumpSeconds are described in the log every WaitDumpInterval. [s]
 	constexpr double WaitDumpSeconds = 60.0;
 	constexpr double WaitDumpInterval = 30.0;
@@ -460,9 +455,9 @@ void AATTrafficSubsystem::PlanTrain(const FATTrafficTrain& State, double Now, co
 	TArray<FPass> Base;
 	CollectPasses(State, Base);
 	// Held: what the train holds from its last grant (route steps it holds from its front on, and the switches between
-	// them). Locked: what it stands on, can't stop short of, or holds within reach of service braking; only what it
-	// holds or can't avoid, never a resource ahead it merely stands close to.
-	const float LockedWithin = Plan.Committed * LockStoppingShare + State.Speed * LockSeconds + LockDistance;
+	// them). Locked: what it stands on, can't stop short of, or holds within its full-brake stopping distance plus the
+	// stop distance; only what it holds or can't avoid, never a resource ahead it merely stands close to.
+	const float LockedWithin = Plan.Committed + GetStopDistance();
 	int32 HeldIndex = INDEX_NONE;
 	while (HeldIndex + 1 < State.Route.Num() && HoldsTrack(State, State.Route[HeldIndex + 1].Track))
 	{
@@ -1058,7 +1053,9 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 	State.BlockedBy = nullptr;
 	State.BlockedReason.Reset();
 	State.BlockedKey.Reset();
-	const float Need = GetStoppingDistance(State, State.Speed) + State.Length + mSettings.LookaheadMetres * 100.f;
+	// Enough to stop from the speed it is heading for, so it can speed up.
+	const float Heading = FMath::Max(State.Speed, GetRouteSpeed(State).Cruise);
+	const float Need = GetStoppingDistance(State, Heading) + State.Length + mSettings.LookaheadMetres * 100.f;
 	auto TimeOf = [](const TArray<double>& Times, int32 Index) { return Times.IsValidIndex(Index) ? Times[Index] : OpenTime; };
 	auto LockOf = [](const TArray<bool>& Locks, int32 Index) { return Locks.IsValidIndex(Index) && Locks[Index]; };
 	bool bBlocked = false;

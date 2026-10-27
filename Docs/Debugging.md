@@ -419,3 +419,11 @@ train, then a row per train every 0.2 s:
 - Rerouting made conservative (user: prefer the usual, shorter route): a new route must save 30 s and 20%, and is
   kept 60 s. These, the lookahead past the braking distance, the stop distance, the normal braking share and the
   station stay estimate are now Mods menu settings (number settings are one table in ATConfig.cpp).
+- After 1.0.0 (telemetry 14:22-14:49, build c2c98d5): with the game wanting >= 60 km/h, the mod held trains below 80%
+  of the game's target 70% of the time. (1) Grants reached the stopping distance at the current speed plus length
+  plus 100 m, and the speed was capped to stop within that at normal braking: at 200 km/h the cap was about 1% over
+  the speed, so the game's driver barely accelerated (AI Limiter RSC at 138 km/h, 529 m granted, capped at 139). Grants
+  now reach the stopping distance at the speed the train is heading for (its cruise). (2) Everything held within
+  1.2 x the stopping distance + 1 s + 60 m was locked, about 640 m at 150 km/h, so no crossing train could go first
+  even when long clear before the fast train arrived. Locked is now only within the full-brake stopping distance plus
+  the stop distance; beyond, held track can be gone ahead of, and the holder brakes if it must.

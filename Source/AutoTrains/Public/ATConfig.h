@@ -11,6 +11,8 @@ struct FATSettings
 	bool bRerouting = true;
 	bool bPhaseThrough = true;
 	bool bAggressive = true;
+	// Deadlocked trains pass through each other after GhostAfterSeconds to clear the jam (beta).
+	bool bGhostDeadlocks = true;
 	// Time kept between two trains' bookings of the same track or switch. [s]
 	float SafetyMargin = 0.f;
 	// Top speed of every self-driving train, 0 for each train's own. [km/h]
@@ -33,6 +35,8 @@ struct FATSettings
 	float DefaultStaySeconds = 40.f;
 	// How often trains are read, planned and given track. [s]
 	float UpdateIntervalSeconds = 0.25f;
+	// How long a deadlock lasts before its trains pass through each other. [s]
+	float GhostAfterSeconds = 60.f;
 };
 
 // Auto Trains' mod configuration: switches and numbers shown in the Mods menu and Satisfactory Mod Manager.
@@ -48,6 +52,7 @@ public:
 	static const FString ReroutingKey;
 	static const FString PhaseThroughKey;
 	static const FString AggressiveKey;
+	static const FString GhostDeadlocksKey;
 
 	// Sets OutMin and OutMax to the accepted range of the number setting Key; returns false if Key isn't one.
 	static bool GetRange(const FString& Key, float& OutMin, float& OutMax);

@@ -1,5 +1,6 @@
 #include "ATTrafficSubsystem.h"
 #include "ATRouter.h"
+#include "Algo/Reverse.h"
 #include "AutoTrains.h"
 #include "Buildables/FGBuildableRailroadStation.h"
 #include "Buildables/FGBuildableRailroadTrack.h"
@@ -38,6 +39,13 @@ namespace
 	constexpr float FollowStuckDistance = 3000.f;
 	// The earliest-entry search gives up after this many shifts.
 	constexpr int32 EntryMaxShifts = 16;
+	// Safe-interval search: stops closer together than this count as one; a wait shorter than SippMinWaitSeconds is
+	// dropped; a train slower than SippStandingSpeed counts as standing. [cm] [s] [cm/s]
+	constexpr float SippMinStopGap = 100.f;
+	constexpr double SippMinWaitSeconds = 0.5;
+	constexpr float SippStandingSpeed = 50.f;
+	// A plan's wait this close to its end doesn't hold back the grant. [s]
+	constexpr double PlanWaitGraceSeconds = 0.5;
 	// Planner counters are logged this often. [s]
 	constexpr double PlanSummarySeconds = 60.0;
 	// An update slower than this is logged, at most once per SlowLogSeconds. [s]
@@ -69,6 +77,80 @@ namespace
 	FString SecondsText(double Seconds)
 	{
 		return IsOpen(Seconds) ? FString(TEXT("an unknown time")) : FString::Printf(TEXT("%.0f s"), FMath::Max(Seconds, 0.0));
+	}
+
+	// A free time window at a SIPP stop, and the train whose booking ends the block before it.
+	struct FSippInterval
+	{
+		double Start = 0.0;
+		double End = 0.0;
+		const AFGTrain* After = nullptr;
+	};
+
+	// The best arrival found at a SIPP stop within one of its free windows: the window, the departure from the stop
+	// before and that stop's label, and the train it waited for, if it waited.
+	struct FSippLabel
+	{
+		double Arrive = 0.0;
+		int32 Interval = 0;
+		double PrevDepart = 0.0;
+		int32 PrevLabel = INDEX_NONE;
+		const AFGTrain* Cause = nullptr;
+	};
+
+	// Free windows from From on, outside every block in Blocks.
+	template <typename TBlock>
+	TArray<FSippInterval> GetFreeIntervals(TArray<TBlock> Blocks, double From)
+	{
+		Blocks.Sort([](const TBlock& A, const TBlock& B) { return A.Lo < B.Lo; });
+		TArray<FSippInterval> Free;
+		double Start = From;
+		const AFGTrain* After = nullptr;
+		for (const TBlock& Block : Blocks)
+		{
+			if (Block.Hi <= Start)
+			{
+				continue;
+			}
+			if (Block.Lo > Start)
+			{
+				Free.Add({Start, Block.Lo, After});
+			}
+			Start = Block.Hi;
+			After = Block.Owner;
+			if (IsOpen(Start))
+			{
+				return Free;
+			}
+		}
+		Free.Add({Start, OpenTime, After});
+		return Free;
+	}
+
+	// Earliest departure in [From, To] for a move lasting Duration that overlaps none of Blocks, or -1; Cause becomes the
+	// train whose block delayed it last.
+	template <typename TBlock>
+	double GetEarliestDeparture(const TArray<TBlock>& Blocks, double From, double To, double Duration, const AFGTrain*& Cause)
+	{
+		double Depart = From;
+		for (int32 Round = 0; Round < 64 && Depart <= To; ++Round)
+		{
+			bool bMoved = false;
+			for (const TBlock& Block : Blocks)
+			{
+				if (Depart < Block.Hi && Depart + Duration > Block.Lo)
+				{
+					Depart = Block.Hi;
+					Cause = Block.Owner;
+					bMoved = true;
+				}
+			}
+			if (!bMoved)
+			{
+				return Depart;
+			}
+		}
+		return -1.0;
 	}
 
 	// Time from standstill over Distance, accelerating at Accel up to Cruise. [s]
@@ -475,8 +557,13 @@ void AATTrafficSubsystem::PlanTrain(const FATTrafficTrain& State, double Now, co
 	{
 		StopPoints.Add(Step.EndDistance - State.FrontAhead - GetStopMargin(Step.Exit));
 	}
+	// The timetable from the safe-interval search; the loop below only corrects what its simplified timing missed.
 	TArray<const AFGTrain*> WaitCauses;
-	WaitCauses.Init(nullptr, FixedWaits.Num());
+	const double MinDepart = FixedWaits.Num() > 0 ? FixedWaits.Last().Until : Now;
+	if (!PlanSafeIntervals(State, Speed, Now, Base, MinDepart, GoalDwell, Scope, Plan.Committed, Plan.Waits, WaitCauses))
+	{
+		Plan.Failure = TEXT("no free slot further along its route");
+	}
 	auto FirstCause = [&WaitCauses]() -> const AFGTrain*
 	{
 		for (const AFGTrain* Cause : WaitCauses)
@@ -1059,10 +1146,38 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 	auto TimeOf = [](const TArray<double>& Times, int32 Index) { return Times.IsValidIndex(Index) ? Times[Index] : OpenTime; };
 	auto LockOf = [](const TArray<bool>& Locks, int32 Index) { return Locks.IsValidIndex(Index) && Locks[Index]; };
 	bool bBlocked = false;
+	// Passing through a deadlock: its way ahead whatever else is there.
+	if (State.GhostUntil >= 0.0)
+	{
+		for (int32 Index = 0; Index < State.Route.Num(); ++Index)
+		{
+			State.Claims.Add(State.Route[Index].Track);
+			if (State.Route[Index].EndDistance - State.FrontAhead >= Need)
+			{
+				break;
+			}
+		}
+		UpdateAuthority(State);
+		UpdateFollowLeaders(State);
+		State.ClearSeconds = -1.f;
+		return;
+	}
+	// The plan waits somewhere ahead and doesn't move off right away.
+	const bool bPlanWaits = State.PlanWaitAt >= 0.f && State.PlanDepart > Now + PlanWaitGraceSeconds;
 	for (int32 Index = 0; Index < State.Route.Num() && !bBlocked; ++Index)
 	{
 		const FATRouteStep& Step = State.Route[Index];
 		const float Begin = Step.EndDistance - Step.Track->GetLength() - State.FrontAhead;
+		// Its plan stands it where it is: nothing past what it stands on.
+		if (bPlanWaits && State.PlanWaitAt <= 100.f && !State.Occupied.Contains(Step.Track))
+		{
+			State.BlockedBy = State.PlanWaitFor;
+			State.BlockedReason = FString::Printf(TEXT("waits for %s where it stands: its plan moves off in %s"), *NameOf(State.PlanWaitFor.Get()),
+				*SecondsText(State.PlanDepart - Now));
+			State.BlockedKey = NameOf(State.PlanWaitFor.Get()) + TEXT("|plan|here");
+			bBlocked = true;
+			break;
+		}
 		const FATTrafficTrain* Blocker = nullptr;
 		FString Why;
 		FString Where;
@@ -1105,27 +1220,15 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 		{
 			break;
 		}
-	}
-	// Held up, the train stops at the end of its grant: only where it stands clear of every track and switch another
-	// train is booked on before it can move on. Else the grant is cut back to the last such place it can still stop at.
-	if (bBlocked)
-	{
-		const float Stopping = GetStoppingDistance(State, State.Speed);
-		const double LeaveBy = State.PlanDepart > Now ? State.PlanDepart : OpenTime;
-		for (int32 Last = State.Claims.Num() - 1; Last > 0; --Last)
+		// No further than where its plan waits: that's a place it can stand without blocking anyone.
+		if (bPlanWaits && Step.EndDistance - State.FrontAhead - GetStopMargin(Step.Exit) >= State.PlanWaitAt - 100.f)
 		{
-			const FATRouteStep& End = State.Route[Last];
-			const FATTrafficTrain* Needer = nullptr;
-			FString Where;
-			if (End.EndDistance - State.FrontAhead - GetStopMargin(End.Exit) < Stopping || IsSafeStop(State, Last, LeaveBy, Needer, Where))
-			{
-				break;
-			}
-			State.Claims.Pop();
-			State.BlockedBy = Needer ? Needer->Train : nullptr;
-			State.BlockedReason = FString::Printf(TEXT("waits for %s before %s: it would stand on %s, which that train is booked on"), *NameOf(Needer ? Needer->Train.Get() : nullptr),
-				*ResourceName(End.Track, INDEX_NONE), *Where);
-			State.BlockedKey = NameOf(Needer ? Needer->Train.Get() : nullptr) + TEXT("|stand|") + Where;
+			State.BlockedBy = State.PlanWaitFor;
+			State.BlockedReason = FString::Printf(TEXT("waits for %s at the end of %s: its plan moves off in %s"), *NameOf(State.PlanWaitFor.Get()),
+				*ResourceName(Step.Track, INDEX_NONE), *SecondsText(State.PlanDepart - Now));
+			State.BlockedKey = NameOf(State.PlanWaitFor.Get()) + TEXT("|plan|") + ResourceName(Step.Track, INDEX_NONE);
+			bBlocked = true;
+			break;
 		}
 	}
 	UpdateAuthority(State);
@@ -1487,6 +1590,48 @@ void AATTrafficSubsystem::UpdatePlannedTraffic(float DeltaSeconds)
 		}
 	}
 
+	// Check: no train stands on a track crossing one another train holds; logged with both trains' state, once a pair.
+	for (const FTurn& Turn : Turns)
+	{
+		const FATTrafficTrain& State = *Turn.State;
+		for (const AFGBuildableRailroadTrack* Track : State.Occupied)
+		{
+			for (const AFGBuildableRailroadTrack* Conflict : GetConflicts(Track))
+			{
+				if (Conflict == Track)
+				{
+					continue;
+				}
+				for (const TPair<const AFGTrain*, FATTrafficTrain*>& Pair : mStateOf)
+				{
+					const FATTrafficTrain& Other = *Pair.Value;
+					if (&Other == &State || !HoldsTrack(Other, Conflict))
+					{
+						continue;
+					}
+					const FString Key = NameOf(State.Train.Get()) + TEXT("|") + NameOf(Other.Train.Get()) + TEXT("|") + ResourceName(Track, INDEX_NONE);
+					if (mLoggedCrossings.Contains(Key))
+					{
+						continue;
+					}
+					mLoggedCrossings.Add(Key);
+					const AFGTrain* OtherTrain = Other.Train.Get();
+					const float OtherAt = OtherTrain ? GetDistanceToTrackStart(OtherTrain, Other, Conflict) : -1.f;
+					UE_LOG(LogAutoTrains, Warning, TEXT("planner: CROSSING: %s (%s, %.0f km/h, granted it: %s, may drive %.0f m%s%s) stands on %s, which crosses %s held by %s (%s, %.0f km/h, %s, it %s)"),
+						*NameOf(State.Train.Get()), State.bManaged ? TEXT("driving") : TEXT("not driven"), State.Speed * 0.036f,
+						State.Claims.ContainsByPredicate([Track](const TWeakObjectPtr<AFGBuildableRailroadTrack>& Claim) { return Claim.Get() == Track; }) ? TEXT("yes") : TEXT("no"),
+						GetAuthorityDistance(State.Train.Get()) / 100.f, State.BlockedReason.IsEmpty() ? TEXT("") : TEXT(", "), *State.BlockedReason,
+						*ResourceName(Track, INDEX_NONE), *ResourceName(Conflict, INDEX_NONE), *NameOf(OtherTrain), Other.bManaged ? TEXT("driving") : TEXT("not driven"),
+						Other.Speed * 0.036f, Other.Occupied.Contains(const_cast<AFGBuildableRailroadTrack*>(Conflict)) ? TEXT("stands on it") : TEXT("granted it"),
+						OtherAt > -1e8f ? *FString::Printf(TEXT("%.0f m ahead"), OtherAt / 100.f) : TEXT("off its path"));
+				}
+			}
+		}
+	}
+	if (mLoggedCrossings.Num() > 500)
+	{
+		mLoggedCrossings.Reset();
+	}
 	if (Now >= mWaitDumpAt)
 	{
 		mWaitDumpAt = Now + WaitDumpInterval;
@@ -1639,75 +1784,248 @@ bool AATTrafficSubsystem::IsBehind(const FATTrafficTrain& Other, const FATTraffi
 	return true;
 }
 
-bool AATTrafficSubsystem::IsSafeStop(const FATTrafficTrain& State, int32 Last, double LeaveBy, const FATTrafficTrain*& OutNeeder, FString& OutWhere) const
+void AATTrafficSubsystem::CollectBlocks(const FATTrafficTrain& Self, const FPass& Pass, double Headway, EConflictScope Scope, TArray<FBlock>& Out) const
 {
-	const AFGTrain* SelfTrain = State.Train.Get();
-	// Another train booked on Key (or a track crossing it) before LeaveBy, other than one queueing behind this train the
-	// same way or one that has to pass it first.
-	auto Needed = [&](const FResourceKey& Key, const UFGRailroadTrackConnectionComponent* Via, const UFGRailroadTrackConnectionComponent* Exit) -> bool
+	const AFGTrain* SelfTrain = Self.Train.Get();
+	auto Check = [&](const FResourceKey& Key)
 	{
-		TArray<FResourceKey, TInlineAllocator<4>> Keys;
-		if (Key.Joint != INDEX_NONE)
+		const TArray<FBooking>* Bookings = mBookings.Find(Key);
+		if (!Bookings)
 		{
-			Keys.Add(Key);
+			return;
 		}
-		else
+		for (const FBooking& Booking : *Bookings)
 		{
-			for (const AFGBuildableRailroadTrack* Conflict : GetConflicts(Key.Track))
+			if (Booking.Owner == SelfTrain)
 			{
-				FResourceKey Crossing;
-				Crossing.Track = Conflict;
-				Keys.Add(Crossing);
+				continue;
 			}
-		}
-		for (const FResourceKey& Checked : Keys)
-		{
-			const TArray<FBooking>* Bookings = mBookings.Find(Checked);
-			for (const FBooking& Booking : Bookings ? *Bookings : TArray<FBooking>())
+			// Nobody goes ahead of a locked booking or of a train ahead on this line; one behind on it can't get there first.
+			bool bFirst = Booking.bLocked;
+			if (Pass.RouteIndex != INDEX_NONE)
 			{
-				if (Booking.Owner == SelfTrain || Booking.Enter >= LeaveBy || (Checked == Key && Exit && Booking.Exit == Exit && Booking.Via == Via))
+				if (FATTrafficTrain* const* Other = mStateOf.Find(Booking.Owner))
 				{
-					continue;
+					const int32 Ahead = FrontIndexOn(Self, **Other);
+					if (Ahead != INDEX_NONE && Ahead <= Pass.RouteIndex)
+					{
+						bFirst = true;
+					}
+					else if (IsBehind(**Other, Self, Key))
+					{
+						continue;
+					}
 				}
-				FATTrafficTrain* const* Other = mStateOf.Find(Booking.Owner);
-				if (Other && IsBehind(**Other, State, Checked))
-				{
-					continue;
-				}
-				OutNeeder = Other ? *Other : nullptr;
-				OutWhere = ResourceName(Checked.Track, Checked.Joint);
-				return true;
 			}
+			if ((Scope == EConflictScope::LockedOnly && !bFirst)
+				|| (Scope == EConflictScope::NotUnlockedMoving && Booking.Kind == EBookingKind::Moving && !bFirst && !Booking.bHeld))
+			{
+				continue;
+			}
+			const double Clear = IsOpen(Booking.Clear) ? OpenTime : Booking.Clear + Headway;
+			if (Key == Pass.Key && Pass.Exit && Booking.Exit == Pass.Exit && Booking.Via == Pass.Via)
+			{
+				// The same way: behind a train that goes first, else just not entering together.
+				Out.Add({bFirst ? -OpenTime : Booking.Enter - Headway, Booking.Enter + Headway, Booking.Owner});
+				continue;
+			}
+			Out.Add({bFirst ? -OpenTime : Booking.Enter - Headway, Clear, Booking.Owner});
 		}
-		return false;
 	};
-	const float Front = State.Route[Last].EndDistance - State.FrontAhead - GetStopMargin(State.Route[Last].Exit);
-	const float Tail = Front - State.Length;
-	for (int32 Index = Last; Index >= 0; --Index)
+	if (Pass.Key.Joint != INDEX_NONE)
+	{
+		Check(Pass.Key);
+		return;
+	}
+	for (const AFGBuildableRailroadTrack* Conflict : GetConflicts(Pass.Key.Track))
+	{
+		FResourceKey Key;
+		Key.Track = Conflict;
+		Check(Key);
+	}
+}
+
+bool AATTrafficSubsystem::PlanSafeIntervals(const FATTrafficTrain& State, const FRouteSpeed& Speed, double Now, const TArray<FPass>& Passes, double MinDepart,
+	double GoalDwell, EConflictScope Scope, float Committed, TArray<FWait>& OutWaits, TArray<const AFGTrain*>& OutCauses) const
+{
+	OutWaits.Reset();
+	OutCauses.Reset();
+	if (State.Route.Num() == 0)
+	{
+		return true;
+	}
+	// Stops: where the front is now, the end of each route track short by its stop margin, and the goal.
+	TArray<float> Stops;
+	Stops.Add(0.f);
+	for (int32 Index = 0; Index < State.Route.Num(); ++Index)
 	{
 		const FATRouteStep& Step = State.Route[Index];
-		const float End = Step.EndDistance - State.FrontAhead;
-		if (End <= Tail)
+		const bool bGoal = Index == State.Route.Num() - 1;
+		const float At = Step.EndDistance - State.FrontAhead - (bGoal ? 0.f : GetStopMargin(Step.Exit));
+		if (At > Stops.Last() + SippMinStopGap)
 		{
-			break;
+			Stops.Add(At);
 		}
-		FResourceKey Key;
-		Key.Track = Step.Track;
-		if (Needed(Key, nullptr, Step.Exit))
+	}
+	const int32 Count = Stops.Num();
+	// Driving time from each stop to the next without stopping, and what stopping first adds. [s]
+	TArray<double> Drive;
+	Drive.SetNumZeroed(Count);
+	for (int32 Index = 0; Index + 1 < Count; ++Index)
+	{
+		const float Length = Stops[Index + 1] - Stops[Index];
+		Drive[Index] = Index == 0 ? TimeToCover(Length, State.Speed, Speed.Accel, Speed.Cruise) : Length / Speed.Cruise;
+	}
+	const bool bStandingNow = State.Speed < SippStandingSpeed || MinDepart > Now;
+	auto CanWait = [&](int32 Index) { return Index == 0 ? bStandingNow : Stops[Index] >= Committed; };
+	auto Duration = [&](int32 Index, bool bStopped) { return Drive[Index] + (bStopped && !(Index == 0 && State.Speed < SippStandingSpeed) ? Speed.StopLoss : 0.0); };
+
+	// What standing at each stop and driving each move must keep clear of: every other booking on what the train's
+	// body covers there, or touches on the way.
+	TArray<TArray<FBlock>> Standing;
+	TArray<TArray<FBlock>> Moving;
+	Standing.SetNum(Count);
+	Moving.SetNum(Count);
+	TArray<FBlock> Blocks;
+	for (const FPass& Pass : Passes)
+	{
+		// Its own whatever others booked: they plan around it.
+		if (Pass.bLocked)
 		{
-			return false;
+			continue;
 		}
-		// The switch at the end of this track, if the train would stand within its fouling zone.
-		const int32 Joint = Index < Last ? GetJoint(Step.Exit) : INDEX_NONE;
-		if (Joint != INDEX_NONE && End > Tail - GetJointFoulDistance(Joint))
+		Blocks.Reset();
+		CollectBlocks(State, Pass, GetSafetyMarginSeconds(), Pass.bHeld ? EConflictScope::LockedOnly : Scope, Blocks);
+		if (Blocks.Num() == 0)
 		{
-			FResourceKey JointKey;
-			JointKey.Joint = Joint;
-			if (Needed(JointKey, Step.Exit, State.Route[Index + 1].Exit))
+			continue;
+		}
+		int32 First = 0;
+		while (First < Count && Stops[First] < Pass.EnterAt)
+		{
+			++First;
+		}
+		int32 Last = First - 1;
+		while (Last + 1 < Count && Stops[Last + 1] < Pass.ClearAt)
+		{
+			++Last;
+		}
+		for (int32 Index = First; Index <= Last; ++Index)
+		{
+			Standing[Index].Append(Blocks);
+		}
+		for (int32 Index = FMath::Max(First - 1, 0); Index <= Last && Index + 1 < Count; ++Index)
+		{
+			Moving[Index].Append(Blocks);
+		}
+	}
+	TArray<TArray<FSippInterval>> Free;
+	Free.SetNum(Count);
+	for (int32 Index = 0; Index < Count; ++Index)
+	{
+		Free[Index] = GetFreeIntervals(Standing[Index], Now);
+	}
+	// The train is at the first stop now, whatever is booked there.
+	if (Free[0].Num() == 0 || Free[0][0].Start > Now)
+	{
+		Free[0].Insert({Now, Now, nullptr}, 0);
+	}
+	// At the goal it stays its dwell and pulls away.
+	const double Stay = IsOpen(GoalDwell) ? OpenTime : GoalDwell + RestTime(State.Length, Speed.Cruise, Speed.Accel);
+
+	TArray<TArray<FSippLabel>> Labels;
+	Labels.SetNum(Count);
+	Labels[0].Add({Now, 0, Now, INDEX_NONE, nullptr});
+	auto Offer = [&](int32 Index, int32 Interval, double Arrive, double Depart, int32 Prev, const AFGTrain* Cause)
+	{
+		if (Index == Count - 1 && Arrive + Stay > Free[Index][Interval].End && !IsOpen(Free[Index][Interval].End))
+		{
+			return;
+		}
+		FSippLabel* Known = Labels[Index].FindByPredicate([Interval](const FSippLabel& Label) { return Label.Interval == Interval; });
+		if (!Known)
+		{
+			Labels[Index].Add({Arrive, Interval, Depart, Prev, Cause});
+		}
+		else if (Arrive < Known->Arrive)
+		{
+			*Known = {Arrive, Interval, Depart, Prev, Cause};
+		}
+	};
+	for (int32 Index = 0; Index + 1 < Count; ++Index)
+	{
+		for (int32 LabelIndex = 0; LabelIndex < Labels[Index].Num(); ++LabelIndex)
+		{
+			const FSippLabel Label = Labels[Index][LabelIndex];
+			const FSippInterval& Here = Free[Index][Label.Interval];
+			const double Earliest = Index == 0 ? FMath::Max(Label.Arrive, MinDepart) : Label.Arrive;
+			for (int32 Next = 0; Next < Free[Index + 1].Num(); ++Next)
 			{
-				return false;
+				const FSippInterval& There = Free[Index + 1][Next];
+				// Straight on, leaving as soon as it got here.
+				if (Earliest <= Label.Arrive)
+				{
+					const double Arrive = Label.Arrive + Duration(Index, false);
+					const AFGTrain* Unused = nullptr;
+					if (Arrive >= There.Start && Arrive <= There.End && GetEarliestDeparture(Moving[Index], Label.Arrive, Label.Arrive, Duration(Index, false), Unused) >= 0.0)
+					{
+						Offer(Index + 1, Next, Arrive, Label.Arrive, LabelIndex, nullptr);
+						continue;
+					}
+				}
+				// Waiting here first.
+				if (!CanWait(Index))
+				{
+					continue;
+				}
+				const double Move = Duration(Index, true);
+				const AFGTrain* Cause = There.Start - Move > Earliest ? There.After : nullptr;
+				const double Depart = GetEarliestDeparture(Moving[Index], FMath::Max(Earliest, There.Start - Move), FMath::Min(Here.End, There.End - Move), Move, Cause);
+				if (Depart >= 0.0)
+				{
+					Offer(Index + 1, Next, Depart + Move, Depart, LabelIndex, Cause);
+				}
 			}
 		}
 	}
-	return true;
+
+	// The goal if reached, else the furthest stop reached, where the train then stands for good.
+	int32 Reached = Count - 1;
+	while (Reached > 0 && Labels[Reached].Num() == 0)
+	{
+		--Reached;
+	}
+	int32 Best = 0;
+	for (int32 LabelIndex = 1; LabelIndex < Labels[Reached].Num(); ++LabelIndex)
+	{
+		if (Labels[Reached][LabelIndex].Arrive < Labels[Reached][Best].Arrive)
+		{
+			Best = LabelIndex;
+		}
+	}
+	TArray<FWait> Waits;
+	TArray<const AFGTrain*> Causes;
+	const bool bAll = Reached == Count - 1;
+	if (!bAll && CanWait(Reached))
+	{
+		Waits.Add({Stops[Reached], OpenTime});
+		const FSippInterval* Blocked = Free.IsValidIndex(Reached + 1) && Free[Reached + 1].Num() > 0 ? &Free[Reached + 1][0] : nullptr;
+		Causes.Add(Blocked ? Blocked->After : nullptr);
+	}
+	for (int32 Index = Reached, LabelIndex = Best; Index > 0; --Index)
+	{
+		const FSippLabel& Label = Labels[Index][LabelIndex];
+		const FSippLabel& Prev = Labels[Index - 1][Label.PrevLabel];
+		if (Label.PrevDepart > Prev.Arrive + SippMinWaitSeconds)
+		{
+			Waits.Add({Stops[Index - 1], Label.PrevDepart});
+			Causes.Add(Label.Cause);
+		}
+		LabelIndex = Label.PrevLabel;
+	}
+	Algo::Reverse(Waits);
+	Algo::Reverse(Causes);
+	OutWaits = MoveTemp(Waits);
+	OutCauses = MoveTemp(Causes);
+	return bAll;
 }

@@ -5,8 +5,11 @@ With traffic control on (the default), every self-driving train ignores signals,
 - Bookings: every update (0.25 s by default) each train in turn books the tracks and switch fouling zones on its route as time slots,
   around everyone else's bookings (nobody's existing booking is taken): self-driving trains along their route to the
   goal plus the stay there; docked trains their stay until the expected departure, then their next leg from the
-  timetable as the game's pathfinder finds it; trains the mod doesn't drive where they stand, open-ended. A conflict
-  puts a wait at the last track end before it. Same way on the same track (or through a switch the same way) is
+  timetable as the game's pathfinder finds it; trains the mod doesn't drive where they stand, open-ended. A train's
+  waits come from a safe-interval search (SIPP) along its route: stops are where it is, the end of each route track
+  short of its stop margin, and the goal; it may stand at a stop in a window when nothing its body covers there is
+  booked by another train, and drive between stops when nothing it touches on the way is; the earliest arrival wins.
+  An exact check of the booked times then adds or lengthens waits where the search's simple timing was off. Same way on the same track (or through a switch the same way) is
   allowed with the safety margin as headway at both ends. Stays are learned per train and station from the last
   dock (40 s until one is seen). Plans use each train's cruising speed and acceleration as seen.
 - Locks: what a train stands on, can't stop short of, or holds within its full-brake stopping distance plus the stop
@@ -24,9 +27,13 @@ With traffic control on (the default), every self-driving train ignores signals,
 - Rerouting (`/at reroute on|off`, on by default): every 5 s, at once when its planned arrival got 15 s worse or its
   plan failed, a train searches the fastest route through the bookings, and takes it if faster by both reroute
   settings; after a reroute it keeps its route for the reroute hold time.
+- A train is given track no further than where its plan waits.
 - Deadlocks: trains waiting for each other in a circle for 20 s are logged (`DEADLOCK`) and get the game's long-wait
-  warning ("!") over them; if one only waits for the booking order it goes first for 30 s
-  (`goes first ... to break the deadlock`). Trains blocking each other where they stand need moving by hand.
+  warning ("!") over them. With "Clear deadlocks by passing through (beta)" on, a cycle lasting longer than the set
+  time (60 s) has its trains drive on, ignoring each other and passing through, until each has driven its length plus
+  300 m (at most 2 minutes); logged as `DEADLOCK passed through` and appended to
+  `%LOCALAPPDATA%\FactoryGame\Saved\AutoTrainsaults.log`.
+- `planner: CROSSING:` logs a train standing on a track crossing one another train holds, with both trains' state.
 - Log lines: `traffic: <train>: waits for ...` when the train or place waited for changes; `planner:` lines for
   reroutes, failed plans, committed conflicts, stays, departure predictions, `WAIT` descriptions of trains waiting over
   a minute, and a summary every 60 s.
@@ -57,6 +64,7 @@ Player driven trains aren't controlled; the others treat them as obstacles.
 - **Normal braking (%)** (85): share of the planned braking a normal stop uses (full brake is the backstop).
 - **Station stay estimate (seconds)** (40): assumed stay at a station until one there has been measured.
 - **Update interval (seconds)** (0.25): how often trains are planned and given track.
+- **Clear deadlocks by passing through (beta)** (on) and **Pass through a deadlock after (seconds)** (60): see above.
 
 `/at traffic` and `/at reroute` switch for the session; changing the setting in the Mods menu applies again.
 

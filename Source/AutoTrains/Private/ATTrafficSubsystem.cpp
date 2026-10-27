@@ -14,6 +14,8 @@
 #include "FGRailroadTrackConnectionComponent.h"
 #include "FGRailroadVehicle.h"
 #include "FGTrain.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
 #include "Subsystem/SubsystemActorManager.h"
 
 namespace
@@ -21,6 +23,8 @@ namespace
 	// From the Mods menu: tighter margins, and trains passing through each other.
 	bool GAggressive = true;
 	bool GPhaseThrough = false;
+	// Some train is passing through a deadlock.
+	bool GGhosting = false;
 	// Seconds of slack for following and going first. [s]
 	float GSafetyMargin = 0.f;
 	// Top speed of every self-driving train, 0 for each train's own [cm/s], and the acceleration multiplier.
@@ -79,6 +83,10 @@ namespace
 	// Returned by GetDistanceToTrackStart for a track that isn't on the train's path.
 	constexpr float TrackNotOnPath = -1e9f;
 
+	// A train passing through a deadlock does so until it has driven its length and this much further, or for at most
+	// GhostMaxSeconds. [cm] [s]
+	constexpr float GhostClearDistance = 30000.f;
+	constexpr double GhostMaxSeconds = 120.0;
 	// A train that waited this long counts for deadlock detection; a deadlocked one slower than this shows the game's
 	// long-wait warning. [s] [cm/s]
 	constexpr float DeadlockWaitSeconds = 20.f;
@@ -266,7 +274,7 @@ void AATTrafficSubsystem::ApplySettings()
 
 bool AATTrafficSubsystem::ShouldPhaseThrough()
 {
-	return GPhaseThrough;
+	return GPhaseThrough || GGhosting;
 }
 
 void AATTrafficSubsystem::CountPhaseThrough(AFGBuildableRailroadTrack* Track, AFGBuildableRailroadTrack* OtherTrack)
@@ -392,6 +400,15 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 		State.LastSpeed = State.Speed;
 		RefreshBrakePlan(State);
 		State.StoppedSeconds = State.Speed < 100.f ? State.StoppedSeconds + DeltaSeconds : 0.f;
+		if (State.GhostUntil >= 0.0)
+		{
+			State.GhostLeft -= State.Speed * DeltaSeconds;
+			if (State.GhostLeft <= 0.f || WorldNow > State.GhostUntil || !State.bManaged)
+			{
+				State.GhostUntil = -1.0;
+				UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s has passed through the deadlock"), *TrainName(Train));
+			}
+		}
 		State.RerouteCooldown = FMath::Max(0.f, State.RerouteCooldown - DeltaSeconds);
 	}
 	for (auto It = mTrains.CreateIterator(); It; ++It)
@@ -400,6 +417,11 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 		{
 			It.RemoveCurrent();
 		}
+	}
+	GGhosting = false;
+	for (const TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Pair : mTrains)
+	{
+		GGhosting = GGhosting || Pair.Value.GhostUntil >= 0.0;
 	}
 
 	TArray<FATTrafficTrain*> Managed;
@@ -1058,8 +1080,37 @@ float AATTrafficSubsystem::GetGapToVehicles(const AFGTrain* Train, const FATTraf
 	return -1.f;
 }
 
+void AATTrafficSubsystem::GhostThrough(const TArray<const FATTrafficTrain*>& Chain, double Seconds)
+{
+	const double Now = GetWorld()->GetTimeSeconds();
+	if (Chain.ContainsByPredicate([](const FATTrafficTrain* Member) { return Member->GhostUntil >= 0.0; }))
+	{
+		return;
+	}
+	TArray<FString> Lines;
+	for (const FATTrafficTrain* Member : Chain)
+	{
+		if (FATTrafficTrain* Stuck = mTrains.Find(Member->Train))
+		{
+			Stuck->GhostUntil = Now + GhostMaxSeconds;
+			Stuck->GhostLeft = Stuck->Length + GhostClearDistance;
+			Lines.Add(FString::Printf(TEXT("%s: %s"), *TrainName(Stuck->Train.Get()), *Stuck->BlockedReason));
+		}
+	}
+	GGhosting = true;
+	const FString Fault = FString::Printf(TEXT("%s deadlock of %d trains passed through after %.0f s:\n  %s\n"), *FDateTime::Now().ToString(TEXT("%Y-%m-%d %H:%M:%S")), Chain.Num(),
+		Seconds, *FString::Join(Lines, TEXT("\n  ")));
+	UE_LOG(LogAutoTrains, Warning, TEXT("traffic: DEADLOCK passed through: %s"), *Fault);
+	const FString Path = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("AutoTrains") / TEXT("faults.log"));
+	if (!FFileHelper::SaveStringToFile(Fault, *Path, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM, &IFileManager::Get(), FILEWRITE_Append))
+	{
+		UE_LOG(LogAutoTrains, Error, TEXT("Could not write the fault to %s"), *Path);
+	}
+}
+
 void AATTrafficSubsystem::LogDeadlocks()
 {
+	const double Now = GetWorld()->GetTimeSeconds();
 	// Follow each long-waiting train's chain of trains it waits for; a chain that comes back is a deadlock. Every train
 	// in one is marked; a cycle is logged when it first shows up.
 	TSet<const FATTrafficTrain*> InCycle;
@@ -1096,6 +1147,11 @@ void AATTrafficSubsystem::LogDeadlocks()
 		Sorted.Sort();
 		const FString Signature = FString::Join(Sorted, TEXT("|"));
 		Signatures.Add(Signature);
+		const double Since = mDeadlockSince.FindOrAdd(Signature, Now);
+		if (mSettings.bGhostDeadlocks && Now - Since >= mSettings.GhostAfterSeconds)
+		{
+			GhostThrough(Chain, Now - Since);
+		}
 		if (mLoggedDeadlocks.Contains(Signature))
 		{
 			continue;
@@ -1113,6 +1169,13 @@ void AATTrafficSubsystem::LogDeadlocks()
 		}
 	}
 	// A cycle that breaks up is logged again if it comes back.
+	for (auto It = mDeadlockSince.CreateIterator(); It; ++It)
+	{
+		if (!Signatures.Contains(It.Key()))
+		{
+			It.RemoveCurrent();
+		}
+	}
 	mLoggedDeadlocks = MoveTemp(Signatures);
 	for (TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Pair : mTrains)
 	{
@@ -1546,7 +1609,9 @@ void AATTrafficSubsystem::ApplyAuthority(AFGTrain* Train, float DeltaSeconds)
 	float HardFollowLimit = -1.f;
 	float PaceSpeed = MAX_flt;
 	FATFollowInfo FollowInfo;
-	const float FollowLimit = GetFollowLimit(Train, *State, HardFollowLimit, PaceSpeed, &FollowInfo);
+	// Passing through a deadlock: the trains in its way don't hold it back.
+	const bool bGhost = State->GhostUntil >= 0.0;
+	const float FollowLimit = bGhost ? -1.f : GetFollowLimit(Train, *State, HardFollowLimit, PaceSpeed, &FollowInfo);
 	if (Distance < 0.f && FollowLimit < 0.f && PaceSpeed == MAX_flt)
 	{
 		State->bFullBrake = false;

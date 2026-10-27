@@ -1,8 +1,16 @@
 # Changelog
 
-## 1.0.1
+## 1.1.0
 
-- **Update interval** setting (0.05 to 2 seconds, default 0.25): how often trains are planned and given track.
+- **Timetables by safe-interval search (SIPP):** each train's waits are now found by one search over the free time
+  windows at every place along its route it could stand, with its whole length clear of other trains' bookings. Waits
+  land where they cost least, and a train no longer waits for a train that is still far away when it could have
+  gone through first.
+- A train is given track up to the place its plan waits and no further, so it never stands where others are booked.
+- **Deadlocks cleared by passing through (beta, on by default):** trains deadlocked for longer than a set time (60 s)
+  drive on through each other until they're clear of the jam; each case is written to
+  `FactoryGame/Saved/AutoTrains/faults.log`.
+- New settings: Update interval, Clear deadlocks by passing through, Pass through a deadlock after.
 
 ## 1.0.0
 

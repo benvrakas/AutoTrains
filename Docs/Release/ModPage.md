@@ -22,7 +22,8 @@ you like, and let the trains sort it out.
 ### How trains share the track
 
 - **Planned in space and time.** Every train books each track and switch on its route for the time it will be there,
-  around everyone else's bookings, and plans its waits where they cost least. A train only moves onto track that is
+  around everyone else's bookings: a safe-interval search finds its earliest timetable and puts its waits where they
+  cost least. A train only moves onto track that is
   its turn and that nobody else is on, and always keeps a speed at which it can stop before the end of what it has
   been given. It's given enough track ahead to reach its cruising speed.
 - **Going first.** A train may go through a crossing or switch ahead of a train that is still far enough away to stop,
@@ -35,8 +36,9 @@ you like, and let the trains sort it out.
   where its timetable sends it next, so no train queues in the way it needs to leave.
 - **Following.** A train follows another through a junction or roundabout the same way, keeping enough distance to
   stop if the train ahead does.
-- **Deadlocks shown.** Trains waiting for each other in a circle get the game's warning over them, so you know where
-  to step in.
+- **Deadlocks cleared.** Trains waiting for each other in a circle get the game's warning over them. With the beta
+  setting on (the default), after a minute they pass through each other to clear the jam, and the case is written to
+  a log you can send in.
 - **Brakes it can trust.** Each train measures how hard it really brakes at each speed and plans with that. If a
   train still can't stop in time, the mod brakes it harder than its brakes could, the way block signals do.
 
@@ -58,6 +60,8 @@ you like, and let the trains sort it out.
 | **Stop distance (m)** | 10 | How far a waiting train stops short of track it hasn't been given (before a switch at least 25 m and the switch's fouling zone plus this). |
 | **Normal braking (%)** | 85 | How hard trains brake for normal stops, as a share of the braking they plan with. |
 | **Station stay estimate (seconds)** | 40 | How long a train is expected to stay at a station before it has been seen there; after that its own last stay counts. |
+| **Clear deadlocks by passing through (beta)** | On | Trains stuck waiting for each other in a circle drive on through each other after the set time; each case is written to FactoryGame/Saved/AutoTrains/faults.log. |
+| **Pass through a deadlock after (seconds)** | 60 | How long a deadlock lasts before its trains pass through each other. |
 | **Update interval (seconds)** | 0.25 | How often trains are planned and given track. Shorter reacts faster but costs more on big networks. |
 
 ### Getting started
@@ -103,7 +107,7 @@ source code is there too.
 
 Auto Trains doesn't connect to the internet. In multiplayer all traffic control runs on the host; players see the
 trains through the game's own connection. There's no telemetry or analytics: `/at log on` writes a CSV file to your
-own computer only.
+own computer only, and deadlocks cleared by passing through are written to `faults.log` there.
 
 # AI USAGE TRANSPARENCY
 

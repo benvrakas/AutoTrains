@@ -15,6 +15,7 @@ const FString UATConfig::TrafficControlKey = TEXT("TrafficControl");
 const FString UATConfig::ReroutingKey = TEXT("Rerouting");
 const FString UATConfig::PhaseThroughKey = TEXT("PhaseThrough");
 const FString UATConfig::AggressiveKey = TEXT("AggressiveTiming");
+const FString UATConfig::GhostDeadlocksKey = TEXT("GhostDeadlocks");
 
 namespace
 {
@@ -52,6 +53,8 @@ namespace
 				LOCTEXT("NormalBrakingTip", "How hard trains brake for normal stops, 30 to 100% of the braking they plan with. Higher stops later and gets there sooner; lower is gentler and leaves room for error.")},
 			{TEXT("DefaultStaySeconds"), &FATSettings::DefaultStaySeconds, 0.f, 600.f, LOCTEXT("DefaultStay", "Station stay estimate (seconds)"),
 				LOCTEXT("DefaultStayTip", "How long a train is expected to stay at a station before it has been seen there, 0 to 600 seconds. After that each train's own last stay at that station counts.")},
+			{TEXT("GhostAfterSeconds"), &FATSettings::GhostAfterSeconds, 10.f, 600.f, LOCTEXT("GhostAfter", "Pass through a deadlock after (seconds)"),
+				LOCTEXT("GhostAfterTip", "How long trains stay deadlocked, 10 to 600 seconds, before they pass through each other (when that's on).")},
 			{TEXT("UpdateIntervalSeconds"), &FATSettings::UpdateIntervalSeconds, 0.05f, 2.f, LOCTEXT("UpdateInterval", "Update interval (seconds)"),
 				LOCTEXT("UpdateIntervalTip", "How often trains are planned and given track, 0.05 to 2 seconds. Shorter reacts faster and costs more time per second on big networks; longer is lighter but trains react later.")},
 		};
@@ -144,6 +147,9 @@ UATConfig::UATConfig()
 	AddBool(AggressiveKey, TEXT("AggressiveTiming"), LOCTEXT("Aggressive", "Aggressive timing"),
 		LOCTEXT("AggressiveTip", "Tighter margins: trains plan braking closer to what they really manage, and a train that has waited moves up the planning order more slowly. Best with trains passing through each other. Off is more cautious."),
 		Defaults.bAggressive);
+	AddBool(GhostDeadlocksKey, TEXT("GhostDeadlocks"), LOCTEXT("GhostDeadlocks", "Clear deadlocks by passing through (beta)"),
+		LOCTEXT("GhostDeadlocksTip", "When trains have been stuck waiting for each other in a circle for the set time, they drive on and pass through each other until they're clear of the jam. Each case is written to FactoryGame/Saved/AutoTrains/faults.log so it can be reported."),
+		Defaults.bGhostDeadlocks);
 
 	for (const FNumberSetting& Setting : GetNumberSettings())
 	{
@@ -229,6 +235,7 @@ bool UATConfig::Read(const UObject* WorldContext, FATSettings& OutSettings)
 	OutSettings.bRerouting = ReadBool(Root, ReroutingKey, Defaults.bRerouting);
 	OutSettings.bPhaseThrough = ReadBool(Root, PhaseThroughKey, Defaults.bPhaseThrough);
 	OutSettings.bAggressive = ReadBool(Root, AggressiveKey, Defaults.bAggressive);
+	OutSettings.bGhostDeadlocks = ReadBool(Root, GhostDeadlocksKey, Defaults.bGhostDeadlocks);
 	for (const FNumberSetting& Setting : GetNumberSettings())
 	{
 		OutSettings.*Setting.Field = FMath::Clamp(ReadFloat(Root, Setting.Key, Defaults.*Setting.Field), Setting.Min, Setting.Max);

@@ -182,6 +182,9 @@ struct FATTrafficTrain
 	TMap<int32, int32> JointIndexOf;
 	// In a cycle of trains waiting for each other.
 	bool bDeadlocked = false;
+	// Passing through a deadlock: until when at most (world seconds, -1 if not) and how far it still drives so. [cm]
+	double GhostUntil = -1.0;
+	float GhostLeft = 0.f;
 	// The track or switch and route step the train waits at.
 	const AFGBuildableRailroadTrack* BlockedAtTrack = nullptr;
 	int32 BlockedAtJoint = INDEX_NONE;
@@ -250,6 +253,8 @@ private:
 	void UpdateAuthority(FATTrafficTrain& State) const;
 	void RefreshClaimedJoints(FATTrafficTrain& State) const;
 	void LogDeadlocks();
+	// Lets the trains of a deadlock that lasted Seconds pass through each other, and records the fault.
+	void GhostThrough(const TArray<const FATTrafficTrain*>& Chain, double Seconds);
 	// Logs what a long-waiting train waits for: its booking and every booking at that resource, with their trains.
 	void LogWaitDump(const FATTrafficTrain& State, double Now) const;
 
@@ -461,6 +466,21 @@ private:
 	// last place to stand before it; with no such place the train stands for good before it. Its locked passes are kept
 	// whatever others booked.
 	void PlanTrain(const FATTrafficTrain& State, double Now, const TArray<FWait>& FixedWaits, double GoalDwell, EConflictScope Scope, FPlan& Plan) const;
+	// A stretch of time another train's booking keeps a resource from this train (world seconds).
+	struct FBlock
+	{
+		double Lo = 0.0;
+		double Hi = 0.0;
+		const AFGTrain* Owner = nullptr;
+	};
+	// Adds the blocks other trains' bookings in Scope put on Pass's resource (or a track crossing it) for Self.
+	void CollectBlocks(const FATTrafficTrain& Self, const FPass& Pass, double Headway, EConflictScope Scope, TArray<FBlock>& Out) const;
+	// Safe-interval search along State's route: the earliest timetable from Now that waits only at the ends of route
+	// tracks, with the train's whole body clear of other trains' bookings while it stands there or drives on, leaving
+	// the first stop no earlier than MinDepart and staying GoalDwell at the goal. Sets the waits and the train each waits
+	// for; returns false if the goal can't be reached, the waits then ending with one for good at the furthest stop.
+	bool PlanSafeIntervals(const FATTrafficTrain& State, const FRouteSpeed& Speed, double Now, const TArray<FPass>& Passes, double MinDepart,
+		double GoalDwell, EConflictScope Scope, float Committed, TArray<FWait>& OutWaits, TArray<const AFGTrain*>& OutCauses) const;
 	// Returns another train's booking that Pass conflicts with on its resource (or a track crossing it), or null,
 	// and the time Pass would have to enter instead: after it has cleared, or, following it the same way, a headway
 	// after it both enters and clears; never ahead of a locked one. Only bookings in Scope count.
@@ -469,10 +489,6 @@ private:
 	void IndexRoute(FATTrafficTrain& State) const;
 	// Returns the step of Of's route at which Other's front stands, the same way, or INDEX_NONE.
 	int32 FrontIndexOn(const FATTrafficTrain& Of, const FATTrafficTrain& Other) const;
-	// Returns true if State, standing at the end of route step Last until LeaveBy (world seconds), stands clear of every
-	// track (and track crossing it) and switch another train is booked on before then, apart from trains queueing behind
-	// it the same way or that have to pass it first; otherwise sets that train and the resource.
-	bool IsSafeStop(const FATTrafficTrain& State, int32 Last, double LeaveBy, const FATTrafficTrain*& OutNeeder, FString& OutWhere) const;
 	// Returns true if Other has to pass Self before it gets to Key: Self's front stands on Other's route, the same way,
 	// before Key, and both routes run over the same tracks from there up to Key.
 	bool IsBehind(const FATTrafficTrain& Other, const FATTrafficTrain& Self, const FResourceKey& Key) const;
@@ -527,8 +543,10 @@ private:
 	double mPlanSummaryAt = 0.0;
 	double mPlanSlowLoggedAt = -1e9;
 	double mWaitDumpAt = 0.0;
-	// The last pair of trains logged holding conflicting resources.
+	// The last pair of trains logged holding conflicting resources, and the trains and tracks logged standing on a track
+	// crossing one another train holds.
 	FString mLastDoubleHold;
+	TSet<FString> mLoggedCrossings;
 
 	// Vehicles the acceleration and top speed settings have changed.
 	TMap<TWeakObjectPtr<AFGRailroadVehicle>, FATVehicleBase> mVehicleBase;
@@ -554,6 +572,8 @@ private:
 	double mConflictsBuiltAt = -1e9;
 	// Set when a track missing from the conflict model was looked up.
 	mutable bool mConflictsStale = false;
-	// The deadlocks logged and still going on, by their trains' names, to log each one once.
+	// The deadlocks logged and still going on, by their trains' names, to log each one once, and since when each lasts
+	// (world seconds).
 	TSet<FString> mLoggedDeadlocks;
+	TMap<FString, double> mDeadlockSince;
 };

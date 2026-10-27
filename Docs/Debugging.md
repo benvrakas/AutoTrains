@@ -427,3 +427,16 @@ train, then a row per train every 0.2 s:
   1.2 x the stopping distance + 1 s + 60 m was locked, about 640 m at 150 km/h, so no crossing train could go first
   even when long clear before the fast train arrived. Locked is now only within the full-brake stopping distance plus
   the stop distance; beyond, held track can be gone ahead of, and the holder brakes if it must.
+- 1.1.0 (user, after the 1.0.0 log showed 1,026 of 1,127 planned-booking waits were for trains at least 10 s away):
+  the timetable comes from a safe-interval search (`PlanSafeIntervals`): stops are the front's position, each route
+  track's end short of its stop margin, and the goal; standing at a stop must keep every resource the body covers there
+  clear of other bookings (`CollectBlocks`, same rules as the conflict check: locked and line-order trains first,
+  trains behind on the line skipped), and each move every resource it touches; labels per (stop, free window) keep the
+  earliest arrival. The old greedy loop only repairs what the simplified timing (cruise between stops, a stop loss
+  after a wait) missed. Removed as superseded: safe-stop trimming; a train is now granted no further than its plan's
+  next wait, which the search only puts where the body stands clear. Kept: line order, locks/holds, the follow
+  exception, tail directions, wait dumps and checks.
+- Ghosting (beta, user): a deadlock cycle lasting longer than the setting has its trains granted their way regardless,
+  follow limit off and pass-through on, until each drives its length + 300 m (2 min at most); `faults.log` gets the
+  trains and their reasons. `planner: CROSSING:` logs any train standing on a track crossing one another train holds,
+  to find the remaining hard-stop cause.

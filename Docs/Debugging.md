@@ -166,4 +166,14 @@ train, then a row per train every 0.2 s:
   the crossing ahead (its claim) until it had passed it, so the follower braked to stop there although the leader
   clears it long before. A crossing leader is now ignored while it clears the crossing before the follower, at its
   speed now, gets there (`IsCrossingClearedFirst`); if it stops, the stopped-leader rule drops the claims.
+- Acceleration x2 applied (tractive effort 2000 -> 4000 kN per train), but measured acceleration rose only x1.5 at
+  20-60 km/h, x1.4 at 60-80, x1.2 at 80-100 (resistance is unchanged, but that doesn't explain low speed). Telemetry now
+  has `throttle` (master locomotive), `tractive_kN`, `brake_kN`, `resistive_kN`, `gradient_kN` to see whether the
+  game's driver holds the throttle back or the force is capped.
+- Deadlock Coated Plates RSC Train -> Coated Plates RSC B -> MF Resource Train: MF followed CP Train (same way) over
+  the crossing CP B needed to leave its station, CP Train's authority ended just past it (waiting for CP B), so MF
+  stopped behind it on the crossing. Most remaining full brakes were the same: a train followed a leader whose
+  authority didn't take it past the shared track, the leader stopped, the follower braked hard. Following (same way
+  or clearing in time) now needs the leader's authority, or goal, to take its tail past that track or switch
+  (`IsClearedPast`).
 

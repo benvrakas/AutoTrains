@@ -612,7 +612,7 @@ void AATTrafficSubsystem::ExtendClaims(FATTrafficTrain& State)
 		while (Joint != INDEX_NONE && !IsJointFree(Joint, State, Holder, bStands, &Leaving))
 		{
 			What = FString::Printf(TEXT("the switch before %s"), *TrackName(Step.Track));
-			if (!IsPreempted(Holder) && !FollowsThis(Holder) && ((GAggressive && IsSameWayLeader(State, *Holder, Index - 1))
+			if (!IsPreempted(Holder) && !FollowsThis(Holder) && ((GAggressive && IsSameWayLeader(State, *Holder, Index - 1, nullptr, Joint))
 				|| IsClearingInTime(State, *Holder, nullptr, Joint, StepStart - JointFoulDistance)))
 			{
 				Leaving.Add(Holder);
@@ -642,7 +642,7 @@ void AATTrafficSubsystem::ExtendClaims(FATTrafficTrain& State)
 		while (!IsTrackFree(Step.Track, State, Holder, Conflict, bStands, &Leaving))
 		{
 			What = Conflict == Step.Track ? TrackName(Conflict) : FString::Printf(TEXT("%s (crossing %s on this train's route)"), *TrackName(Conflict), *TrackName(Step.Track));
-			if (!IsPreempted(Holder) && !FollowsThis(Holder) && ((GAggressive && IsSameWayLeader(State, *Holder, Index))
+			if (!IsPreempted(Holder) && !FollowsThis(Holder) && ((GAggressive && IsSameWayLeader(State, *Holder, Index, Conflict, INDEX_NONE))
 				|| IsClearingInTime(State, *Holder, Conflict, INDEX_NONE, StepStart)))
 			{
 				Leaving.Add(Holder);
@@ -741,7 +741,7 @@ void AATTrafficSubsystem::ExtendClaims(FATTrafficTrain& State)
 				bool bFree = true;
 				while (PendingJoint != INDEX_NONE && !IsJointFree(PendingJoint, State, Other, bOtherStands, &PendingLeaving))
 				{
-					if (!FollowsThis(Other) && ((GAggressive && IsSameWayLeader(State, *Other, PendingIndex - 1))
+					if (!FollowsThis(Other) && ((GAggressive && IsSameWayLeader(State, *Other, PendingIndex - 1, nullptr, PendingJoint))
 						|| IsClearingInTime(State, *Other, nullptr, PendingJoint, PendingStart - JointFoulDistance)))
 					{
 						PendingLeaving.Add(Other);
@@ -753,7 +753,7 @@ void AATTrafficSubsystem::ExtendClaims(FATTrafficTrain& State)
 				}
 				while (bFree && !IsTrackFree(PendingStep.Track, State, Other, OtherConflict, bOtherStands, &PendingLeaving))
 				{
-					if (!FollowsThis(Other) && ((GAggressive && IsSameWayLeader(State, *Other, PendingIndex))
+					if (!FollowsThis(Other) && ((GAggressive && IsSameWayLeader(State, *Other, PendingIndex, OtherConflict, INDEX_NONE))
 						|| IsClearingInTime(State, *Other, OtherConflict, INDEX_NONE, PendingStart)))
 					{
 						PendingLeaving.Add(Other);
@@ -1094,6 +1094,10 @@ bool AATTrafficSubsystem::IsClearingInTime(const FATTrafficTrain& Self, const FA
 		return false;
 	}
 
+	if (!IsClearedPast(Holder, Track, Joint))
+	{
+		return false;
+	}
 	const float ClearDistance = GetClearDistance(Holder, Track, Joint);
 	// A holder that reaches its station first stops there instead of clearing.
 	if (Holder.bAuthorityToGoal && Holder.Route.Num() > 0 && Holder.Route.Last().EndDistance - Holder.FrontAhead < ClearDistance + HolderBrake)
@@ -1103,6 +1107,13 @@ bool AATTrafficSubsystem::IsClearingInTime(const FATTrafficTrain& Self, const FA
 	const float ClearTime = ClearDistance / Holder.Speed;
 	const float Arrival = TimeToCover(FMath::Max(0.f, SelfDistance), Self.Speed, GetAcceleration(Self, 1.f), GetTopSpeed(SelfTrain));
 	return ClearTime + FollowTimeMargin() < Arrival;
+}
+
+bool AATTrafficSubsystem::IsClearedPast(const FATTrafficTrain& Holder, const AFGBuildableRailroadTrack* Track, int32 Joint) const
+{
+	const float Reach = Holder.bAuthorityToGoal ? (Holder.Route.Num() > 0 ? Holder.Route.Last().EndDistance - Holder.FrontAhead : 0.f)
+		: GetAuthorityDistance(Holder.Train.Get()) - Holder.StopMargin;
+	return Reach >= GetClearDistance(Holder, Track, Joint);
 }
 
 float AATTrafficSubsystem::GetClearDistance(const FATTrafficTrain& Holder, const AFGBuildableRailroadTrack* Track, int32 Joint) const
@@ -1202,9 +1213,11 @@ bool AATTrafficSubsystem::IsLeaderOf(const FATTrafficTrain& Self, const FATTraff
 	return Order != 0 ? Order > 0 : Self.FollowedTrains.Contains(Other.Train);
 }
 
-bool AATTrafficSubsystem::IsSameWayLeader(const FATTrafficTrain& Self, const FATTrafficTrain& Holder, int32 FromIndex) const
+bool AATTrafficSubsystem::IsSameWayLeader(const FATTrafficTrain& Self, const FATTrafficTrain& Holder, int32 FromIndex, const AFGBuildableRailroadTrack* Track,
+	int32 Joint) const
 {
-	if (!Holder.bManaged || Holder.Route.Num() == 0 || Holder.StoppedSeconds >= LeaderStopSeconds || GetRouteOrder(Self, Holder) <= 0)
+	if (!Holder.bManaged || Holder.Route.Num() == 0 || Holder.StoppedSeconds >= LeaderStopSeconds || GetRouteOrder(Self, Holder) <= 0
+		|| !IsClearedPast(Holder, Track, Joint))
 	{
 		return false;
 	}

@@ -237,7 +237,11 @@ private:
 
 	// Returns true if Holder runs ahead of Self the same way: the track Holder's master is on lies on Self's route at
 	// or after FromIndex, left through the same connection, and Holder hasn't stood still for long.
-	bool IsSameWayLeader(const FATTrafficTrain& Self, const FATTrafficTrain& Holder, int32 FromIndex) const;
+	bool IsSameWayLeader(const FATTrafficTrain& Self, const FATTrafficTrain& Holder, int32 FromIndex, const AFGBuildableRailroadTrack* Track, int32 Joint) const;
+
+	// Returns true if Holder's authority (or its goal) takes its tail past Track (or Joint's fouling zone), so a train
+	// following it there never has to stop behind it on the way.
+	bool IsClearedPast(const FATTrafficTrain& Holder, const AFGBuildableRailroadTrack* Track, int32 Joint) const;
 
 	// Drops Self's claims from the first one shared with a train that has stopped.
 	void RevalidateFollowClaims(FATTrafficTrain& State);

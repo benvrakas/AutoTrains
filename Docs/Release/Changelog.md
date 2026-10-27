@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.1
+
+- **Update interval** setting (0.05 to 2 seconds, default 0.25): how often trains are planned and given track.
+
 ## 1.0.0
 
 First release.

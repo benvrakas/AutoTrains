@@ -58,6 +58,7 @@ you like, and let the trains sort it out.
 | **Stop distance (m)** | 10 | How far a waiting train stops short of track it hasn't been given (before a switch at least 25 m and the switch's fouling zone plus this). |
 | **Normal braking (%)** | 85 | How hard trains brake for normal stops, as a share of the braking they plan with. |
 | **Station stay estimate (seconds)** | 40 | How long a train is expected to stay at a station before it has been seen there; after that its own last stay counts. |
+| **Update interval (seconds)** | 0.25 | How often trains are planned and given track. Shorter reacts faster but costs more on big networks. |
 
 ### Getting started
 

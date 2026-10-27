@@ -33,7 +33,6 @@ namespace
 	bool GPhaseNamesPending = false;
 	FString GPhaseNames;
 
-	constexpr float TrafficUpdateInterval = 0.25f;
 	constexpr float SettingsInterval = 1.f;
 	// Trains stop at least this far before a switch. [cm]
 	constexpr float SwitchStopMargin = 2500.f;
@@ -183,7 +182,7 @@ void AATTrafficSubsystem::Tick(float DeltaSeconds)
 	mSinceUpdate += DeltaSeconds;
 	if (mUpdateTimer <= 0.f)
 	{
-		mUpdateTimer = TrafficUpdateInterval;
+		mUpdateTimer = mSettings.UpdateIntervalSeconds;
 		UpdateTraffic(mSinceUpdate);
 		mSinceUpdate = 0.f;
 		if (GPhaseNamesPending)

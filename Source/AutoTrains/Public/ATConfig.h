@@ -31,6 +31,8 @@ struct FATSettings
 	float NormalBrakingPercent = 85.f;
 	// Stay assumed at a station until one there has been measured. [s]
 	float DefaultStaySeconds = 40.f;
+	// How often trains are read, planned and given track. [s]
+	float UpdateIntervalSeconds = 0.25f;
 };
 
 // Auto Trains' mod configuration: switches and numbers shown in the Mods menu and Satisfactory Mod Manager.

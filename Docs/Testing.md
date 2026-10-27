@@ -2,7 +2,7 @@
 
 With traffic control on (the default), every self-driving train ignores signals, and the space-time planner drives:
 
-- Bookings: every 0.25 s each train in turn books the tracks and switch fouling zones on its route as time slots,
+- Bookings: every update (0.25 s by default) each train in turn books the tracks and switch fouling zones on its route as time slots,
   around everyone else's bookings (nobody's existing booking is taken): self-driving trains along their route to the
   goal plus the stay there; docked trains their stay until the expected departure, then their next leg from the
   timetable as the game's pathfinder finds it; trains the mod doesn't drive where they stand, open-ended. A conflict
@@ -56,6 +56,7 @@ Player driven trains aren't controlled; the others treat them as obstacles.
   least 25 m and the switch's fouling zone plus this.
 - **Normal braking (%)** (85): share of the planned braking a normal stop uses (full brake is the backstop).
 - **Station stay estimate (seconds)** (40): assumed stay at a station until one there has been measured.
+- **Update interval (seconds)** (0.25): how often trains are planned and given track.
 
 `/at traffic` and `/at reroute` switch for the session; changing the setting in the Mods menu applies again.
 

@@ -236,6 +236,7 @@ void AATTrafficSubsystem::CollectPasses(const FATTrafficTrain& State, TArray<FPa
 		}
 		FPass Pass;
 		Pass.Key.Track = Step.Track;
+		Pass.Exit = Step.Exit;
 		Pass.EnterAt = Index == 0 ? -1.f : Begin;
 		Pass.ClearAt = End + State.Length;
 		Out.Add(Pass);
@@ -288,9 +289,10 @@ void AATTrafficSubsystem::TimePasses(const FATTrafficTrain& State, const FRouteS
 	}
 }
 
-const AATTrafficSubsystem::FBooking* AATTrafficSubsystem::FindConflict(const FATTrafficTrain& State, const FPass& Pass, double Headway) const
+const AATTrafficSubsystem::FBooking* AATTrafficSubsystem::FindConflict(const FATTrafficTrain& State, const FPass& Pass, double Headway, double& OutNeedEnter) const
 {
 	const FBooking* Found = nullptr;
+	OutNeedEnter = Pass.Enter;
 	auto Check = [&](const FResourceKey& Key)
 	{
 		const TArray<FBooking>* Bookings = mBookings.Find(Key);
@@ -298,15 +300,37 @@ const AATTrafficSubsystem::FBooking* AATTrafficSubsystem::FindConflict(const FAT
 		{
 			return;
 		}
+		const bool bSameTrack = Key == Pass.Key && Key.Joint == INDEX_NONE;
 		for (const FBooking& Booking : *Bookings)
 		{
 			if (Booking.Train == &State)
 			{
 				continue;
 			}
-			if (Pass.Enter < Booking.Clear + Headway && Pass.Clear + Headway > Booking.Enter && (!Found || Booking.Clear > Found->Clear))
+			double Need = Pass.Enter;
+			if (bSameTrack && Pass.Exit && Booking.Exit == Pass.Exit)
+			{
+				// The same way: either one may go first if it stays a headway ahead at both ends.
+				const bool bBehind = Pass.Enter >= Booking.Enter + Headway && Pass.Clear >= Booking.Clear + Headway;
+				const bool bAhead = Booking.Enter >= Pass.Enter + Headway && Booking.Clear >= Pass.Clear + Headway;
+				if (bBehind || bAhead)
+				{
+					continue;
+				}
+				Need = Pass.Enter + FMath::Max(Booking.Enter + Headway - Pass.Enter, Booking.Clear + Headway - Pass.Clear);
+			}
+			else if (Pass.Enter < Booking.Clear + Headway && Pass.Clear + Headway > Booking.Enter)
+			{
+				Need = Booking.Clear + Headway;
+			}
+			else
+			{
+				continue;
+			}
+			if (!Found || Need > OutNeedEnter)
 			{
 				Found = &Booking;
+				OutNeedEnter = Need;
 			}
 		}
 	};
@@ -347,6 +371,7 @@ void AATTrafficSubsystem::PlanTrain(const FATTrafficTrain& State, double Now, FP
 		TimePasses(State, Speed, Plan.Waits, Now, Passes);
 		const FPass* Conflicting = nullptr;
 		const FBooking* Booking = nullptr;
+		double NeedEnter = 0.0;
 		for (const FPass& Pass : Passes)
 		{
 			// Nothing is planned beyond a wait for good; what the train is committed to can't change.
@@ -354,7 +379,7 @@ void AATTrafficSubsystem::PlanTrain(const FATTrafficTrain& State, double Now, FP
 			{
 				continue;
 			}
-			Booking = FindConflict(State, Pass, Headway);
+			Booking = FindConflict(State, Pass, Headway, NeedEnter);
 			if (Booking)
 			{
 				Conflicting = &Pass;
@@ -385,7 +410,7 @@ void AATTrafficSubsystem::PlanTrain(const FATTrafficTrain& State, double Now, FP
 			return;
 		}
 		const float At = StopPoints[Best];
-		const double Need = Booking->Clear >= OpenTime * 0.5 ? OpenTime : Booking->Clear + Headway;
+		const double Need = NeedEnter >= OpenTime * 0.5 ? OpenTime : NeedEnter;
 		double Until = Need >= OpenTime ? OpenTime : Need - RestTime(Conflicting->EnterAt - At, Speed.Cruise, Speed.Accel);
 		const int32 Existing = Plan.Waits.IndexOfByPredicate([At](const FWait& Wait) { return FMath::IsNearlyEqual(Wait.At, At, 1.f); });
 		if (Existing != INDEX_NONE)
@@ -422,6 +447,7 @@ void AATTrafficSubsystem::Book(const FATTrafficTrain& State, const TArray<FPass>
 		Booking.Train = &State;
 		Booking.Enter = Pass.Enter;
 		Booking.Clear = Pass.Clear;
+		Booking.Exit = Pass.Exit;
 		Booking.bCommitted = bCommitted;
 		mBookings.FindOrAdd(Pass.Key).Add(Booking);
 	}
@@ -489,7 +515,8 @@ void AATTrafficSubsystem::UpdatePlanner()
 		// Two committed stretches meeting on a resource: a collision course the plan can't avoid any more.
 		for (const FPass& Pass : CommittedPasses[State])
 		{
-			const FBooking* Other = FindConflict(*State, Pass, 0.0);
+			double NeedEnter = 0.0;
+			const FBooking* Other = FindConflict(*State, Pass, 0.0, NeedEnter);
 			if (Other && Other->bCommitted && Other->Train && Other->Train->bManaged)
 			{
 				++mShadowCommittedConflicts;

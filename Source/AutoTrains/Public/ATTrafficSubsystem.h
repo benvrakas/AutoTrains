@@ -423,6 +423,8 @@ private:
 		const FATTrafficTrain* Train = nullptr;
 		double Enter = 0.0;
 		double Clear = 0.0;
+		// Connection the train leaves a track through, null if unknown (or a switch).
+		const UFGRailroadTrackConnectionComponent* Exit = nullptr;
 		// Booked whatever else wants it: a moving train within its stopping distance, or a standing obstacle.
 		bool bCommitted = false;
 	};
@@ -431,6 +433,7 @@ private:
 	struct FPass
 	{
 		FResourceKey Key;
+		const UFGRailroadTrackConnectionComponent* Exit = nullptr;
 		float EnterAt = 0.f;
 		float ClearAt = 0.f;
 		double Enter = 0.0;
@@ -468,8 +471,10 @@ private:
 	void TimePasses(const FATTrafficTrain& State, const FRouteSpeed& Speed, const TArray<FWait>& Waits, double Now, TArray<FPass>& Passes) const;
 	// Plans State around the bookings in mBookings of other trains.
 	void PlanTrain(const FATTrafficTrain& State, double Now, FPlan& Plan) const;
-	// Returns the other train's booking that overlaps Pass on its resource (or a track crossing it), or null.
-	const FBooking* FindConflict(const FATTrafficTrain& State, const FPass& Pass, double Headway) const;
+	// Returns the other train's booking that Pass conflicts with on its resource (or a track crossing it), or null,
+	// and the time Pass would have to enter instead: after it has cleared, or, following it the same way on the same
+	// track, a headway after it both enters and clears.
+	const FBooking* FindConflict(const FATTrafficTrain& State, const FPass& Pass, double Headway, double& OutNeedEnter) const;
 	void Book(const FATTrafficTrain& State, const TArray<FPass>& Passes, bool bCommitted);
 	void LogShadow(const FATTrafficTrain& State, const FPlan& Plan, double Now);
 

@@ -141,4 +141,16 @@ train, then a row per train every 0.2 s:
   by route order can at the same time be following this train through a crossing (Heavy Oil Residue [Coke Steel] and
   Coated Plates RSC B); its claims there only trail this train, so the held-track fallback skips leaders that follow
   this train and only their vehicles count.
-
+- Cable RSC into AI Limiter RSC: Cable planned with 2.60 m/s2 at 100 km/h but managed 1.2-1.5 there (5-6 below 40
+  km/h), and its brakes took about a second to build up. Its 72-108 km/h band had been measured at ~70 km/h. Braking
+  is now measured in 2.5 m/s bands; a stop's distance adds up each band's planned deceleration plus 0.75 s of brake
+  build-up at the starting speed (`GetStoppingDistance`, inverted by `GetAllowedSpeed`); a band above every measured
+  one plans with the highest scaled down in proportion to speed (not below 0.4x rated); a train never measured plans
+  with 0.8x rated up to 50 km/h, scaled down in proportion above.
+- Forced braking (the user's idea, like vanilla block signals): when a train is over its full-brake curve and the
+  deceleration it needs to stop at its stop point exceeds its plan, ApplyAuthority takes the difference off
+  `mSimulationData.Velocity` each tick. Brake samples from intervals with forced braking are skipped.
+- Settings Top speed (0 = own) and Acceleration (x) in ApplySpeedSettings, after ApplyAuthority: TargetSpeed capped
+  at the top speed, or raised to it when the driver runs flat out at the locomotive's own top speed; above that, or
+  scaled by the multiplier, speed is added to `mSimulationData.Velocity`. Timing uses the top speed and scaled
+  acceleration.

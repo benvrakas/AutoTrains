@@ -16,6 +16,8 @@ const FString UATConfig::ReroutingKey = TEXT("Rerouting");
 const FString UATConfig::PhaseThroughKey = TEXT("PhaseThrough");
 const FString UATConfig::AggressiveKey = TEXT("AggressiveTiming");
 const FString UATConfig::SafetyMarginKey = TEXT("SafetyMarginSeconds");
+const FString UATConfig::TopSpeedKey = TEXT("TopSpeedKmh");
+const FString UATConfig::AccelerationKey = TEXT("AccelerationMultiplier");
 
 namespace
 {
@@ -112,6 +114,43 @@ UATConfig::UATConfig()
 	Margin->DefaultValue = Defaults.SafetyMargin;
 	Margin->Value = Defaults.SafetyMargin;
 	RootSection->SectionProperties.Add(SafetyMarginKey, Margin);
+
+	UConfigPropertyFloat* TopSpeed = CreateDefaultSubobject<UConfigPropertyFloat>(TEXT("TopSpeedKmh"));
+	TopSpeed->DisplayName = LOCTEXT("TopSpeed", "Top speed (km/h)");
+	TopSpeed->Tooltip = LOCTEXT("TopSpeedTip", "Top speed of every self-driving train, 0 to 500 km/h, while traffic control is on. 0 keeps each train's own top speed. Above a locomotive's own top speed the train keeps accelerating to this one.");
+	TopSpeed->DefaultValue = Defaults.TopSpeedKmh;
+	TopSpeed->Value = Defaults.TopSpeedKmh;
+	RootSection->SectionProperties.Add(TopSpeedKey, TopSpeed);
+
+	UConfigPropertyFloat* Acceleration = CreateDefaultSubobject<UConfigPropertyFloat>(TEXT("AccelerationMultiplier"));
+	Acceleration->DisplayName = LOCTEXT("Acceleration", "Acceleration (x)");
+	Acceleration->Tooltip = LOCTEXT("AccelerationTip", "How fast self-driving trains gain speed, 0.25 to 5 times their own, while traffic control is on. Braking isn't changed.");
+	Acceleration->DefaultValue = Defaults.Acceleration;
+	Acceleration->Value = Defaults.Acceleration;
+	RootSection->SectionProperties.Add(AccelerationKey, Acceleration);
+}
+
+bool UATConfig::GetRange(const FString& Key, float& OutMin, float& OutMax)
+{
+	if (Key == SafetyMarginKey)
+	{
+		OutMin = MinSafetyMargin;
+		OutMax = MaxSafetyMargin;
+		return true;
+	}
+	if (Key == TopSpeedKey)
+	{
+		OutMin = MinTopSpeed;
+		OutMax = MaxTopSpeed;
+		return true;
+	}
+	if (Key == AccelerationKey)
+	{
+		OutMin = MinAcceleration;
+		OutMax = MaxAcceleration;
+		return true;
+	}
+	return false;
 }
 
 void UATConfig::UseSMLEditorClasses()
@@ -143,10 +182,13 @@ void UATConfig::UseSMLEditorClasses()
 		{
 			UConfigProperty* Clone = CloneAs(Old, EditorClass, NewRoot);
 			// SML's number widget accepts 0 to 1 unless told otherwise.
-			if (UCP_Float* Float = Cast<UCP_Float>(Clone))
+			UCP_Float* Float = Cast<UCP_Float>(Clone);
+			float Min = 0.f;
+			float Max = 1.f;
+			if (Float && GetRange(Pair.Key, Min, Max))
 			{
-				Float->MinValue = MinSafetyMargin;
-				Float->MaxValue = MaxSafetyMargin;
+				Float->MinValue = Min;
+				Float->MaxValue = Max;
 			}
 			NewRoot->SectionProperties.Add(Pair.Key, Clone);
 			++Converted;
@@ -171,6 +213,8 @@ bool UATConfig::Read(const UObject* WorldContext, FATSettings& OutSettings)
 	OutSettings.bPhaseThrough = ReadBool(Root, PhaseThroughKey, Defaults.bPhaseThrough);
 	OutSettings.bAggressive = ReadBool(Root, AggressiveKey, Defaults.bAggressive);
 	OutSettings.SafetyMargin = FMath::Clamp(ReadFloat(Root, SafetyMarginKey, Defaults.SafetyMargin), MinSafetyMargin, MaxSafetyMargin);
+	OutSettings.TopSpeedKmh = FMath::Clamp(ReadFloat(Root, TopSpeedKey, Defaults.TopSpeedKmh), MinTopSpeed, MaxTopSpeed);
+	OutSettings.Acceleration = FMath::Clamp(ReadFloat(Root, AccelerationKey, Defaults.Acceleration), MinAcceleration, MaxAcceleration);
 	return true;
 }
 

@@ -19,6 +19,9 @@ namespace
 	bool GPhaseThrough = false;
 	// Seconds of slack for following and going first. [s]
 	float GSafetyMargin = 0.f;
+	// Top speed of every self-driving train, 0 for each train's own [cm/s], and the acceleration multiplier.
+	float GTopSpeed = 0.f;
+	float GAccelerationScale = 1.f;
 	int32 GPhaseThroughCount = 0;
 
 	constexpr float TrafficUpdateInterval = 0.25f;
@@ -96,6 +99,12 @@ namespace
 	constexpr float RerouteMinGainShare = 0.15f;
 	// A train that rerouted doesn't reroute again for this long, so it can't flip between two routes. [s]
 	constexpr float RerouteCooldownSeconds = 30.f;
+
+	// Top speed a train runs to: the setting, or the consist's own. [cm/s]
+	float GetTopSpeed(const AFGTrain* Train)
+	{
+		return GTopSpeed > 0.f ? GTopSpeed : (Train ? Train->mConsistData.MaxSpeed : 0.f);
+	}
 
 	float GetMass(const AFGTrain* Train)
 	{
@@ -211,11 +220,16 @@ void AATTrafficSubsystem::ApplySettings()
 		}
 	}
 	const bool bPhaseThrough = mEnabled && Settings.bPhaseThrough;
-	if (bPhaseThrough != GPhaseThrough || Settings.bAggressive != GAggressive || Settings.SafetyMargin != GSafetyMargin)
+	const float TopSpeed = Settings.TopSpeedKmh / 0.036f;
+	if (bPhaseThrough != GPhaseThrough || Settings.bAggressive != GAggressive || Settings.SafetyMargin != GSafetyMargin || TopSpeed != GTopSpeed
+		|| Settings.Acceleration != GAccelerationScale)
 	{
-		UE_LOG(LogAutoTrains, Log, TEXT("Settings: trains pass through each other %s, aggressive timing %s, safety margin %.1f s"),
-			bPhaseThrough ? TEXT("on") : TEXT("off"), Settings.bAggressive ? TEXT("on") : TEXT("off"), Settings.SafetyMargin);
+		UE_LOG(LogAutoTrains, Log, TEXT("Settings: trains pass through each other %s, aggressive timing %s, safety margin %.1f s, top speed %s, acceleration x%.2f"),
+			bPhaseThrough ? TEXT("on") : TEXT("off"), Settings.bAggressive ? TEXT("on") : TEXT("off"), Settings.SafetyMargin,
+			TopSpeed > 0.f ? *FString::Printf(TEXT("%.0f km/h"), Settings.TopSpeedKmh) : TEXT("each train's own"), Settings.Acceleration);
 	}
+	GTopSpeed = TopSpeed;
+	GAccelerationScale = Settings.Acceleration;
 	GPhaseThrough = bPhaseThrough;
 	GAggressive = Settings.bAggressive;
 	GSafetyMargin = Settings.SafetyMargin;
@@ -891,7 +905,7 @@ bool AATTrafficSubsystem::CanPreempt(const FATTrafficTrain& Self, const TArray<F
 {
 	const AFGTrain* SelfTrain = Self.Train.Get();
 	const float SelfTime = TimeToCover(ClearDistance, Self.Speed, GetAcceleration(Self, PreemptTakerAccelerationShare()),
-		SelfTrain ? SelfTrain->mConsistData.MaxSpeed : 0.f);
+		GetTopSpeed(SelfTrain));
 	for (const FPreemption& Preemption : Preemptions)
 	{
 		const FATTrafficTrain& Holder = *Preemption.Holder;
@@ -914,7 +928,7 @@ bool AATTrafficSubsystem::CanPreempt(const FATTrafficTrain& Self, const TArray<F
 			return false;
 		}
 		const AFGTrain* HolderTrain = Holder.Train.Get();
-		const float HolderTime = TimeToCover(HolderDistance, Holder.Speed, GetAcceleration(Holder, 1.f), HolderTrain ? HolderTrain->mConsistData.MaxSpeed : 0.f);
+		const float HolderTime = TimeToCover(HolderDistance, Holder.Speed, GetAcceleration(Holder, 1.f), GetTopSpeed(HolderTrain));
 		if (SelfTime + PreemptTimeMargin() > HolderTime)
 		{
 			OutReason = FString::Printf(TEXT("waits for %s, which has claimed %s and can be there in %.0f s; this train needs %.0f s to clear it"),
@@ -1082,7 +1096,7 @@ bool AATTrafficSubsystem::IsClearingInTime(const FATTrafficTrain& Self, const FA
 		return false;
 	}
 	const float ClearTime = ClearDistance / Holder.Speed;
-	const float Arrival = TimeToCover(FMath::Max(0.f, SelfDistance), Self.Speed, GetAcceleration(Self, 1.f), SelfTrain->mConsistData.MaxSpeed);
+	const float Arrival = TimeToCover(FMath::Max(0.f, SelfDistance), Self.Speed, GetAcceleration(Self, 1.f), GetTopSpeed(SelfTrain));
 	return ClearTime + FollowTimeMargin() < Arrival;
 }
 
@@ -1146,7 +1160,7 @@ float AATTrafficSubsystem::GetBlockerClearSeconds(const FATTrafficTrain& State) 
 	{
 		return -1.f;
 	}
-	return TimeToCover(ClearDistance, Blocker->Speed, GetAcceleration(*Blocker, 1.f), BlockerTrain->mConsistData.MaxSpeed);
+	return TimeToCover(ClearDistance, Blocker->Speed, GetAcceleration(*Blocker, 1.f), GetTopSpeed(BlockerTrain));
 }
 
 int32 AATTrafficSubsystem::GetRouteOrder(const FATTrafficTrain& Self, const FATTrafficTrain& Other) const
@@ -1982,7 +1996,7 @@ float AATTrafficSubsystem::GetClaimPriority(const FATTrafficTrain& State) const
 	}
 	// Time until the train's tail has passed the first track it still needs.
 	const float Distance = State.Route[Index].EndDistance - State.FrontAhead + State.Length;
-	const float ClearTime = TimeToCover(Distance, State.Speed, GetAcceleration(State, 1.f), Train->mConsistData.MaxSpeed);
+	const float ClearTime = TimeToCover(Distance, State.Speed, GetAcceleration(State, 1.f), GetTopSpeed(Train));
 	return ClearTime - State.WaitingSeconds * WaitingWeight();
 }
 
@@ -1991,7 +2005,7 @@ float AATTrafficSubsystem::GetAcceleration(const FATTrafficTrain& State, float S
 	const AFGTrain* Train = State.Train.Get();
 	const float Mass = Train ? FMath::Max(Train->mConsistData.Mass, 1.f) : 1.f;
 	const float Tractive = Train ? Train->mConsistData.MaxTractiveEffort : 0.f;
-	return FMath::Clamp(Tractive / Mass * Share, 20.f, 600.f);
+	return FMath::Clamp(Tractive / Mass * Share, 20.f, 600.f) * GAccelerationScale;
 }
 
 float AATTrafficSubsystem::TimeToCover(float Distance, float Speed, float Acceleration, float MaxSpeed)
@@ -2047,6 +2061,10 @@ float AATTrafficSubsystem::GetAuthorityDistance(const AFGTrain* Train) const
 void AATTrafficSubsystem::ApplyAuthority(AFGTrain* Train, float DeltaSeconds)
 {
 	FATTrafficTrain* State = mEnabled ? mTrains.Find(Train) : nullptr;
+	if (State)
+	{
+		State->SpeedCap = MAX_flt;
+	}
 	if (!State || !State->bManaged)
 	{
 		return;
@@ -2097,6 +2115,7 @@ void AATTrafficSubsystem::ApplyAuthority(AFGTrain* Train, float DeltaSeconds)
 	const bool bWasFullBrake = State->bFullBrake;
 	State->bFullBrake = Speed > AllowedHard + OverspeedTolerance;
 	Atc.TargetSpeed = State->bFullBrake ? 0.f : FMath::Min(Atc.TargetSpeed, Target);
+	State->SpeedCap = State->bFullBrake ? 0.f : Target;
 
 	// Forced braking: when its own brakes won't stop the train in time, take off the rest of the speed directly, at
 	// the deceleration that stops it at the stop point, the way the game's block signals hold a train.
@@ -2158,6 +2177,60 @@ void AATTrafficSubsystem::ApplyAuthority(AFGTrain* Train, float DeltaSeconds)
 			bArm ? TEXT("armed") : TEXT("released"), Atc.CurrentConnectionDistance / 100.f, StopOffset / 100.f, Speed * 0.036f);
 	}
 	State->bCatchArmed = bArm;
+}
+
+void AATTrafficSubsystem::ApplySpeedSettings(AFGTrain* Train, float DeltaSeconds)
+{
+	FATTrafficTrain* State = mEnabled ? mTrains.Find(Train) : nullptr;
+	if (!State)
+	{
+		return;
+	}
+	const float Velocity = Train->mSimulationData.Velocity;
+	const float Speed = FMath::Abs(Velocity);
+	const float Previous = State->TickSpeed;
+	State->TickSpeed = Speed;
+	if (!Train->IsSelfDrivingEnabled() || Train->IsDocked() || DeltaSeconds <= 0.f || (GTopSpeed <= 0.f && GAccelerationScale == 1.f))
+	{
+		return;
+	}
+
+	// The game's driver aims for the locomotive's own top speed at most; with a higher setting, a train the driver
+	// lets run flat out goes on to the setting, as far as the traffic control allows.
+	FTrainAtcData& Atc = Train->mAtcData;
+	const float OwnTop = Train->mConsistData.MaxSpeed;
+	float Desired = Atc.TargetSpeed;
+	if (GTopSpeed > 0.f)
+	{
+		if (GTopSpeed > OwnTop && Desired >= OwnTop - 100.f)
+		{
+			Desired = FMath::Min(GTopSpeed, State->SpeedCap);
+		}
+		Desired = FMath::Min(Desired, GTopSpeed);
+		Atc.TargetSpeed = Desired;
+	}
+	if (Previous < 0.f || State->bFullBrake || Speed <= 0.f || Speed >= Desired)
+	{
+		return;
+	}
+	// Scale what the train gained on its own since the last tick; at or above its own top speed it gains nothing,
+	// so it accelerates with its estimated acceleration instead.
+	float Gained = 0.f;
+	if (Speed >= OwnTop - 50.f && Desired > OwnTop)
+	{
+		Gained = GetAcceleration(*State, 1.f) * DeltaSeconds;
+	}
+	else if (Speed > Previous)
+	{
+		Gained = (Speed - Previous) * (GAccelerationScale - 1.f);
+	}
+	if (Gained == 0.f)
+	{
+		return;
+	}
+	const float NewSpeed = FMath::Clamp(Speed + Gained, Previous, Desired);
+	Train->mSimulationData.Velocity = Velocity < 0.f ? -NewSpeed : NewSpeed;
+	State->TickSpeed = NewSpeed;
 }
 
 FString AATTrafficSubsystem::DescribeForTelemetry(const AFGTrain* Train) const

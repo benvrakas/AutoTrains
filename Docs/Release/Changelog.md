@@ -16,8 +16,10 @@ First release.
 - **Braking learned per train,** per speed band and allowing for cargo, so stops are planned with what the train
   really manages.
 - **Trains pass through each other** instead of crashing (setting, on by default).
+- **Forced braking:** a train that can't stop in time with its own brakes is stopped anyway, at the point it must
+  stop.
 - Mods menu settings: Traffic control, Congestion rerouting, Trains pass through each other, Aggressive timing,
-  Safety margin.
+  Safety margin, Top speed, Acceleration.
 - `/at removesignals confirm` dismantles every block and path signal in the world.
 - Works with DynamicTimeTable and Freight Car Control.
 

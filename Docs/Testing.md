@@ -56,6 +56,9 @@ Player driven trains aren't controlled; the others treat them as obstacles.
 
 - **Safety margin (seconds)**: 0 to 10, default 0: extra time a train leaves when following another out of a junction
   or going ahead of another train's claim.
+- **Top speed (km/h)**: 0 to 500, default 0 (each train's own). Above a locomotive's own top speed the mod keeps
+  accelerating the train to the setting.
+- **Acceleration (x)**: 0.25 to 5, default 1: scales how fast trains gain speed. Braking isn't changed.
 
 `/at traffic` and `/at reroute` switch for the session; changing the setting in the Mods menu applies again.
 

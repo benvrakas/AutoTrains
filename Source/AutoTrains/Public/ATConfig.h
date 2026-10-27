@@ -13,6 +13,10 @@ struct FATSettings
 	bool bAggressive = true;
 	// Extra time a train leaves when following another out of a junction or going ahead of another's claim. [s]
 	float SafetyMargin = 0.f;
+	// Top speed of every self-driving train, 0 for each train's own. [km/h]
+	float TopSpeedKmh = 0.f;
+	// Multiplier on how fast self-driving trains gain speed.
+	float Acceleration = 1.f;
 };
 
 // Auto Trains' mod configuration: on/off switches shown in the Mods menu and Satisfactory Mod Manager.
@@ -29,10 +33,19 @@ public:
 	static const FString PhaseThroughKey;
 	static const FString AggressiveKey;
 	static const FString SafetyMarginKey;
+	static const FString TopSpeedKey;
+	static const FString AccelerationKey;
 
-	// Accepted range of the safety margin. [s]
+	// Accepted ranges: safety margin [s], top speed [km/h], acceleration multiplier.
 	static constexpr float MinSafetyMargin = 0.f;
 	static constexpr float MaxSafetyMargin = 10.f;
+	static constexpr float MinTopSpeed = 0.f;
+	static constexpr float MaxTopSpeed = 500.f;
+	static constexpr float MinAcceleration = 0.25f;
+	static constexpr float MaxAcceleration = 5.f;
+
+	// Sets OutMin and OutMax to the accepted range of the number setting Key; returns false if Key isn't one.
+	static bool GetRange(const FString& Key, float& OutMin, float& OutMax);
 
 	// Rebuilds the default configuration with SML's Blueprint property classes, which carry the editor widgets
 	// SML's Mods menu shows. Call before SML registers the configuration.

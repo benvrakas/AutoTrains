@@ -85,6 +85,10 @@ struct FATTrafficTrain
 	// Whether the mod is taking speed off the train directly, and whether it did since the previous update.
 	bool bForcedBrake = false;
 	bool bForcedSinceUpdate = false;
+	// Highest speed the traffic control allows this tick, and the speed after the speed settings last tick, -1
+	// before the first. [cm/s]
+	float SpeedCap = MAX_flt;
+	float TickSpeed = -1.f;
 	// Seconds until the moving train that blocks this one has cleared where it blocks; -1 if unknown.
 	float ClearSeconds = -1.f;
 	// Seconds the train has stood still.
@@ -142,6 +146,9 @@ public:
 
 	// Called after the game's AFGTrain::TickAtc for managed trains; caps the target speed to the train's authority.
 	void ApplyAuthority(AFGTrain* Train, float DeltaSeconds);
+
+	// Called after ApplyAuthority: applies the top speed and acceleration settings to a self-driving train.
+	void ApplySpeedSettings(AFGTrain* Train, float DeltaSeconds);
 
 	// Returns the distance from Train's front to the end of its authority track, or -1 for no limit. [cm]
 	float GetAuthorityDistance(const AFGTrain* Train) const;

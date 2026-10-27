@@ -33,7 +33,8 @@ time. Build junctions, roundabouts, crossings and single track however you like,
   favour, so nobody waits forever.
 - **Congestion rerouting.** Every few seconds a train compares its route with the alternatives, counting standing,
   moving and oncoming trains. If another route is clearly less busy it takes that one, even when it's longer.
-- **Brakes it can trust.** Each train measures how hard it really brakes and plans with that.
+- **Brakes it can trust.** Each train measures how hard it really brakes at each speed and plans with that. If a
+  train still can't stop in time, the mod brakes it harder than its brakes could, the way block signals do.
 
 ### Settings (Mods menu)
 
@@ -44,6 +45,8 @@ time. Build junctions, roundabouts, crossings and single track however you like,
 | **Trains pass through each other** | On | While traffic control is on, trains that touch pass through each other instead of crashing. A misjudged gap then only looks like a clip. |
 | **Aggressive timing** | On | Tighter margins: trains follow closer and slip through junctions more readily. Off is more cautious. |
 | **Safety margin (seconds)** | 0 | Extra time, 0 to 10 s, a train leaves when it follows another out of a junction or goes ahead of another train. Raise it if trains clip each other. |
+| **Top speed (km/h)** | 0 | Top speed of every self-driving train, up to 500 km/h. 0 keeps each train's own; above a locomotive's own top speed trains keep accelerating to this one. |
+| **Acceleration (x)** | 1 | How fast self-driving trains gain speed, 0.25 to 5 times their own. Braking isn't changed. |
 
 ### Getting started
 

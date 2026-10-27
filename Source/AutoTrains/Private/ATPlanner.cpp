@@ -477,8 +477,7 @@ const AATTrafficSubsystem::FBooking* AATTrafficSubsystem::FindConflict(const FAT
 					}
 				}
 			}
-			if ((Scope == EConflictScope::LockedOnly && !bFirst)
-				|| (Scope == EConflictScope::NotUnlockedMoving && Booking.Kind == EBookingKind::Moving && !bFirst && !Booking.bHeld))
+			if (!IsInScope(Self, Booking, bFirst, Scope))
 			{
 				continue;
 			}
@@ -796,6 +795,7 @@ void AATTrafficSubsystem::TrackDocking(FATTrafficTrain& State, AFGTrain* Train, 
 		State.DockedAt = -1.0;
 		State.PredictedRoute.Reset();
 		State.PredictedStation = nullptr;
+		State.LegStart = -1.0;
 	}
 	if (!bDocked)
 	{
@@ -948,7 +948,7 @@ void AATTrafficSubsystem::PlanMoving(FATTrafficTrain& State, double Now)
 {
 	AFGTrain* Train = State.Train.Get();
 	FPlan Plan;
-	PlanTrain(State, Now, TArray<FWait>(), GetExpectedDwell(Train, State.GoalStation.Get()), EConflictScope::All, Plan);
+	PlanTrain(State, Now, TArray<FWait>(), GetExpectedDwell(Train, State.GoalStation.Get()), EConflictScope::Ranked, Plan);
 	Book(State, Plan.Passes, EBookingKind::Moving);
 	++mPlans;
 
@@ -1258,6 +1258,7 @@ float AATTrafficSubsystem::GetSearchStepSeconds(const AFGTrain* Self, const AFGB
 	double Now, float Arrival, const FRouteSpeed& Speed) const
 {
 	const double Headway = GetSafetyMarginSeconds();
+	FATTrafficTrain* const* SelfState = mStateOf.Find(Self);
 	const float Length = Track->GetLength();
 	const float Drive = Length / Speed.Cruise;
 	const double Reached = Now + Arrival;
@@ -1282,7 +1283,7 @@ float AATTrafficSubsystem::GetSearchStepSeconds(const AFGTrain* Self, const AFGB
 			}
 			for (const FBooking& Booking : *Bookings)
 			{
-				if (Booking.Owner == Self)
+				if (Booking.Owner == Self || (SelfState && !IsInScope(**SelfState, Booking, Booking.bLocked, EConflictScope::Ranked)))
 				{
 					continue;
 				}
@@ -1310,7 +1311,7 @@ float AATTrafficSubsystem::GetSearchStepSeconds(const AFGTrain* Self, const AFGB
 			{
 				for (const FBooking& Booking : *Bookings)
 				{
-					if (Booking.Owner != Self && Enter - FoulBefore < Booking.Clear + Headway && (Booking.bLocked || Enter + JointHeld + Headway > Booking.Enter))
+					if (Booking.Owner != Self && (!SelfState || IsInScope(**SelfState, Booking, Booking.bLocked, EConflictScope::Ranked)) && Enter - FoulBefore < Booking.Clear + Headway && (Booking.bLocked || Enter + JointHeld + Headway > Booking.Enter))
 					{
 						Need = FMath::Max(Need, IsOpen(Booking.Clear) ? OpenTime : Booking.Clear + Headway + FoulBefore);
 					}
@@ -1480,7 +1481,7 @@ void AATTrafficSubsystem::UpdatePlannedTraffic(float DeltaSeconds)
 	}
 
 	// Turns: trains the mod doesn't drive first (they only stand), docked trains by departure, then self-driving trains
-	// soonest through first. Each removes only its own bookings and books around everyone else's.
+	// in rank order. Each removes only its own bookings and books around everyone else's in its scope.
 	struct FTurn
 	{
 		FATTrafficTrain* State = nullptr;
@@ -1488,18 +1489,25 @@ void AATTrafficSubsystem::UpdatePlannedTraffic(float DeltaSeconds)
 		int32 Kind = 0;
 	};
 	TArray<FTurn> Turns;
+	TArray<FATTrafficTrain*> SelfDriving;
 	for (const TPair<const AFGTrain*, FATTrafficTrain*>& Pair : mStateOf)
 	{
 		FATTrafficTrain& State = *Pair.Value;
 		const AFGTrain* Train = Pair.Key;
-		FTurn Turn;
-		Turn.State = &State;
+		State.PlanRank = INDEX_NONE;
 		if (State.bManaged && State.Route.Num() > 0)
 		{
-			Turn.Kind = 2;
-			Turn.Order = GetClaimPriority(State);
+			if (State.LegStart < 0.0 || State.LegGoal != State.GoalStation)
+			{
+				State.LegStart = Now;
+				State.LegGoal = State.GoalStation;
+			}
+			SelfDriving.Add(&State);
+			continue;
 		}
-		else if (Train->IsDocked())
+		FTurn Turn;
+		Turn.State = &State;
+		if (Train->IsDocked())
 		{
 			Turn.Kind = 1;
 			Turn.Order = State.DockedAt >= 0.0 ? State.DockedAt + GetExpectedDwell(Train, State.DockStation.Get()) - Now : 0.f;
@@ -1518,6 +1526,11 @@ void AATTrafficSubsystem::UpdatePlannedTraffic(float DeltaSeconds)
 		}
 		return NameOf(A.State->Train.Get()) < NameOf(B.State->Train.Get());
 	});
+	RankTrains(SelfDriving);
+	for (FATTrafficTrain* State : SelfDriving)
+	{
+		Turns.Add({State, 0.f, 2});
+	}
 	for (const FTurn& Turn : Turns)
 	{
 		FATTrafficTrain& State = *Turn.State;
@@ -1694,8 +1707,8 @@ void AATTrafficSubsystem::LogWaitDump(const FATTrafficTrain& State, double Now) 
 				Train->mAtcData.TargetSpeed * 0.036f,
 				HardLimit >= 0.f ? *FString::Printf(TEXT(", follows %s with %.0f m"), *NameOf(Info.Leader.Get()), HardLimit / 100.f) : TEXT(""));
 		}
-		return FString::Printf(TEXT("%s (%s, %.0f km/h, waited %.0f s, %d claims%s%s%s)"), *NameOf(Train), Other->bManaged ? TEXT("driving") : TEXT("not driven"),
-			Other->Speed * 0.036f, Other->WaitingSeconds, Other->Claims.Num(), *Drive, Other->BlockedReason.IsEmpty() ? TEXT("") : TEXT(", "), *Other->BlockedReason);
+		return FString::Printf(TEXT("%s (%s, rank %d, %.0f km/h, waited %.0f s, %d claims%s%s%s)"), *NameOf(Train), Other->bManaged ? TEXT("driving") : TEXT("not driven"),
+			Other->PlanRank, Other->Speed * 0.036f, Other->WaitingSeconds, Other->Claims.Num(), *Drive, Other->BlockedReason.IsEmpty() ? TEXT("") : TEXT(", "), *Other->BlockedReason);
 	};
 	const int32 Index = State.BlockedAtIndex;
 	const bool bJoint = State.BlockedAtJoint != INDEX_NONE;
@@ -1756,7 +1769,97 @@ int32 AATTrafficSubsystem::FrontIndexOn(const FATTrafficTrain& Of, const FATTraf
 		return INDEX_NONE;
 	}
 	const int32* Index = Of.RouteIndexOf.Find(Other.Route[0].Track);
-	return Index && Of.Route[*Index].Exit == Other.Route[0].Exit ? *Index : INDEX_NONE;
+	if (!Index || Of.Route[*Index].Exit != Other.Route[0].Exit)
+	{
+		return INDEX_NONE;
+	}
+	// On Of's front track: ahead only if its front is nearer the track's end.
+	return *Index > 0 || Other.Route[0].EndDistance - Other.FrontAhead < Of.Route[0].EndDistance - Of.FrontAhead ? *Index : INDEX_NONE;
+}
+
+bool AATTrafficSubsystem::IsInScope(const FATTrafficTrain& Self, const FBooking& Booking, bool bFirst, EConflictScope Scope) const
+{
+	if (bFirst)
+	{
+		return true;
+	}
+	switch (Scope)
+	{
+	case EConflictScope::LockedOnly:
+		return false;
+	case EConflictScope::NotUnlockedMoving:
+		return Booking.Kind != EBookingKind::Moving || Booking.bHeld;
+	default:
+		return Booking.Kind != EBookingKind::Moving || Booking.bHeld || !PlansAfter(Booking.Owner, Self);
+	}
+}
+
+bool AATTrafficSubsystem::PlansAfter(const AFGTrain* Booker, const FATTrafficTrain& Self) const
+{
+	FATTrafficTrain* const* Other = mStateOf.Find(Booker);
+	return Other && (*Other)->PlanRank != INDEX_NONE && Self.PlanRank != INDEX_NONE && (*Other)->PlanRank > Self.PlanRank;
+}
+
+void AATTrafficSubsystem::RankTrains(TArray<FATTrafficTrain*>& Trains) const
+{
+	Trains.Sort([](const FATTrafficTrain& A, const FATTrafficTrain& B)
+	{
+		if (A.LegStart != B.LegStart)
+		{
+			return A.LegStart < B.LegStart;
+		}
+		return NameOf(A.Train.Get()) < NameOf(B.Train.Get());
+	});
+	// Ahead[I]: how many of the trains not yet ranked are ahead of train I on its route.
+	const int32 Count = Trains.Num();
+	TArray<bool> Behind;
+	Behind.SetNumZeroed(Count * Count);
+	TArray<int32> Ahead;
+	Ahead.SetNumZeroed(Count);
+	for (int32 I = 0; I < Count; ++I)
+	{
+		for (int32 J = 0; J < Count; ++J)
+		{
+			if (I != J && FrontIndexOn(*Trains[I], *Trains[J]) != INDEX_NONE)
+			{
+				Behind[I * Count + J] = true;
+				++Ahead[I];
+			}
+		}
+	}
+	// The first in leg order with none ahead of it, or the first in leg order if each has one ahead (a loop).
+	TArray<FATTrafficTrain*> Ranked;
+	TArray<bool> Done;
+	Done.SetNumZeroed(Count);
+	while (Ranked.Num() < Count)
+	{
+		int32 Pick = INDEX_NONE;
+		for (int32 I = 0; I < Count && Pick == INDEX_NONE; ++I)
+		{
+			if (!Done[I] && Ahead[I] == 0)
+			{
+				Pick = I;
+			}
+		}
+		for (int32 I = 0; I < Count && Pick == INDEX_NONE; ++I)
+		{
+			if (!Done[I])
+			{
+				Pick = I;
+			}
+		}
+		Done[Pick] = true;
+		Trains[Pick]->PlanRank = Ranked.Num();
+		Ranked.Add(Trains[Pick]);
+		for (int32 I = 0; I < Count; ++I)
+		{
+			if (Behind[I * Count + Pick])
+			{
+				--Ahead[I];
+			}
+		}
+	}
+	Trains = MoveTemp(Ranked);
 }
 
 bool AATTrafficSubsystem::IsBehind(const FATTrafficTrain& Other, const FATTrafficTrain& Self, const FResourceKey& Key) const
@@ -1817,12 +1920,11 @@ void AATTrafficSubsystem::CollectBlocks(const FATTrafficTrain& Self, const FPass
 					}
 				}
 			}
-			if ((Scope == EConflictScope::LockedOnly && !bFirst)
-				|| (Scope == EConflictScope::NotUnlockedMoving && Booking.Kind == EBookingKind::Moving && !bFirst && !Booking.bHeld))
+			if (!IsInScope(Self, Booking, bFirst, Scope))
 			{
 				continue;
 			}
-			const double Clear = IsOpen(Booking.Clear) ? OpenTime : Booking.Clear + Headway;
+			const double Clear =IsOpen(Booking.Clear) ? OpenTime : Booking.Clear + Headway;
 			if (Key == Pass.Key && Pass.Exit && Booking.Exit == Pass.Exit && Booking.Via == Pass.Via)
 			{
 				// The same way: behind a train that goes first, else just not entering together.

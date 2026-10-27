@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.1
+
+- **Fixed: two trains with their fronts on the same track each took the other to be ahead** and waited for it, a
+  deadlock. Only the one nearer the track's end is ahead now.
+- **Fixed: trains crawling or waiting with a clear way ahead.** Two trains could each plan to wait for the other, and
+  the waits kept slipping later, so both crept along for a minute or more. Trains now plan in a fixed order (one ahead
+  on another's route first, else whichever set off first); each plans around the trains before it and only around
+  what later ones stand on or are already driving onto, so the plans always fit together.
+
 ## 1.1.0
 
 - **Timetables by safe-interval search (SIPP):** each train's waits are now found by one search over the free time

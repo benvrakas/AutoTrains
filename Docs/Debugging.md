@@ -449,3 +449,15 @@ train, then a row per train every 0.2 s:
   standing place while another booking there overlaps in time. (3) Cycles dropped out of detection for single updates
   and were logged again each time (708 times) and, in 1.1.0, would have restarted the passing-through timer; a cycle
   seen again within 10 s is now the same deadlock.
+- 1.1.0 session (16:52-17:13 local, SMR build): the user saw a train waiting with a clear way ahead. Circuit Board
+  Gather Train crept at 1-17 km/h for over a minute (17:11:42 on), its reason alternating between a docked train's
+  predicted departure ("booked first ... planned") and its own plan's wait for ACU GTHR Train A, whose plan waited for
+  it in turn; the "plan moves off in" times kept growing instead of counting down. `at_mutual.py` (scratchpad): 175
+  of 623 consecutive plan waits receded > 2 s. Cause: every train planned around all others' bookings, those of trains
+  later in the turn order a whole update old, and the turn order (`GetClaimPriority`: time to clear the next track
+  minus waited time) changed every update, so two plans could each wait for the other. Fixed in 1.1.1 with
+  prioritized planning: a stable rank (`RankTrains`: ahead on another's route first, else `LegStart`), and
+  `EConflictScope::Ranked` skips lower-ranked trains' neither locked nor held bookings (planning and router step cost).
+  The one deadlock (Circuit Board/Heavy Oil Residue [Coke Steel], ghosted after 61 s) had both fronts on track
+  2146636522; `FrontIndexOn` found each on the other's route at step 0 and so each treated the other as ahead and
+  first. It now checks which front is nearer the track's end, as `GetRouteOrder` already did.

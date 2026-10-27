@@ -144,6 +144,11 @@ struct FATTrafficTrain
 
 	// Space-time planner. The station the route leads to.
 	TWeakObjectPtr<AFGBuildableRailroadStation> GoalStation;
+	// When the train set off for the station of its current leg (world seconds, -1 before), and that station.
+	double LegStart = -1.0;
+	TWeakObjectPtr<AFGBuildableRailroadStation> LegGoal;
+	// Place in this update's planning order of self-driving trains, first 0; INDEX_NONE for other trains.
+	int32 PlanRank = INDEX_NONE;
 	// When the plan has the front enter each route step's track and the switch before it (world seconds; a large value
 	// where nothing is booked).
 	TArray<double> PlanTrackEnter;
@@ -351,10 +356,6 @@ private:
 	// Highest speed from which State stops within Distance, braking at Share of its planned deceleration. [cm/s]
 	static float GetAllowedSpeed(const FATTrafficTrain& State, float Distance, float Share = 1.f);
 
-	// Claim order score, lower first: seconds until the train's tail has passed the first track it still needs, minus
-	// a share of the time it has waited.
-	float GetClaimPriority(const FATTrafficTrain& State) const;
-
 	// Acceleration estimate from the consist's tractive effort and mass, times Share. [cm/s^2]
 	static float GetAcceleration(const FATTrafficTrain& State, float Share);
 
@@ -404,11 +405,11 @@ private:
 		bool bLocked = false;
 		bool bHeld = false;
 	};
-	// Which other bookings a plan has to keep clear of: all, all but self-driving trains' neither locked nor held ones, or
-	// locked ones.
+	// Which other bookings a plan has to keep clear of: all but the neither locked nor held ones of self-driving trains
+	// planned after it, all but self-driving trains' neither locked nor held ones, or locked ones.
 	enum class EConflictScope : uint8
 	{
-		All,
+		Ranked,
 		NotUnlockedMoving,
 		LockedOnly,
 	};
@@ -487,8 +488,15 @@ private:
 	const FBooking* FindConflict(const FATTrafficTrain& Self, const FPass& Pass, double Headway, EConflictScope Scope, double& OutNeedEnter) const;
 	// Indexes State's route: the route step of each track (first time on the route) and of the switch before it.
 	void IndexRoute(FATTrafficTrain& State) const;
-	// Returns the step of Of's route at which Other's front stands, the same way, or INDEX_NONE.
+	// Returns the step of Of's route at which Other's front stands, the same way and ahead of Of's front, or INDEX_NONE.
 	int32 FrontIndexOn(const FATTrafficTrain& Of, const FATTrafficTrain& Other) const;
+	// Returns true if Self's plan keeps clear of Booking under Scope; bFirst: Booking goes first there whatever Scope.
+	bool IsInScope(const FATTrafficTrain& Self, const FBooking& Booking, bool bFirst, EConflictScope Scope) const;
+	// Returns true if Booker is a self-driving train planned after Self in this update.
+	bool PlansAfter(const AFGTrain* Booker, const FATTrafficTrain& Self) const;
+	// Sets PlanRank of the self-driving trains in Trains and sorts them by it: a train ahead of another on that one's
+	// route first, else the one that set off on its leg first.
+	void RankTrains(TArray<FATTrafficTrain*>& Trains) const;
 	// Returns true if Other has to pass Self before it gets to Key: Self's front stands on Other's route, the same way,
 	// before Key, and both routes run over the same tracks from there up to Key.
 	bool IsBehind(const FATTrafficTrain& Other, const FATTrafficTrain& Self, const FResourceKey& Key) const;

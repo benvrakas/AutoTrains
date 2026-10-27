@@ -68,9 +68,6 @@ namespace
 	constexpr double ConflictRebuildSeconds = 30.0;
 	constexpr double ConflictRebuildMinSeconds = 2.0;
 
-	// Planning order: each second waited counts as this many seconds sooner through. [s/s]
-	float WaitingWeight() { return GAggressive ? 0.5f : 1.f; }
-
 	// Pacing behind a leader crossing ahead: only a leader at least FollowMinSpeed fast, cleared the safety margin before
 	// the follower gets there. [s] [cm/s]
 	float FollowTimeMargin() { return GSafetyMargin; }
@@ -1522,24 +1519,6 @@ float AATTrafficSubsystem::GetAllowedSpeed(const FATTrafficTrain& State, float D
 		Below += (FMath::Square(High) - FMath::Square(Low)) / (2.f * Deceleration);
 	}
 	return 0.f;
-}
-
-float AATTrafficSubsystem::GetClaimPriority(const FATTrafficTrain& State) const
-{
-	const AFGTrain* Train = State.Train.Get();
-	int32 Index = 0;
-	while (Index < State.Route.Num() && HoldsTrack(State, State.Route[Index].Track))
-	{
-		++Index;
-	}
-	if (!Train || Index >= State.Route.Num())
-	{
-		return -1e6f;
-	}
-	// Time until the train's tail has passed the first track it still needs.
-	const float Distance = State.Route[Index].EndDistance - State.FrontAhead + State.Length;
-	const float ClearTime = TimeToCover(Distance, State.Speed, GetAcceleration(State, 1.f), GetTopSpeed(Train));
-	return ClearTime - State.WaitingSeconds * WaitingWeight();
 }
 
 float AATTrafficSubsystem::GetAcceleration(const FATTrafficTrain& State, float Share)

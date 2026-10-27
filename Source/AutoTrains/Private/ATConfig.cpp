@@ -145,7 +145,7 @@ UATConfig::UATConfig()
 		LOCTEXT("PhaseThroughTip", "While traffic control is on, trains that touch pass through each other instead of crashing and derailing, so a misjudged gap only looks like a clip."),
 		Defaults.bPhaseThrough);
 	AddBool(AggressiveKey, TEXT("AggressiveTiming"), LOCTEXT("Aggressive", "Aggressive timing"),
-		LOCTEXT("AggressiveTip", "Tighter margins: trains plan braking closer to what they really manage, and a train that has waited moves up the planning order more slowly. Best with trains passing through each other. Off is more cautious."),
+		LOCTEXT("AggressiveTip", "Tighter margins: trains plan braking closer to what they really manage. Best with trains passing through each other. Off is more cautious."),
 		Defaults.bAggressive);
 	AddBool(GhostDeadlocksKey, TEXT("GhostDeadlocks"), LOCTEXT("GhostDeadlocks", "Clear deadlocks by passing through (beta)"),
 		LOCTEXT("GhostDeadlocksTip", "When trains have been stuck waiting for each other in a circle for the set time, they drive on and pass through each other until they're clear of the jam. Each case is written to FactoryGame/Saved/AutoTrains/faults.log so it can be reported."),

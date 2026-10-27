@@ -117,7 +117,7 @@ UATConfig::UATConfig()
 
 	UConfigPropertyFloat* TopSpeed = CreateDefaultSubobject<UConfigPropertyFloat>(TEXT("TopSpeedKmh"));
 	TopSpeed->DisplayName = LOCTEXT("TopSpeed", "Top speed (km/h)");
-	TopSpeed->Tooltip = LOCTEXT("TopSpeedTip", "Top speed of every self-driving train, 0 to 500 km/h, while traffic control is on. 0 keeps each train's own top speed. Above a locomotive's own top speed the train keeps accelerating to this one.");
+	TopSpeed->Tooltip = LOCTEXT("TopSpeedTip", "Top speed of every self-driving train, 0 to 500 km/h, while traffic control is on. 0 keeps each train's own top speed. Above the speed at which a locomotive's traction runs out (about 120 km/h on flat track), its traction is stretched up to this speed and it draws that much more power.");
 	TopSpeed->DefaultValue = Defaults.TopSpeedKmh;
 	TopSpeed->Value = Defaults.TopSpeedKmh;
 	RootSection->SectionProperties.Add(TopSpeedKey, TopSpeed);

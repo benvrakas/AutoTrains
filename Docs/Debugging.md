@@ -177,3 +177,27 @@ train, then a row per train every 0.2 s:
   or clearing in time) now needs the leader's authority, or goal, to take its tail past that track or switch
   (`IsClearedPast`).
 
+- Session 2026-10-27 (IsClearedPast build), 50 min: 2 deadlocks, 44 full brakes. 35 of the full brakes were behind a
+  crossing leader at 100+ km/h: `IsCrossingClearedFirst` ignored the leader while the follower, at its speed then,
+  got there after it, the follower sped up, the test failed and the follower braked to the crossing, then slowed and
+  the test passed again (full brake flipping every tick, e.g. Cable RSC behind Coated Plates RSC Train). Now a leader
+  clearing the crossing first sets a pace instead (`GetCrossingPaceSpeed`): the follower keeps to the speed that gets
+  it there 1 s after the leader has cleared it plus the safety margin, so the test keeps passing.
+- Deadlock MF Resource Train <-> AI Limiter RSC ("-287 m ahead", forced braking at 333 m/s2 from 93 km/h): AI
+  Limiter's route came back later over a track its tail was on, `ReadTrain` measured the front from that later pass
+  (`FrontAhead` 639 m), so its authority fell to 0. `FrontAhead` now only counts route tracks within the train's
+  length. `GetAuthorityDistance` finds the authority track at its own path segment, not an earlier pass over it.
+- Deadlock Coated Plates RSC Train <-> Coated Plates RSC B: CP B rerouted onto a route that came back over the track
+  where CP Train stood waiting for it. A train waiting for the train being routed now costs 100 km
+  (`WaitingForSelfPenalty`), so a route through it is only taken if there's no other.
+- Top speed 200 km/h had no effect on flat track: the vanilla traction curve is 4000 kN (at x2) up to 50 km/h and
+  zero from about 120 km/h, while `mConsistData.MaxSpeed` is 200, so the old speed boost (above MaxSpeed) never ran;
+  trains above 120 km/h were all going downhill. The setting now stretches each locomotive's traction curve over
+  setting x 1.05 / the speed where it runs out (`GetTractionTop`), scales its power draw by the same factor (traction
+  power is force times speed), and raises every vehicle's `mMaxVelocity` to the setting; the game's driver aims for
+  the consist's top speed and the setting caps it. Nothing adds speed directly any more.
+- Acceleration x2: tractive force is 4000 kN x throttle at low speed, so the scaling applies. The game's driver opens
+  the throttle at about 0.2 per second and holds it around 0.5-0.75 while the target is near, which is why measured
+  acceleration rose less than x2.
+- Pass-through reports now name the trains on the tracks of the last contact. The burst at 04:45:20-30 had no two
+  trains on the same track (switch or crossing).

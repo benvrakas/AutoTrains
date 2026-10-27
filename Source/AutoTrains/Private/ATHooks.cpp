@@ -41,7 +41,7 @@ void FATHooks::InstallHooks()
 		const float HitTime = Scope(Self, CapsuleSize, StartPos, StartOrientation, EndPos, OtherCapsuleSize, OtherPos);
 		if (HitTime < 1.f)
 		{
-			AATTrafficSubsystem::CountPhaseThrough();
+			AATTrafficSubsystem::CountPhaseThrough(StartPos.Track.Get(), OtherPos.Track.Get());
 			Scope.Override(1.f);
 		}
 	});

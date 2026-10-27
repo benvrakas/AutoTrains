@@ -6,10 +6,9 @@
 #include "ATTrafficSubsystem.generated.h"
 
 class AFGBuildableRailroadTrack;
-class AFGLocomotive;
+class AFGRailroadVehicle;
 class AFGTrain;
 class UCurveFloat;
-class UFGLocomotiveMovementComponent;
 class UFGRailroadTrackConnectionComponent;
 
 // Full-brake braking is measured and planned per speed band of this width, up to ATBrakeBands bands; the top band
@@ -26,15 +25,21 @@ struct FATVehicleSpot
 	float HalfLength = 0.f;
 };
 
-// A locomotive's own traction curve, maximum tractive effort and power draw, kept while the acceleration setting
-// scales them.
-struct FATLocomotiveBase
+// A vehicle's own top speed and, for a locomotive, its traction curve, maximum tractive effort and power draw, kept
+// while the acceleration and top speed settings change them.
+struct FATVehicleBase
 {
 	FRichCurve Traction;
 	TWeakObjectPtr<UCurveFloat> TractionAsset;
 	float MaxTractiveEffort = 0.f;
 	FFloatInterval PowerConsumption;
+	// Top speed the game allows the vehicle, and the speed at which its traction runs out. [km/h]
+	float MaxVelocity = 0.f;
+	float TractionTop = 0.f;
+	// Traction force scale, traction speed scale, and the top speed set. [km/h]
 	float Scale = 1.f;
+	float SpeedScale = 1.f;
+	float MaxVelocitySet = 0.f;
 };
 
 // One track on a train's route, from the track its front is on to its goal.
@@ -86,6 +91,9 @@ struct FATTrafficTrain
 	float Speed = 0.f;
 	// How far the train's front is ahead of its MU master, which the ATC distances are measured from. [cm]
 	float FrontAhead = 0.f;
+	// The ATC path the route was read from and the path segment of its first step.
+	const void* RoutePath = nullptr;
+	int32 RouteFirstSegment = 0;
 	float WaitingSeconds = 0.f;
 	// Full-brake braking force measured on this train per speed band, as deceleration times mass so a train that
 	// takes on cargo plans with less; 0 where not measured. [cm/s^2 kg]
@@ -100,10 +108,6 @@ struct FATTrafficTrain
 	// Whether the mod is taking speed off the train directly, and whether it did since the previous update.
 	bool bForcedBrake = false;
 	bool bForcedSinceUpdate = false;
-	// Highest speed the traffic control allows this tick, and the speed after the speed settings last tick, -1
-	// before the first. [cm/s]
-	float SpeedCap = MAX_flt;
-	float TickSpeed = -1.f;
 	// Seconds until the moving train that blocks this one has cleared where it blocks; -1 if unknown.
 	float ClearSeconds = -1.f;
 	// Seconds the train has stood still.
@@ -117,6 +121,9 @@ struct FATTrafficTrain
 	float RerouteCooldown = 0.f;
 	// Last track the train may drive to the end of; null means no limit beyond its route.
 	TWeakObjectPtr<AFGBuildableRailroadTrack> AuthorityTrack;
+	// ATC path and path segment of the authority track.
+	const void* AuthorityPath = nullptr;
+	int32 AuthoritySegment = INDEX_NONE;
 	bool bAuthorityToGoal = false;
 	// How far before the end of the authority track the train stops: more when a switch is there. [cm]
 	float StopMargin = 1000.f;
@@ -153,8 +160,8 @@ public:
 	// Returns true if trains should pass through each other instead of colliding (traffic control and the setting on).
 	static bool ShouldPhaseThrough();
 
-	// Called by the collision hook each time a train contact was let through.
-	static void CountPhaseThrough();
+	// Called by the collision hook each time a train contact was let through, with the tracks the two vehicles are on.
+	static void CountPhaseThrough(AFGBuildableRailroadTrack* Track, AFGBuildableRailroadTrack* OtherTrack);
 
 	// Returns true if this mod is driving Train.
 	bool IsManaged(const AFGTrain* Train) const;
@@ -252,12 +259,14 @@ private:
 	// Returns how far Train may go behind its follow leaders: to the nearest vehicle of one along its path (or the
 	// first track along it one holds), plus the braking distance of a leader moving on ahead the same way, counted
 	// with the strongest braking a sample counts for; -1 if it follows none. OutHardLimit is the same with the
-	// leaders' planning braking, for full brake. [cm]
-	float GetFollowLimit(const AFGTrain* Train, const FATTrafficTrain& State, float& OutHardLimit, FATFollowInfo* OutInfo = nullptr) const;
+	// leaders' planning braking, for full brake. OutPaceSpeed is the highest speed at which Train reaches the
+	// crossings of leaders clearing them first only after they have, MAX_flt if none. [cm]
+	float GetFollowLimit(const AFGTrain* Train, const FATTrafficTrain& State, float& OutHardLimit, float& OutPaceSpeed, FATFollowInfo* OutInfo = nullptr) const;
 
-	// Returns true if Leader, at its speed now and able to get there, has cleared Track before Train, Start away at
-	// its speed now, reaches it.
-	bool IsCrossingClearedFirst(const AFGTrain* Train, const FATTrafficTrain& Leader, const AFGBuildableRailroadTrack* Track, float Start) const;
+	// Returns the speed at which Train, Start away from where Leader crosses its route on Track, gets there with
+	// some slack after Leader, able to get there at its speed now, has cleared it; -1 if Leader may not clear it or
+	// Train at its speed now would get there first. [cm/s]
+	float GetCrossingPaceSpeed(const AFGTrain* Train, const FATTrafficTrain& Leader, const AFGBuildableRailroadTrack* Track, float Start) const;
 
 	// Returns Braking, but no further than Leader may still travel: the end of its authority or its goal. [cm]
 	float GetLeaderTravel(const FATTrafficTrain& Leader, float Braking) const;
@@ -336,15 +345,17 @@ private:
 	// Time to cover Distance from Speed accelerating at Acceleration up to MaxSpeed. [s]
 	static float TimeToCover(float Distance, float Speed, float Acceleration, float MaxSpeed);
 
-	// Scales the traction curve, maximum tractive effort and power draw of every locomotive of Train by Scale (1 gives
-	// them back their own), then has the train recalculate its consist.
-	void ApplyLocomotivePower(AFGTrain* Train, float Scale);
-	static void SetLocomotiveScale(AFGLocomotive& Locomotive, UFGLocomotiveMovementComponent& Movement, FATLocomotiveBase& Base, float Scale);
-	// Gives every scaled locomotive its own traction and power back.
+	// Scales the traction force and power draw of every locomotive of Train by Scale and, for a TopSpeed above the
+	// speed at which a locomotive's traction runs out, stretches its traction curve to TopSpeed, with the power draw
+	// scaled the same, and lets every vehicle run that fast (Scale 1 and TopSpeed 0 give them back their own); then
+	// has the train recalculate its consist. [km/h]
+	void ApplyLocomotivePower(AFGTrain* Train, float Scale, float TopSpeed);
+	static void SetVehicleScale(AFGRailroadVehicle& Vehicle, FATVehicleBase& Base, float Scale, float SpeedScale, float MaxVelocity);
+	// Gives every changed vehicle its own traction, power and top speed back.
 	void RestoreLocomotivePower();
 
-	// Locomotives the acceleration setting has scaled.
-	TMap<TWeakObjectPtr<AFGLocomotive>, FATLocomotiveBase> mLocomotiveBase;
+	// Vehicles the acceleration and top speed settings have changed.
+	TMap<TWeakObjectPtr<AFGRailroadVehicle>, FATVehicleBase> mVehicleBase;
 
 	bool mEnabled = false;
 	bool mRerouteEnabled = true;

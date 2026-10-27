@@ -45,7 +45,7 @@ time. Build junctions, roundabouts, crossings and single track however you like,
 | **Trains pass through each other** | On | While traffic control is on, trains that touch pass through each other instead of crashing. A misjudged gap then only looks like a clip. |
 | **Aggressive timing** | On | Tighter margins: trains follow closer and slip through junctions more readily. Off is more cautious. |
 | **Safety margin (seconds)** | 0 | Extra time, 0 to 10 s, a train leaves when it follows another out of a junction or goes ahead of another train. Raise it if trains clip each other. |
-| **Top speed (km/h)** | 0 | Top speed of every self-driving train, up to 500 km/h. 0 keeps each train's own; above a locomotive's own top speed trains keep accelerating to this one. |
+| **Top speed (km/h)** | 0 | Top speed of every self-driving train, up to 500 km/h. 0 keeps each train's own. Above the speed at which a locomotive's traction runs out (about 120 km/h on flat track), its traction is stretched up to the setting and it draws that much more power. |
 | **Acceleration (x)** | 1 | Traction of self-driving trains' locomotives, 0.25 to 5 times their own: they accelerate that much faster and draw that much more power from the grid. Braking isn't changed. |
 
 ### Getting started

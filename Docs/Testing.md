@@ -56,8 +56,9 @@ Player driven trains aren't controlled; the others treat them as obstacles.
 
 - **Safety margin (seconds)**: 0 to 10, default 0: extra time a train leaves when following another out of a junction
   or going ahead of another train's claim.
-- **Top speed (km/h)**: 0 to 500, default 0 (each train's own). Above a locomotive's own top speed the mod keeps
-  accelerating the train to the setting.
+- **Top speed (km/h)**: 0 to 500, default 0 (each train's own). Above the speed at which a locomotive's traction runs
+  out (about 120 km/h on flat track), its traction curve is stretched up to the setting, and its power draw with it;
+  every vehicle's own speed limit is raised to the setting.
 - **Acceleration (x)**: 0.25 to 5, default 1: scales each self-driving train's locomotives' traction and their power
   draw (idle and full) by the same factor, so they accelerate and consume that much more. Braking isn't changed.
 

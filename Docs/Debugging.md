@@ -127,4 +127,9 @@ train, then a row per train every 0.2 s:
   reroutes, authority never dropped). The full-brake line now names the binding leader, the gap (to its nearest
   vehicle on the path, or to the first track it holds), the leader's braking distance and how long it has been a
   leader (`FollowLeaderSince`), to find where such leaders come from.
+- at test 2 (112 m) waited at the roundabout for Adaptive Control Unit GTHR Train A to leave the same platform:
+  correct, as the ramp between the junction and the station is ~85 m. But the log said ACU A stood on the ramp track:
+  a vehicle within HalfLength + 2 m of a track end counted as on every attached track, and station tracks are exactly
+  one vehicle long, so every docked train's ends spilled onto the next track. A vehicle now counts on the next track
+  only once it reaches 0.5 m past the end; switches stay covered by the 20 m fouling zone.
 

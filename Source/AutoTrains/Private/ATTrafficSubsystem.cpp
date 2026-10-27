@@ -30,6 +30,9 @@ namespace
 	constexpr float SwitchStopMargin = 2500.f;
 	// Distance along each track from a switch point within which a vehicle fouls the switch. [cm]
 	constexpr float JointFoulDistance = 2000.f;
+	// A vehicle counts as on the next track only once it reaches this far past the end of its own; station tracks
+	// are exactly one vehicle long. [cm]
+	constexpr float OverhangTolerance = 50.f;
 	// Other trains' routes count for stopping spots up to this far ahead of them. [cm]
 	constexpr float OthersRouteHorizon = 300000.f;
 	// Planning deceleration: shares of the measured full-brake deceleration and of the consist's rating. Loaded trains
@@ -437,8 +440,9 @@ void AATTrafficSubsystem::ReadTrain(FATTrafficTrain& State, AFGTrain* Train) con
 				continue;
 			}
 			const float ToEnd = FMath::Abs(Connection->GetTrackPosition().Offset - Position.Offset);
-			// A vehicle near a track end overhangs onto the tracks attached there.
-			if (ToEnd < HalfLength + 200.f)
+			// A vehicle reaching past a track end overhangs onto the tracks attached there; switches nearby are
+			// covered by the fouling zone below.
+			if (ToEnd < HalfLength - OverhangTolerance)
 			{
 				AddAttachedTracks(Connection, State.Occupied);
 			}

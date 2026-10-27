@@ -316,3 +316,9 @@ train, then a row per train every 0.2 s:
 
 - Planner on by default (user, 2026-10-27); the setting's key is now PlannerControl so saved "off" values of the first
   key don't carry over. Updates slower than 20 ms are logged.
+- First planner run (16:49, 6 min): 2.5-3.4 ms per update, no deadlocks, but 118 forced brakings (claims: 74 in 46 min)
+  and a 320 m/s2 stop. Cause: a train could book into a gap ahead of another train's booking even after that train was
+  granted it or committed to it, flipping the order (Reinforced Plates Train lost a crossing it had been granted to at
+  test1 10 m before it). Fix: locked bookings (stood on, held from the last grant, or within the stopping distance):
+  nobody books ahead of one, the owner's locked passes aren't re-checked against others' unlocked bookings, and at
+  grant time locked bookings go first. The route search treats them the same way.

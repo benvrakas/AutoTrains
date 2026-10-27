@@ -145,6 +145,9 @@ struct FATTrafficTrain
 	// where nothing is booked).
 	TArray<double> PlanTrackEnter;
 	TArray<double> PlanJointEnter;
+	// Whether those bookings are locked.
+	TArray<bool> PlanTrackLocked;
+	TArray<bool> PlanJointLocked;
 	// The plan's first wait still ahead: where the front stands [cm], when it moves off (world seconds, -1 for none), and
 	// the train it waits for.
 	float PlanWaitAt = -1.f;
@@ -474,8 +477,16 @@ private:
 		const UFGRailroadTrackConnectionComponent* Exit = nullptr;
 		const UFGRailroadTrackConnectionComponent* Via = nullptr;
 		EBookingKind Kind = EBookingKind::Moving;
-		// The owner stood on it or couldn't stop short of it when booking.
-		bool bHeld = false;
+		// Locked: the owner stands on it, holds it from its last grant, or can't stop short of it. Nobody books ahead of a
+		// locked booking, and it goes first.
+		bool bLocked = false;
+	};
+	// Which other bookings a plan has to keep clear of: all, all but self-driving trains' unlocked ones, or locked ones.
+	enum class EConflictScope : uint8
+	{
+		All,
+		NotUnlockedMoving,
+		LockedOnly,
 	};
 	// One resource a train passes on its route: the front position at which it enters it, the one at which its tail
 	// has cleared it [cm along the route from the front], the times [world s], and the route step it belongs to
@@ -490,6 +501,7 @@ private:
 		double Enter = 0.0;
 		double Clear = 0.0;
 		int32 RouteIndex = INDEX_NONE;
+		bool bLocked = false;
 	};
 	// A wait in a plan: the front stands at At [cm along the route] until Until.
 	struct FWait
@@ -525,16 +537,15 @@ private:
 	void CollectPasses(const FATTrafficTrain& State, TArray<FPass>& Out) const;
 	// Times Passes for State's motion with Waits, from Now; the train stays GoalDwell at its goal. [s]
 	void TimePasses(const FATTrafficTrain& State, const FRouteSpeed& Speed, const TArray<FWait>& Waits, double Now, double GoalDwell, TArray<FPass>& Passes) const;
-	// Plans State around the other trains' bookings (with bHeldOnly, of self-driving trains only what they hold),
-	// starting from FixedWaits: each conflict adds a wait at the last place to stand before it; with no such place the
-	// train stands for good before it.
-	void PlanTrain(const FATTrafficTrain& State, double Now, const TArray<FWait>& FixedWaits, double GoalDwell, bool bHeldOnly, FPlan& Plan) const;
+	// Plans State around the other trains' bookings in Scope, starting from FixedWaits: each conflict adds a wait at the
+	// last place to stand before it; with no such place the train stands for good before it. Its locked passes are kept
+	// whatever others booked.
+	void PlanTrain(const FATTrafficTrain& State, double Now, const TArray<FWait>& FixedWaits, double GoalDwell, EConflictScope Scope, FPlan& Plan) const;
 	// Returns another train's booking that Pass conflicts with on its resource (or a track crossing it), or null,
 	// and the time Pass would have to enter instead: after it has cleared, or, following it the same way, a headway
-	// after it both enters and clears. With bHeldOnly a self-driving train's booking counts only where it is held.
-	const FBooking* FindConflict(const AFGTrain* Self, const FPass& Pass, double Headway, bool bHeldOnly, double& OutNeedEnter) const;
-	// Books Passes for State; those entered within HeldWithin of the front count as held. [cm]
-	void Book(const FATTrafficTrain& State, const TArray<FPass>& Passes, EBookingKind Kind, float HeldWithin);
+	// after it both enters and clears; never ahead of a locked one. Only bookings in Scope count.
+	const FBooking* FindConflict(const AFGTrain* Self, const FPass& Pass, double Headway, EConflictScope Scope, double& OutNeedEnter) const;
+	void Book(const FATTrafficTrain& State, const TArray<FPass>& Passes, EBookingKind Kind);
 	// Books what State stands on, from Now until Until.
 	void BookStanding(const FATTrafficTrain& State, double Now, double Until, EBookingKind Kind);
 	void RemoveBookings(const AFGTrain* Owner);
@@ -553,9 +564,9 @@ private:
 	// Sets State's claims: the route resources from its front up to its stopping distance plus lookahead that it may
 	// enter now: booked for it, no other train booked there first or standing there, except one it follows the same way.
 	void GrantFromPlan(FATTrafficTrain& State, double Now);
-	// Returns true if Self may enter Key now with its booking entering at Enter; otherwise sets the train in the way and
-	// why. A train it follows the same way is added to its followed trains.
-	bool CanEnter(FATTrafficTrain& Self, const FResourceKey& Key, double Enter, const UFGRailroadTrackConnectionComponent* Via,
+	// Returns true if Self may enter Key now with its booking entering at Enter (locked or not); otherwise sets the train
+	// in the way and why. A train it follows the same way is added to its followed trains.
+	bool CanEnter(FATTrafficTrain& Self, const FResourceKey& Key, double Enter, bool bLocked, const UFGRailroadTrackConnectionComponent* Via,
 		const UFGRailroadTrackConnectionComponent* Exit, double Now, const FATTrafficTrain*& OutBlocker, FString& OutWhy) const;
 	// Searches State's fastest route through the bookings when due, and takes it if clearly faster.
 	void ConsiderPlannedReroute(FATTrafficTrain& State, double Now, float DeltaSeconds);

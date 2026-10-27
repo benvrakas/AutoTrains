@@ -39,8 +39,16 @@ namespace
 	// were measured braking at 2/3 of their rating, light ones at 1.4x.
 	float MeasuredBrakeShare() { return GAggressive ? 0.95f : 0.85f; }
 	float RatedBrakeShare() { return GAggressive ? 0.8f : 0.6f; }
-	// Braking is weaker at higher speed; a speed band above every measured one plans with this share of the weakest.
-	constexpr float UnmeasuredBandShare = 0.75f;
+	// Above every measured band the plan scales the highest one down in proportion to speed, but not below this share
+	// of the rating; a train never measured plans with its rated share up to FallbackFullSpeed and scales it down in
+	// proportion above. Loaded trains were measured at 1.2 m/s2 at 100 km/h and 5.8 at 40 km/h. [cm/s]
+	constexpr float MinRatedBrakeShare = 0.4f;
+	constexpr float FallbackFullSpeed = 1400.f;
+	// Seconds the brakes take to build up, counted as travel at the starting speed; about 1 s in the measurements.
+	constexpr float BrakeLagSeconds = 0.75f;
+	constexpr float MinPlanDeceleration = 50.f;
+	// Forced braking plans the stop with at least this distance left, so the last tick doesn't divide by nothing. [cm]
+	constexpr float ForcedBrakeMinDistance = 100.f;
 	// A brake sample counts for at most this multiple of the consist's rating; stronger ones came from catches or
 	// contact with another train.
 	constexpr float MaxRatedBrakeMultiple = 1.25f;
@@ -284,7 +292,7 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 
 		// Measure full-brake deceleration per speed band between updates with full brake on at both; a catch ends at
 		// standstill, and docking catches and crashes are far above 20 m/s^2.
-		if (State.bFullBrake && State.bWasFullBrake && State.LastSpeed > 500.f && State.Speed > 300.f && DeltaSeconds > 0.f)
+		if (State.bFullBrake && State.bWasFullBrake && !State.bForcedSinceUpdate && State.LastSpeed > 500.f && State.Speed > 300.f && DeltaSeconds > 0.f)
 		{
 			const float Raw = (State.LastSpeed - State.Speed) / DeltaSeconds;
 			if (Raw > 50.f && Raw < 2000.f)
@@ -305,7 +313,9 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 			}
 		}
 		State.bWasFullBrake = State.bFullBrake;
+		State.bForcedSinceUpdate = State.bForcedBrake;
 		State.LastSpeed = State.Speed;
+		RefreshBrakePlan(State);
 		State.StoppedSeconds = State.Speed < 100.f ? State.StoppedSeconds + DeltaSeconds : 0.f;
 		State.RerouteCooldown = FMath::Max(0.f, State.RerouteCooldown - DeltaSeconds);
 	}
@@ -476,6 +486,7 @@ void AATTrafficSubsystem::ReadTrain(FATTrafficTrain& State, AFGTrain* Train) con
 		State.BlockedBy = nullptr;
 		State.WaitingSeconds = 0.f;
 		State.bFullBrake = false;
+		State.bForcedBrake = false;
 		State.bCatchArmed = false;
 		State.ClearSeconds = -1.f;
 	}
@@ -528,7 +539,7 @@ void AATTrafficSubsystem::ExtendClaims(FATTrafficTrain& State)
 	{
 		return;
 	}
-	const float Need = FMath::Square(State.Speed) / (2.f * GetPlanningDeceleration(State)) + State.Length + ClaimLookahead();
+	const float Need = GetStoppingDistance(State, State.Speed) + State.Length + ClaimLookahead();
 
 	int32 Index = 0;
 	while (Index < State.Route.Num() && HoldsTrack(State, State.Route[Index].Track))
@@ -895,7 +906,7 @@ bool AATTrafficSubsystem::CanPreempt(const FATTrafficTrain& Self, const TArray<F
 		const float HolderDistance = Preemption.Joint != INDEX_NONE
 			? Step.EndDistance - Holder.FrontAhead - JointFoulDistance
 			: Step.EndDistance - Step.Track->GetLength() - Holder.FrontAhead;
-		const float HolderStop = FMath::Square(Holder.Speed) / (2.f * GetPlanningDeceleration(Holder)) + Holder.StopMargin + PreemptStopBuffer();
+		const float HolderStop = GetStoppingDistance(Holder, Holder.Speed) + Holder.StopMargin + PreemptStopBuffer();
 		if (HolderDistance < HolderStop)
 		{
 			OutReason = FString::Printf(TEXT("waits for %s, which has claimed %s and is too close to give it up (%.0f m)"), *TrainName(Holder.Train.Get()), *What,
@@ -1058,7 +1069,7 @@ bool AATTrafficSubsystem::IsClearingInTime(const FATTrafficTrain& Self, const FA
 	}
 	// The holder must keep moving: its own authority has to reach past its braking distance and its length.
 	const float HolderAuthority = GetAuthorityDistance(HolderTrain);
-	const float HolderBrake = FMath::Square(Holder.Speed) / (2.f * GetPlanningDeceleration(Holder));
+	const float HolderBrake = GetStoppingDistance(Holder, Holder.Speed);
 	if (!Holder.bAuthorityToGoal && HolderAuthority - Holder.StopMargin < HolderBrake + Holder.Length)
 	{
 		return false;
@@ -1295,6 +1306,24 @@ void AATTrafficSubsystem::UpdateFollowLeaders(FATTrafficTrain& State) const
 			It.RemoveCurrent();
 		}
 	}
+	State.LeadersMovingAway.Reset();
+	for (const TWeakObjectPtr<AFGTrain>& LeaderTrain : State.FollowLeaders)
+	{
+		const FATTrafficTrain* Leader = mTrains.Find(LeaderTrain);
+		if (!Leader || !Leader->bManaged || GetRouteOrder(State, *Leader) < 0)
+		{
+			continue;
+		}
+		// A leader whose route runs over this train's route the other way comes towards it.
+		const bool bOpposes = Leader->Route.ContainsByPredicate([&State](const FATRouteStep& LeaderStep)
+		{
+			return State.Route.ContainsByPredicate([&LeaderStep](const FATRouteStep& Step) { return Step.Track == LeaderStep.Track && Step.Exit != LeaderStep.Exit; });
+		});
+		if (!bOpposes)
+		{
+			State.LeadersMovingAway.Add(LeaderTrain);
+		}
+	}
 	const double Now = GetWorld()->GetTimeSeconds();
 	for (auto It = State.FollowLeaderSince.CreateIterator(); It; ++It)
 	{
@@ -1377,22 +1406,22 @@ float AATTrafficSubsystem::GetFollowLimit(const AFGTrain* Train, const FATTraffi
 		if (Leader->bManaged)
 		{
 			const float LeaderSpeed = FMath::Abs(LeaderTrainNow->mSimulationData.Velocity);
-			const float Planning = GetPlanningDeceleration(*Leader, LeaderSpeed);
-			const float Strongest = FMath::Max(LeaderTrainNow->mConsistData.MaxBrakeDeceleration * MaxRatedBrakeMultiple, Planning);
-			SoftBrake = FMath::Square(LeaderSpeed) / (2.f * Strongest);
-			HardBrake = FMath::Square(LeaderSpeed) / (2.f * Planning);
+			const float Strongest = FMath::Max(LeaderTrainNow->mConsistData.MaxBrakeDeceleration * MaxRatedBrakeMultiple, GetPlanningDeceleration(*Leader, LeaderSpeed));
+			SoftBrake = GetLeaderTravel(*Leader, FMath::Square(LeaderSpeed) / (2.f * Strongest));
+			HardBrake = GetLeaderTravel(*Leader, GetStoppingDistance(*Leader, LeaderSpeed));
 		}
 
-		// A leader on this train's path: stop behind its nearest vehicle; one moving on ahead the same way also gets
-		// its braking distance.
+		// A leader on this train's path: stop behind its nearest vehicle; one moving away along it also gets the
+		// distance it travels before it stops.
 		const float Gap = GetGapToVehicles(Train, State, *Leader);
 		if (Gap >= 0.f)
 		{
-			const bool bMovesAhead = Leader->bManaged && GetRouteOrder(State, *Leader) > 0;
-			Add(Gap, bMovesAhead ? SoftBrake : 0.f, bMovesAhead ? HardBrake : 0.f, true);
+			const bool bMovesAway = State.LeadersMovingAway.Contains(LeaderTrain);
+			Add(Gap, bMovesAway ? SoftBrake : 0.f, bMovesAway ? HardBrake : 0.f, true);
 			continue;
 		}
-		if (!Leader->bManaged)
+		// A leader following this train somewhere holds track there only behind it.
+		if (!Leader->bManaged || Leader->FollowedTrains.Contains(State.Train))
 		{
 			continue;
 		}
@@ -1424,6 +1453,27 @@ float AATTrafficSubsystem::GetFollowLimit(const AFGTrain* Train, const FATTraffi
 		}
 	}
 	return Limit;
+}
+
+float AATTrafficSubsystem::GetLeaderTravel(const FATTrafficTrain& Leader, float Braking) const
+{
+	float Travel = Braking;
+	if (Leader.bAuthorityToGoal)
+	{
+		if (Leader.Route.Num() > 0)
+		{
+			Travel = FMath::Min(Travel, FMath::Max(0.f, Leader.Route.Last().EndDistance - Leader.FrontAhead));
+		}
+	}
+	else
+	{
+		const float Authority = GetAuthorityDistance(Leader.Train.Get());
+		if (Authority >= 0.f)
+		{
+			Travel = FMath::Min(Travel, FMath::Max(0.f, Authority - Leader.StopMargin));
+		}
+	}
+	return Travel;
 }
 
 float AATTrafficSubsystem::GetGapToVehicles(const AFGTrain* Train, const FATTrafficTrain& State, const FATTrafficTrain& Other) const
@@ -1840,52 +1890,82 @@ bool AATTrafficSubsystem::HoldsJoint(const FATTrafficTrain& State, int32 Joint)
 	return State.OccupiedJoints.Contains(Joint) || State.ClaimedJoints.Contains(Joint);
 }
 
-float AATTrafficSubsystem::GetPlanningDeceleration(const FATTrafficTrain& State, float Speed)
+void AATTrafficSubsystem::RefreshBrakePlan(FATTrafficTrain& State) const
 {
 	const AFGTrain* Train = State.Train.Get();
 	const float Mass = GetMass(Train);
-	const int32 Top = GetBrakeBand(Speed >= 0.f ? Speed : State.Speed);
-	// A stop from this speed brakes through every band below it. Braking is weaker at higher speed, so a measured
-	// band above this one bounds it too.
-	float Lower = MAX_flt;
-	float Higher = MAX_flt;
-	bool bTopMeasured = false;
+	const float Rated = Train ? Train->mConsistData.MaxBrakeDeceleration : 100.f;
+	int32 Highest = INDEX_NONE;
+	float Above = -1.f;
+	for (int32 Band = ATBrakeBands - 1; Band >= 0; --Band)
+	{
+		if (State.BrakeForce[Band] > 0.f)
+		{
+			Above = State.BrakeForce[Band] / Mass * MeasuredBrakeShare();
+			Highest = Highest == INDEX_NONE ? Band : Highest;
+		}
+		State.PlanDecel[Band] = Above;
+	}
 	for (int32 Band = 0; Band < ATBrakeBands; ++Band)
 	{
-		if (State.BrakeForce[Band] <= 0.f)
+		float& Plan = State.PlanDecel[Band];
+		const float Middle = (Band + 0.5f) * ATBrakeBandWidth;
+		if (Highest == INDEX_NONE)
 		{
-			continue;
+			Plan = Rated * RatedBrakeShare() * FMath::Min(1.f, FallbackFullSpeed / Middle);
 		}
-		const float Deceleration = State.BrakeForce[Band] / Mass;
-		if (Band <= Top)
+		else if (Band > Highest)
 		{
-			Lower = FMath::Min(Lower, Deceleration);
-			bTopMeasured = bTopMeasured || Band == Top;
+			Plan = FMath::Max(State.PlanDecel[Highest] * (Highest + 0.5f) / (Band + 0.5f), Rated * MinRatedBrakeShare);
 		}
-		else
+		Plan = FMath::Clamp(Plan, MinPlanDeceleration, 800.f);
+	}
+}
+
+float AATTrafficSubsystem::GetPlanningDeceleration(const FATTrafficTrain& State, float Speed)
+{
+	return FMath::Max(State.PlanDecel[GetBrakeBand(Speed >= 0.f ? Speed : State.Speed)], MinPlanDeceleration);
+}
+
+float AATTrafficSubsystem::GetStoppingDistance(const FATTrafficTrain& State, float Speed)
+{
+	float Distance = Speed * BrakeLagSeconds;
+	for (int32 Band = 0; Band < ATBrakeBands; ++Band)
+	{
+		const float Low = Band * ATBrakeBandWidth;
+		if (Speed <= Low)
 		{
-			Higher = FMath::Min(Higher, Deceleration);
+			break;
 		}
+		const float High = Band == ATBrakeBands - 1 ? Speed : FMath::Min(Low + ATBrakeBandWidth, Speed);
+		Distance += (FMath::Square(High) - FMath::Square(Low)) / (2.f * FMath::Max(State.PlanDecel[Band], MinPlanDeceleration));
 	}
-	float Measured;
-	if (bTopMeasured)
+	return Distance;
+}
+
+float AATTrafficSubsystem::GetAllowedSpeed(const FATTrafficTrain& State, float Distance)
+{
+	if (Distance <= 0.f)
 	{
-		Measured = Lower;
+		return 0.f;
 	}
-	else if (Higher < MAX_flt)
+	// Braking distance from the bottom of each band down to standstill, without the build-up.
+	float Below = 0.f;
+	for (int32 Band = 0; Band < ATBrakeBands; ++Band)
 	{
-		Measured = FMath::Min(Lower, Higher);
+		const float Low = Band * ATBrakeBandWidth;
+		const float High = Low + ATBrakeBandWidth;
+		const float Deceleration = FMath::Max(State.PlanDecel[Band], MinPlanDeceleration);
+		// The speed in this band whose stop takes Distance: Below + (v^2 - Low^2) / (2 a) + v * Lag = Distance.
+		const float Constant = Below - FMath::Square(Low) / (2.f * Deceleration) - Distance;
+		const float Speed = Deceleration * (FMath::Sqrt(FMath::Square(BrakeLagSeconds) - 2.f * Constant / Deceleration) - BrakeLagSeconds);
+		if (Speed <= High || Band == ATBrakeBands - 1)
+		{
+			return FMath::Max(Speed, 0.f);
+		}
+		Below += (FMath::Square(High) - FMath::Square(Low)) / (2.f * Deceleration);
 	}
-	else if (Lower < MAX_flt)
-	{
-		Measured = Lower * UnmeasuredBandShare;
-	}
-	else
-	{
-		const float Rated = Train ? Train->mConsistData.MaxBrakeDeceleration : 100.f;
-		return FMath::Clamp(Rated * RatedBrakeShare(), 50.f, 800.f);
-	}
-	return FMath::Clamp(Measured * MeasuredBrakeShare(), 50.f, 800.f);
+	return 0.f;
 }
 
 float AATTrafficSubsystem::GetClaimPriority(const FATTrafficTrain& State) const
@@ -1964,7 +2044,7 @@ float AATTrafficSubsystem::GetAuthorityDistance(const AFGTrain* Train) const
 	return 0.f;
 }
 
-void AATTrafficSubsystem::ApplyAuthority(AFGTrain* Train)
+void AATTrafficSubsystem::ApplyAuthority(AFGTrain* Train, float DeltaSeconds)
 {
 	FATTrafficTrain* State = mEnabled ? mTrains.Find(Train) : nullptr;
 	if (!State || !State->bManaged)
@@ -1980,6 +2060,7 @@ void AATTrafficSubsystem::ApplyAuthority(AFGTrain* Train)
 	if (Distance < 0.f && FollowLimit < 0.f)
 	{
 		State->bFullBrake = false;
+		State->bForcedBrake = false;
 		State->bCatchArmed = false;
 		return;
 	}
@@ -1989,29 +2070,23 @@ void AATTrafficSubsystem::ApplyAuthority(AFGTrain* Train)
 	const float Usable = Distance - State->StopMargin;
 	// The follow limit with the leaders' strongest braking caps the speed; with their planning braking it decides
 	// full brake.
-	auto GetAllowed = [Distance, Usable](float Deceleration, float Follow)
+	auto GetAllowed = [State, Distance, Usable](float Follow)
 	{
 		float Result = MAX_flt;
 		if (Distance >= 0.f)
 		{
-			Result = Usable > 0.f ? FMath::Sqrt(2.f * Deceleration * Usable) : 0.f;
+			Result = GetAllowedSpeed(*State, Usable);
 		}
 		if (Follow >= 0.f)
 		{
-			const float FollowUsable = Follow - AuthorityStopMargin;
-			Result = FMath::Min(Result, FollowUsable > 0.f ? FMath::Sqrt(2.f * Deceleration * FollowUsable) : 0.f);
+			Result = FMath::Min(Result, GetAllowedSpeed(*State, Follow - AuthorityStopMargin));
 		}
 		return Result;
 	};
 	const float Deceleration = GetPlanningDeceleration(*State, Speed);
-	const float Allowed = GetAllowed(Deceleration, FollowLimit);
-	const float AllowedHard = GetAllowed(Deceleration, HardFollowLimit);
-	// Braking is weaker at higher speed: the speed it may still reach is planned with that speed's braking.
+	const float Allowed = GetAllowed(FollowLimit);
+	const float AllowedHard = GetAllowed(HardFollowLimit);
 	float Target = Allowed;
-	if (Allowed > Speed && Allowed < MAX_flt)
-	{
-		Target = FMath::Min(Allowed, GetAllowed(FMath::Min(Deceleration, GetPlanningDeceleration(*State, Allowed)), FollowLimit));
-	}
 	// Waiting for a train that will clear: drive at the speed that reaches the braking point as it clears, so the
 	// train rolls on instead of stopping.
 	if (Distance >= 0.f && Usable > 0.f && State->ClearSeconds > 0.f)
@@ -2022,6 +2097,25 @@ void AATTrafficSubsystem::ApplyAuthority(AFGTrain* Train)
 	const bool bWasFullBrake = State->bFullBrake;
 	State->bFullBrake = Speed > AllowedHard + OverspeedTolerance;
 	Atc.TargetSpeed = State->bFullBrake ? 0.f : FMath::Min(Atc.TargetSpeed, Target);
+
+	// Forced braking: when its own brakes won't stop the train in time, take off the rest of the speed directly, at
+	// the deceleration that stops it at the stop point, the way the game's block signals hold a train.
+	const float StopWithin = FMath::Min(Distance >= 0.f ? Usable : MAX_flt, HardFollowLimit >= 0.f ? HardFollowLimit - AuthorityStopMargin : MAX_flt);
+	const float Needed = StopWithin < MAX_flt ? FMath::Square(Speed) / (2.f * FMath::Max(StopWithin, ForcedBrakeMinDistance)) : 0.f;
+	const bool bWasForced = State->bForcedBrake;
+	State->bForcedBrake = State->bFullBrake && DeltaSeconds > 0.f && Needed > Deceleration;
+	if (State->bForcedBrake)
+	{
+		const float Velocity = Train->mSimulationData.Velocity;
+		const float NewSpeed = FMath::Max(0.f, Speed - (Needed - Deceleration) * DeltaSeconds);
+		Train->mSimulationData.Velocity = Velocity < 0.f ? -NewSpeed : NewSpeed;
+		State->bForcedSinceUpdate = true;
+		if (!bWasForced)
+		{
+			UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s forced braking at %.1f m/s2 (%.0f km/h, %.0f m to stop, its brakes %.1f m/s2)"), *TrainName(Train),
+				Needed / 100.f, Speed * 0.036f, StopWithin / 100.f, Deceleration / 100.f);
+		}
+	}
 	if (State->bFullBrake && !bWasFullBrake && Speed > AllowedHard + 500.f)
 	{
 		FString Behind;

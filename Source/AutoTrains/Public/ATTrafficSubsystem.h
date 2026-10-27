@@ -8,9 +8,10 @@ class AFGBuildableRailroadTrack;
 class AFGTrain;
 class UFGRailroadTrackConnectionComponent;
 
-// Full-brake braking is measured per speed band of this width, up to ATBrakeBands bands. [cm/s]
-constexpr float ATBrakeBandWidth = 1000.f;
-constexpr int32 ATBrakeBands = 8;
+// Full-brake braking is measured and planned per speed band of this width, up to ATBrakeBands bands; the top band
+// also covers every speed above it. [cm/s]
+constexpr float ATBrakeBandWidth = 250.f;
+constexpr int32 ATBrakeBands = 32;
 
 // Where one vehicle of a train stands.
 struct FATVehicleSpot
@@ -61,6 +62,8 @@ struct FATTrafficTrain
 	TArray<TWeakObjectPtr<AFGTrain>> FollowLeaders;
 	// World time each current follow leader became one, for the log. [s]
 	TMap<TWeakObjectPtr<AFGTrain>, double> FollowLeaderSince;
+	// Follow leaders whose vehicles on this train's path move away along it: ahead the same way, or turning off it.
+	TSet<TWeakObjectPtr<AFGTrain>> LeadersMovingAway;
 	// Trains this one counted as moving out of its way when it claimed track they hold. Apart from trains ahead of it
 	// the same way, only these lead it.
 	TSet<TWeakObjectPtr<AFGTrain>> FollowedTrains;
@@ -72,11 +75,16 @@ struct FATTrafficTrain
 	// Full-brake braking force measured on this train per speed band, as deceleration times mass so a train that
 	// takes on cargo plans with less; 0 where not measured. [cm/s^2 kg]
 	float BrakeForce[ATBrakeBands] = {};
+	// Deceleration planned with in each speed band, from BrakeForce, the consist's mass and rating. [cm/s^2]
+	float PlanDecel[ATBrakeBands] = {};
 	// Speed at the previous update. [cm/s]
 	float LastSpeed = 0.f;
 	// Whether the train is on full brake, and whether it was at the previous update.
 	bool bFullBrake = false;
 	bool bWasFullBrake = false;
+	// Whether the mod is taking speed off the train directly, and whether it did since the previous update.
+	bool bForcedBrake = false;
+	bool bForcedSinceUpdate = false;
 	// Seconds until the moving train that blocks this one has cleared where it blocks; -1 if unknown.
 	float ClearSeconds = -1.f;
 	// Seconds the train has stood still.
@@ -133,7 +141,7 @@ public:
 	bool IsManaged(const AFGTrain* Train) const;
 
 	// Called after the game's AFGTrain::TickAtc for managed trains; caps the target speed to the train's authority.
-	void ApplyAuthority(AFGTrain* Train);
+	void ApplyAuthority(AFGTrain* Train, float DeltaSeconds);
 
 	// Returns the distance from Train's front to the end of its authority track, or -1 for no limit. [cm]
 	float GetAuthorityDistance(const AFGTrain* Train) const;
@@ -221,6 +229,9 @@ private:
 	// leaders' planning braking, for full brake. [cm]
 	float GetFollowLimit(const AFGTrain* Train, const FATTrafficTrain& State, float& OutHardLimit, FATFollowInfo* OutInfo = nullptr) const;
 
+	// Returns Braking, but no further than Leader may still travel: the end of its authority or its goal. [cm]
+	float GetLeaderTravel(const FATTrafficTrain& Leader, float Braking) const;
+
 	// Returns the distance from Train's front along its path to the nearest vehicle of Other ahead of it, or -1 if
 	// none is within GapSearchDistance. [cm]
 	float GetGapToVehicles(const AFGTrain* Train, const FATTrafficTrain& State, const FATTrafficTrain& Other) const;
@@ -270,10 +281,20 @@ private:
 	// congestion is counted, and switches to it.
 	void ConsiderReroute(FATTrafficTrain& State);
 
-	// Deceleration to plan a stop from Speed (the train's own speed if negative) with: a share of the weakest
-	// full-brake deceleration measured at or below that speed, or a share of the consist's rating until measured.
-	// [cm/s^2]
+	// Sets State.PlanDecel: a share of the deceleration measured in each band; a band without a measurement takes the
+	// nearest measured band above it (braking is weaker at higher speed), or above every measured band the highest
+	// one's scaled down with speed; a train never measured plans with a share of its rating, scaled down above
+	// FallbackFullSpeed.
+	void RefreshBrakePlan(FATTrafficTrain& State) const;
+
+	// Deceleration planned with at Speed (the train's own speed if negative). [cm/s^2]
 	static float GetPlanningDeceleration(const FATTrafficTrain& State, float Speed = -1.f);
+
+	// Distance State needs to stop from Speed: the brakes building up, then each band's planned deceleration. [cm]
+	static float GetStoppingDistance(const FATTrafficTrain& State, float Speed);
+
+	// Highest speed from which State stops within Distance. [cm/s]
+	static float GetAllowedSpeed(const FATTrafficTrain& State, float Distance);
 
 	// Claim order score, lower first: seconds until the train's tail has passed the first track it still needs, minus
 	// a share of the time it has waited.

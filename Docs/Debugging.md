@@ -132,4 +132,13 @@ train, then a row per train every 0.2 s:
   a vehicle within HalfLength + 2 m of a track end counted as on every attached track, and station tracks are exactly
   one vehicle long, so every docked train's ends spilled onto the next track. A vehicle now counts on the next track
   only once it reaches 0.5 m past the end; switches stay covered by the 20 m fouling zone.
+- With the new full-brake detail (9 full brakes, 1 pass-through burst in 13 min): every "behind a leader" one had
+  "its braking 0 m". (1) The leader's braking distance counted only when its master's track was on the follower's
+  route, so a leader turning off the route (its tail still ahead on the follower's path) counted as standing still;
+  now every managed leader whose route doesn't run over the follower's route the other way moves away
+  (`LeadersMovingAway`). (2) A leader travels no further than its authority (or goal) before it stops, whatever its
+  braking, and the catch can stop it there dead; its distance is now capped at that (`GetLeaderTravel`). (3) A leader
+  by route order can at the same time be following this train through a crossing (Heavy Oil Residue [Coke Steel] and
+  Coated Plates RSC B); its claims there only trail this train, so the held-track fallback skips leaders that follow
+  this train and only their vehicles count.
 

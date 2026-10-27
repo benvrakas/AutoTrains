@@ -133,7 +133,7 @@ void AATControlSubsystem::AfterTickAtc(AFGTrain* Train, float DeltaSeconds)
 	}
 	if (AATTrafficSubsystem* Traffic = AATTrafficSubsystem::Get(this))
 	{
-		Traffic->ApplyAuthority(Train);
+		Traffic->ApplyAuthority(Train, DeltaSeconds);
 	}
 	if (Train->IsSelfDrivingEnabled() && State.Mode != EATCommandMode::None)
 	{

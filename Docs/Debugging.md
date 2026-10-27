@@ -354,3 +354,12 @@ train, then a row per train every 0.2 s:
   it can't be set directly. `AFGRailroadSubsystem`'s tick runs `TickAtc` (the mod's hook) before `TickSelfDriving`.
   A standing train in a detected cycle gets a Stop restrictive point where it stands and the wait timer at the
   threshold; when the cycle breaks the aspect goes back and the game clears the warning.
+- Fifth planner run (18:06): no DEADLOCK logged, yet Steel Pipe Xtra Steel stood 31 m before switch 179 for 7 min
+  waiting for Cable RSC ("held, enters in 7 s") and Rubber SNK [conc] ("planned, enters in 35 s"), times that never
+  moved, while Cable RSC waited for Steel Pipe Xtra Steel at the same switch (the trio of the earlier deadlock). Waiting
+  time reset whenever a train rolled faster than 1 m/s (slowly creeping up to its stop), so the cycle was never
+  detected. Now, with the planner, a blocked train slower than 3 m/s counts as waiting. A detected cycle with a member
+  that only waits for the booking order gets that member going first for 30 s: its route ahead (stopping distance,
+  length and 400 m) is locked, still kept clear of other locked bookings, so the others plan behind it
+  (`goes first ... to break the deadlock`). Trains that waited over 60 s are described every 30 s (`planner: WAIT`):
+  their booking at the resource, and every booking there with its train's state.

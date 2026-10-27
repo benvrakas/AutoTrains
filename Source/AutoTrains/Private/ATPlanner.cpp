@@ -47,6 +47,11 @@ namespace
 	constexpr float LockStoppingShare = 1.2f;
 	constexpr float LockSeconds = 1.f;
 	constexpr float LockDistance = 6000.f;
+	// A train going first to break a deadlock locks its route this far past its stopping distance and length. [cm]
+	constexpr float PriorityReach = 40000.f;
+	// Trains that waited longer than WaitDumpSeconds are described in the log every WaitDumpInterval. [s]
+	constexpr double WaitDumpSeconds = 60.0;
+	constexpr double WaitDumpInterval = 30.0;
 	// The earliest-entry search gives up after this many shifts.
 	constexpr int32 EntryMaxShifts = 16;
 	// Planner counters are logged this often. [s]
@@ -485,10 +490,15 @@ void AATTrafficSubsystem::PlanTrain(const FATTrafficTrain& State, double Now, co
 	{
 		++HeldIndex;
 	}
+	// Going first to break a deadlock: the route ahead is locked too, though still kept clear of other locked bookings.
+	const bool bPriority = State.PriorityUntil > Now;
+	const float PriorityWithin = Plan.Committed + State.Length + PriorityReach;
 	for (FPass& Pass : Base)
 	{
 		const bool bHolds = Pass.RouteIndex != INDEX_NONE && Pass.RouteIndex <= HeldIndex;
 		Pass.bLocked = Pass.RouteIndex == INDEX_NONE || Pass.EnterAt <= 0.f || Pass.EnterAt <= Plan.Committed || (bHolds && Pass.EnterAt <= LockedWithin);
+		Pass.bPriority = !Pass.bLocked && bPriority && Pass.EnterAt <= PriorityWithin;
+		Pass.bLocked = Pass.bLocked || Pass.bPriority;
 		Pass.bHeld = !Pass.bLocked && bHolds;
 	}
 	// Where the train can stand: the end of each route track, short by its stop margin.
@@ -524,6 +534,16 @@ void AATTrafficSubsystem::PlanTrain(const FATTrafficTrain& State, double Now, co
 			// Nothing is planned beyond a wait for good.
 			if (IsOpen(Pass.Enter))
 			{
+				continue;
+			}
+			if (Pass.bPriority)
+			{
+				Booking = FindConflict(Self, Pass, Headway, EConflictScope::LockedOnly, NeedEnter);
+				if (Booking)
+				{
+					Conflicting = &Pass;
+					break;
+				}
 				continue;
 			}
 			if (Pass.bLocked)
@@ -1050,6 +1070,7 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 	State.BlockedBy = nullptr;
 	State.BlockedReason.Reset();
 	State.BlockedKey.Reset();
+	State.bBlockedByOrder = false;
 	const float Need = GetStoppingDistance(State, State.Speed) + State.Length + GrantLookahead;
 	auto TimeOf = [](const TArray<double>& Times, int32 Index) { return Times.IsValidIndex(Index) ? Times[Index] : OpenTime; };
 	auto LockOf = [](const TArray<bool>& Locks, int32 Index) { return Locks.IsValidIndex(Index) && Locks[Index]; };
@@ -1085,6 +1106,10 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 		}
 		if (bBlocked)
 		{
+			State.bBlockedByOrder = Why.StartsWith(TEXT("booked first")) || Why.StartsWith(TEXT("its plan"));
+			State.BlockedAtTrack = Where.StartsWith(TEXT("the switch")) ? nullptr : Step.Track;
+			State.BlockedAtJoint = Where.StartsWith(TEXT("the switch")) ? Joint : INDEX_NONE;
+			State.BlockedAtIndex = Index;
 			State.BlockedBy = Blocker ? Blocker->Train : nullptr;
 			State.BlockedReason = FString::Printf(TEXT("waits for %s before %s, %.0f m ahead: %s"), *NameOf(Blocker ? Blocker->Train.Get() : nullptr), *Where,
 				FMath::Max(Begin, 0.f) / 100.f, *Why);
@@ -1444,6 +1469,18 @@ void AATTrafficSubsystem::UpdatePlannedTraffic(float DeltaSeconds)
 		}
 	}
 
+	if (Now >= mWaitDumpAt)
+	{
+		mWaitDumpAt = Now + WaitDumpInterval;
+		for (const FTurn& Turn : Turns)
+		{
+			if (Turn.Kind == 2 && Turn.State->WaitingSeconds > WaitDumpSeconds)
+			{
+				LogWaitDump(*Turn.State, Now);
+			}
+		}
+	}
+
 	++mPlanUpdates;
 	const double Took = FPlatformTime::Seconds() - Begin;
 	mPlanSeconds += Took;
@@ -1471,4 +1508,52 @@ void AATTrafficSubsystem::UpdatePlannedTraffic(float DeltaSeconds)
 		mPlanSeconds = 0.0;
 		mPlanSummaryAt = Now + PlanSummarySeconds;
 	}
+}
+
+void AATTrafficSubsystem::LogWaitDump(const FATTrafficTrain& State, double Now) const
+{
+	auto Describe = [this, Now](const FATTrafficTrain* Other) -> FString
+	{
+		if (!Other)
+		{
+			return TEXT("?");
+		}
+		return FString::Printf(TEXT("%s (%s, %.0f km/h, waited %.0f s, %d claims%s%s)"), *NameOf(Other->Train.Get()), Other->bManaged ? TEXT("driving") : TEXT("not driven"),
+			Other->Speed * 0.036f, Other->WaitingSeconds, Other->Claims.Num(), Other->BlockedReason.IsEmpty() ? TEXT("") : TEXT(", "), *Other->BlockedReason);
+	};
+	const int32 Index = State.BlockedAtIndex;
+	const bool bJoint = State.BlockedAtJoint != INDEX_NONE;
+	const TArray<double>& Enters = bJoint ? State.PlanJointEnter : State.PlanTrackEnter;
+	const TArray<bool>& Locks = bJoint ? State.PlanJointLocked : State.PlanTrackLocked;
+	FString Lines = FString::Printf(TEXT("planner: WAIT %s: %s; %s; its booking there %s%s"), *Describe(&State), *State.PlanNote, *ResourceName(State.BlockedAtTrack, State.BlockedAtJoint),
+		Enters.IsValidIndex(Index) ? *FString::Printf(TEXT("enters in %s"), *SecondsText(Enters[Index] - Now)) : TEXT("missing"),
+		Locks.IsValidIndex(Index) && Locks[Index] ? TEXT(", locked") : TEXT(""));
+	TArray<FResourceKey, TInlineAllocator<4>> Keys;
+	if (bJoint)
+	{
+		FResourceKey Key;
+		Key.Joint = State.BlockedAtJoint;
+		Keys.Add(Key);
+	}
+	else if (State.BlockedAtTrack)
+	{
+		for (const AFGBuildableRailroadTrack* Conflict : GetConflicts(State.BlockedAtTrack))
+		{
+			FResourceKey Key;
+			Key.Track = Conflict;
+			Keys.Add(Key);
+		}
+	}
+	for (const FResourceKey& Key : Keys)
+	{
+		const TArray<FBooking>* Bookings = mBookings.Find(Key);
+		for (const FBooking& Booking : Bookings ? *Bookings : TArray<FBooking>())
+		{
+			FATTrafficTrain* const* Other = mStateOf.Find(Booking.Owner);
+			Lines += FString::Printf(TEXT("\n    %s: %s %s-%s s%s%s, kind %d; %s"), *ResourceName(Key.Track, Key.Joint), *NameOf(Booking.Owner), *SecondsText(Booking.Enter - Now),
+				*SecondsText(Booking.Clear - Now), Booking.bLocked ? TEXT(" locked") : TEXT(""), Booking.bHeld ? TEXT(" held") : TEXT(""), static_cast<int32>(Booking.Kind),
+				Other ? *Describe(*Other) : TEXT("gone"));
+		}
+	}
+	UE_LOG(LogAutoTrains, Log, TEXT("%s"), *Lines);
 }

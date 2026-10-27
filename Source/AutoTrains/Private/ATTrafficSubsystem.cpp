@@ -102,6 +102,10 @@ namespace
 	// long-wait warning. [s] [cm/s]
 	constexpr float DeadlockWaitSeconds = 20.f;
 	constexpr float DeadlockShowSpeed = 50.f;
+	// With the planner, a blocked train slower than this counts as waiting. [cm/s]
+	constexpr float PlannerWaitSpeed = 300.f;
+	// A train the planner lets go first to break a deadlock keeps that for this long. [s]
+	constexpr double DeadlockPrioritySeconds = 30.0;
 
 	// Fair turns: once a train has waited this long, others leave the way to its next safe stop free for it; past the
 	// second limit it stops asking, in case its asking is what holds it up. At most this many route steps ahead. [s]
@@ -528,9 +532,14 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 			UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s: %s"), *TrainName(State->Train.Get()), *State->BlockedReason);
 		}
 
+		if (mPlannerControl)
+		{
+			// The planner names what each train waits for; it counts as waiting even while it rolls slowly up to its stop.
+			State->WaitingSeconds = State->BlockedBy.IsValid() && State->Speed < PlannerWaitSpeed ? State->WaitingSeconds + DeltaSeconds : 0.f;
+			continue;
+		}
 		const float Distance = GetAuthorityDistance(State->Train.Get());
-		// The planner names what each train waits for wherever it stands.
-		const bool bHeld = (!State->bAuthorityToGoal && Distance >= 0.f && Distance < State->StopMargin + 5000.f) || (mPlannerControl && State->BlockedBy.IsValid());
+		const bool bHeld = !State->bAuthorityToGoal && Distance >= 0.f && Distance < State->StopMargin + 5000.f;
 		if (State->Speed < 50.f && bHeld)
 		{
 			State->WaitingSeconds += DeltaSeconds;
@@ -2035,6 +2044,10 @@ void AATTrafficSubsystem::LogDeadlocks()
 		Sorted.Sort();
 		const FString Signature = FString::Join(Sorted, TEXT("|"));
 		Signatures.Add(Signature);
+		if (mPlannerControl)
+		{
+			BreakDeadlock(Chain);
+		}
 		if (mLoggedDeadlocks.Contains(Signature))
 		{
 			continue;
@@ -2057,6 +2070,33 @@ void AATTrafficSubsystem::LogDeadlocks()
 	{
 		Pair.Value.bDeadlocked = InCycle.Contains(&Pair.Value);
 	}
+}
+
+void AATTrafficSubsystem::BreakDeadlock(const TArray<const FATTrafficTrain*>& Chain)
+{
+	// A cycle of trains each yielding to the next: one that only waits for the booking order (not for a train in its
+	// way) goes first. With none such, the trains block each other where they stand.
+	const double Now = GetWorld()->GetTimeSeconds();
+	if (Chain.ContainsByPredicate([Now](const FATTrafficTrain* Member) { return Member->PriorityUntil > Now; }))
+	{
+		return;
+	}
+	const FATTrafficTrain* Chosen = nullptr;
+	for (const FATTrafficTrain* Member : Chain)
+	{
+		if (Member->bBlockedByOrder && (!Chosen || TrainName(Member->Train.Get()) < TrainName(Chosen->Train.Get())))
+		{
+			Chosen = Member;
+		}
+	}
+	FATTrafficTrain* Promoted = Chosen ? mTrains.Find(Chosen->Train) : nullptr;
+	if (!Promoted)
+	{
+		return;
+	}
+	Promoted->PriorityUntil = Now + DeadlockPrioritySeconds;
+	UE_LOG(LogAutoTrains, Warning, TEXT("planner: %s goes first for %.0f s to break the deadlock (%s)"), *TrainName(Promoted->Train.Get()), DeadlockPrioritySeconds,
+		*Promoted->BlockedReason);
 }
 
 void AATTrafficSubsystem::BuildCongestion(const FATTrafficTrain& Self, TMap<const AFGBuildableRailroadTrack*, FCongestion>& Out) const

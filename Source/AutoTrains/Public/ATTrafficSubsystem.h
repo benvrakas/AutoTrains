@@ -183,8 +183,15 @@ struct FATTrafficTrain
 	// The ATC path seen at the previous update and whether the train was driven then, to notice the game replacing it.
 	const void* LastPath = nullptr;
 	bool bLastManaged = false;
-	// In a cycle of trains waiting for each other.
+	// In a cycle of trains waiting for each other; until when it goes first to break one (world seconds).
 	bool bDeadlocked = false;
+	double PriorityUntil = -1.0;
+	// Whether the train waits only for the booking order (not for a train standing on or holding what it needs), and
+	// the track or switch and route step it waits at.
+	bool bBlockedByOrder = false;
+	const AFGBuildableRailroadTrack* BlockedAtTrack = nullptr;
+	int32 BlockedAtJoint = INDEX_NONE;
+	int32 BlockedAtIndex = INDEX_NONE;
 	// Routes the planner's search left, by hash, with when (world seconds).
 	TArray<TPair<uint32, double>> LeftRoutes;
 };
@@ -267,6 +274,10 @@ private:
 	void UpdateAuthority(FATTrafficTrain& State) const;
 	void RefreshClaimedJoints(FATTrafficTrain& State) const;
 	void LogDeadlocks();
+	// Lets one train of a deadlock cycle that only waits for the booking order go first for a while.
+	void BreakDeadlock(const TArray<const FATTrafficTrain*>& Chain);
+	// Logs what a long-waiting train waits for: its booking and every booking at that resource, with their trains.
+	void LogWaitDump(const FATTrafficTrain& State, double Now) const;
 
 	// Returns false if another train (not in Ignore) stands on, claims or holds a track crossing Track; sets the
 	// holder, the track it holds, and whether it stands on it.
@@ -516,6 +527,8 @@ private:
 		int32 RouteIndex = INDEX_NONE;
 		bool bLocked = false;
 		bool bHeld = false;
+		// Locked only because the train goes first to break a deadlock.
+		bool bPriority = false;
 	};
 	// A wait in a plan: the front stands at At [cm along the route] until Until.
 	struct FWait
@@ -608,6 +621,7 @@ private:
 	double mPlanSeconds = 0.0;
 	double mPlanSummaryAt = 0.0;
 	double mPlanSlowLoggedAt = -1e9;
+	double mWaitDumpAt = 0.0;
 	// The last pair of trains logged holding conflicting resources.
 	FString mLastDoubleHold;
 

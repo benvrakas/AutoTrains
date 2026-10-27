@@ -37,11 +37,14 @@ With traffic control on (the default), every self-driving train ignores signals 
   stop must be free once they have. Only then do the other trains give up their claims from there on; the log says
   `goes first`.
 - Deadlocks: if trains wait for each other in a circle for 20 s, the log says `DEADLOCK` with each train's reason.
-- Congestion rerouting (`/at reroute on|off`, on by default): every 5 s each moving train prices its route as track
-  length plus congestion: +1.5 km for a track with a standing train, +400 m for a moving one, +300 m for track
-  another train has claimed, +800 m for track another train will cross the other way, +50 m the same way. If a route
-  from the end of its claims is at least 15% and 300 m cheaper, it switches to it, even when that route is longer.
-  The log says `rerouted` with the costs and lengths. After a reroute a train waits 30 s before it reroutes again.
+- Congestion rerouting (`/at reroute on|off`, on by default): every 5 s each moving train times its route from the
+  end of its claims: each track at its top speed, plus the wait wherever another train is on it, or on a track
+  crossing it, while it would be (a standing train for 40 s if docked, 120 s if not driven by the mod, else 20 s or
+  until what it waits for clears; a moving one until its tail is off; one coming the other way or crossing until it
+  has passed; one ahead the same way costs 2 s), plus the time a stop costs (braking and picking up speed again). If
+  another route is at least 10% and 10 s faster, it switches to it, even when that route is longer. A train waiting
+  for it, or a new route against track another train holds, counts as impassable. The log says `rerouted` with both
+  times and lengths. After a reroute a train waits 30 s before it reroutes again.
 
 Player driven trains aren't controlled; the others treat them as obstacles.
 

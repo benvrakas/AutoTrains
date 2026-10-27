@@ -99,7 +99,7 @@ UATConfig::UATConfig()
 		LOCTEXT("TrafficControlTip", "Auto Trains drives every self-driving train: trains ignore block and path signals and keep out of each other's way by claiming the track ahead. Off gives the game's own signals and scheduler back."),
 		Defaults.bTrafficControl);
 	AddBool(ReroutingKey, TEXT("Rerouting"), LOCTEXT("Rerouting", "Congestion rerouting"),
-		LOCTEXT("ReroutingTip", "Trains take another route, even a longer one, when theirs is busy with standing or oncoming trains."),
+		LOCTEXT("ReroutingTip", "Trains take another route, even a longer one, when it gets them there sooner than waiting for standing or oncoming trains on theirs."),
 		Defaults.bRerouting);
 	AddBool(PhaseThroughKey, TEXT("PhaseThrough"), LOCTEXT("PhaseThrough", "Trains pass through each other"),
 		LOCTEXT("PhaseThroughTip", "While traffic control is on, trains that touch pass through each other instead of crashing and derailing, so a misjudged gap only looks like a clip."),

@@ -325,24 +325,44 @@ private:
 	bool HoldsTrack(const FATTrafficTrain& State, const AFGBuildableRailroadTrack* Track) const;
 	static bool HoldsJoint(const FATTrafficTrain& State, int32 Joint);
 
-	// Congestion other trains than Self put on each track: standing trains, claims, and their routes ahead.
+	// When another train is on a track or one crossing it, seen from now: from Start to End, leaving it through Exit
+	// (null if unknown); whether on the track itself, standing there, and waiting for the train being routed. [s]
+	struct FOccupancy
+	{
+		float Start = 0.f;
+		float End = 0.f;
+		const UFGRailroadTrackConnectionComponent* Exit = nullptr;
+		bool bOnTrack = false;
+		bool bStanding = false;
+		bool bWaitsForSelf = false;
+	};
+	// What other trains than Self do on each track: where they stand, where they pass when, and where they hold it.
 	struct FCongestion
 	{
-		float Penalty = 0.f;
-		// Exit connections of other trains' upcoming passes over the track, to tell same and opposite direction apart.
-		TArray<const UFGRailroadTrackConnectionComponent*> UpcomingExits;
+		TArray<FOccupancy> Occupancies;
 		// Exit connections of other trains that hold the track on their route.
 		TArray<const UFGRailroadTrackConnectionComponent*> HeldExits;
 	};
 	void BuildCongestion(const FATTrafficTrain& Self, TMap<const AFGBuildableRailroadTrack*, FCongestion>& Out) const;
 
-	// Extra cost of driving over Track and leaving through Exit, given the congestion map; bNewRoute adds the cost of
-	// driving against another train's held track. [cm]
-	static float GetCongestionCost(const TMap<const AFGBuildableRailroadTrack*, FCongestion>& Congestion, const AFGBuildableRailroadTrack* Track,
-		const UFGRailroadTrackConnectionComponent* Exit, bool bNewRoute);
+	// How a train is timed along a route: cruising speed and length [cm/s] [cm], and the time a stop costs over driving
+	// on [s].
+	struct FRouteSpeed
+	{
+		float Cruise = 500.f;
+		float Length = 0.f;
+		float StopLoss = 0.f;
+	};
+	FRouteSpeed GetRouteSpeed(const FATTrafficTrain& State) const;
 
-	// Looks for a route to State's goal, from the end of its claims, that's clearly cheaper than its current one once
-	// congestion is counted, and switches to it.
+	// Seconds a train needs over Track, leaving through Exit, getting there Arrival seconds from now: driving it, the
+	// wait for other trains on it, and the time stopping costs; bNewRoute adds driving against another train's held
+	// track.
+	static float GetTrackSeconds(const TMap<const AFGBuildableRailroadTrack*, FCongestion>& Congestion, const AFGBuildableRailroadTrack* Track,
+		const UFGRailroadTrackConnectionComponent* Exit, float Arrival, const FRouteSpeed& Speed, bool bNewRoute);
+
+	// Looks for a route to State's goal, from the end of its claims, that's clearly faster than its current one once
+	// other trains are counted, and switches to it.
 	void ConsiderReroute(FATTrafficTrain& State);
 
 	// Sets State.PlanDecel: a share of the deceleration measured in each band; a band without a measurement takes the

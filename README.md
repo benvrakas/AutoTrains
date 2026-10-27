@@ -3,7 +3,7 @@
 A Satisfactory mod for train traffic without block or path signals. Every self-driving train reserves the track
 ahead of it and speeds up, slows down, waits or reroutes so that no two trains ever need the same track at the same
 time. Trains never stop inside a junction someone else needs, can follow each other through roundabouts, and take a
-less busy route when theirs is congested.
+faster route when theirs is held up.
 
 - Existing signals are ignored while traffic control is on; `/at removesignals confirm` removes them all.
 - Optional: colliding trains pass through each other instead of derailing.

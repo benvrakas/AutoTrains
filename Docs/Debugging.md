@@ -252,3 +252,11 @@ train, then a row per train every 0.2 s:
   pacing behind a clearing blocker); the full-brake curve only decides full brake.
 - Pass-through reports named "?": the trains were looked up at the 10 s report, after they had moved. The names are
   now taken at the traffic update after the contact.
+- Rerouting is timed instead of priced in metres (the user: optimise everything for time). `ConsiderReroute` times the
+  current route and searches the fastest one (`FATRouter::FindFastestRoute`, Dijkstra whose step cost gets the arrival
+  time): each track at the train's top speed, plus the wait for other trains on it or on a track crossing it while
+  this train would be (`BuildCongestion` gives each one's occupancy in seconds from now: standing until expected to
+  move off, moving until its tail is off, its route ahead timed at its speed picking up to its top speed), plus the
+  stop cost (braking and accelerating again, `GetRouteSpeed`) up to the wait. A train ahead the same way costs a 2 s
+  headway. A train waiting for this one, and for a new route track held the other way, count 100000 s. A reroute
+  needs 10% and 10 s.

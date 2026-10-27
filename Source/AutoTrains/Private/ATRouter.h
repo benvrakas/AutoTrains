@@ -17,9 +17,10 @@ public:
 	// that has only a trailing signal can't be left, as in the game's pathfinding.
 	static TArray<UFGRailroadTrackConnectionComponent*> FindRoute(UFGRailroadTrackConnectionComponent* Start, UFGRailroadTrackConnectionComponent* Goal, bool bObeyOneWay);
 
-	// Same, with ExtraCost(track, exit connection) added to each track's length. [cm]
-	static TArray<UFGRailroadTrackConnectionComponent*> FindRoute(UFGRailroadTrackConnectionComponent* Start, UFGRailroadTrackConnectionComponent* Goal, bool bObeyOneWay,
-		TFunctionRef<float(const AFGBuildableRailroadTrack*, const UFGRailroadTrackConnectionComponent*)> ExtraCost);
+	// Returns the fastest route from Start, reached StartSeconds from now, to Goal, ignoring one-way signals: StepSeconds
+	// (track, exit connection, seconds from now the track is reached) gives the seconds to get over each track.
+	static TArray<UFGRailroadTrackConnectionComponent*> FindFastestRoute(UFGRailroadTrackConnectionComponent* Start, UFGRailroadTrackConnectionComponent* Goal,
+		float StartSeconds, TFunctionRef<float(const AFGBuildableRailroadTrack*, const UFGRailroadTrackConnectionComponent*, float)> StepSeconds);
 
 	// Returns the summed track length of Route after its first connection. [cm]
 	static float GetRouteLength(const TArray<UFGRailroadTrackConnectionComponent*>& Route);
@@ -39,4 +40,10 @@ public:
 
 	// Returns "<track>.<connection>" for logs.
 	static FString Describe(const UFGRailroadTrackConnectionComponent* Connection);
+
+private:
+	// Lowest-cost search from Start, at StartCost, to Goal; StepCost(track, exit connection, cost so far) is the cost of
+	// each track. With bObeyOneWay a connection that has only a trailing signal can't be left.
+	static TArray<UFGRailroadTrackConnectionComponent*> Search(UFGRailroadTrackConnectionComponent* Start, UFGRailroadTrackConnectionComponent* Goal, bool bObeyOneWay,
+		float StartCost, TFunctionRef<float(const AFGBuildableRailroadTrack*, const UFGRailroadTrackConnectionComponent*, float)> StepCost);
 };

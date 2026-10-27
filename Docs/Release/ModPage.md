@@ -31,8 +31,9 @@ time. Build junctions, roundabouts, crossings and single track however you like,
   it is clear again before the other train could get there and that train can still stop in time.
 - **Fair turns.** The train that would get through soonest goes first, and time spent waiting counts in a train's
   favour, so nobody waits forever.
-- **Congestion rerouting.** Every few seconds a train compares its route with the alternatives, counting standing,
-  moving and oncoming trains. If another route is clearly less busy it takes that one, even when it's longer.
+- **Congestion rerouting.** Every few seconds a train times its route against the alternatives: driving time plus
+  the waits standing, moving and oncoming trains would cause it, and the time a stop costs. If another route gets
+  it there clearly sooner it takes that one, even when it's longer.
 - **Brakes it can trust.** Each train measures how hard it really brakes at each speed and plans with that. If a
   train still can't stop in time, the mod brakes it harder than its brakes could, the way block signals do.
 
@@ -41,7 +42,7 @@ time. Build junctions, roundabouts, crossings and single track however you like,
 | Setting | Default | What it does |
 |---|---|---|
 | **Traffic control** | On | Auto Trains drives every self-driving train. Off gives the game's signals back. |
-| **Congestion rerouting** | On | Trains take another route when theirs is busy. |
+| **Congestion rerouting** | On | Trains take another route when it gets them there sooner than waiting on theirs. |
 | **Trains pass through each other** | On | While traffic control is on, trains that touch pass through each other instead of crashing. A misjudged gap then only looks like a clip. |
 | **Aggressive timing** | On | Tighter margins: trains follow closer and slip through junctions more readily. Off is more cautious. |
 | **Safety margin (seconds)** | 0 | Extra time, 0 to 10 s, a train leaves when it follows another out of a junction or goes ahead of another train. Raise it if trains clip each other. |

@@ -103,19 +103,20 @@ namespace
 
 	// How often each train's route is checked for congestion. [s]
 	constexpr float RerouteInterval = 5.f;
-	// Congestion costs, as extra track length. [cm]
-	constexpr float StandingTrainPenalty = 150000.f;
-	constexpr float MovingTrainPenalty = 40000.f;
+	// Routes are compared by time. A standing train is expected to move off after this long: one docked, one this mod
+	// doesn't drive (player-driven or not self-driving), one waiting with no known clear time. Following a train the
+	// same way costs a headway. [s]
+	constexpr float DockedClearSeconds = 40.f;
+	constexpr float UnmanagedClearSeconds = 120.f;
+	constexpr float StandingClearSeconds = 20.f;
+	constexpr float FollowHeadwaySeconds = 2.f;
 	// A train waiting for the train being routed can't get out of its way, and one that holds track the other way may
-	// stop on it facing the train being routed: a new route doesn't run against held track.
-	constexpr float WaitingForSelfPenalty = 10000000.f;
-	constexpr float HeadOnPenalty = 10000000.f;
-	constexpr float ClaimPenalty = 30000.f;
-	constexpr float UpcomingSameWayPenalty = 5000.f;
-	constexpr float UpcomingOtherWayPenalty = 80000.f;
-	// A new route must be cheaper than the current one by this much and this share to be taken.
-	constexpr float RerouteMinGain = 30000.f;
-	constexpr float RerouteMinGainShare = 0.15f;
+	// stop on it facing the train being routed: a new route doesn't run against held track. [s]
+	constexpr float WaitingForSelfSeconds = 100000.f;
+	constexpr float HeadOnSeconds = 100000.f;
+	// A new route must be faster than the current one by this much and this share to be taken. [s]
+	constexpr float RerouteMinGainSeconds = 10.f;
+	constexpr float RerouteMinGainShare = 0.1f;
 	// A train that rerouted doesn't reroute again for this long, so it can't flip between two routes. [s]
 	constexpr float RerouteCooldownSeconds = 30.f;
 
@@ -1903,72 +1904,132 @@ void AATTrafficSubsystem::BuildCongestion(const FATTrafficTrain& Self, TMap<cons
 	for (const TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Pair : mTrains)
 	{
 		const FATTrafficTrain& Other = Pair.Value;
-		if (&Other == &Self)
+		const AFGTrain* OtherTrain = Other.Train.Get();
+		if (&Other == &Self || !OtherTrain)
 		{
 			continue;
 		}
-		const float StandPenalty = Other.BlockedBy == Self.Train ? WaitingForSelfPenalty : (Other.Speed < 100.f ? StandingTrainPenalty : MovingTrainPenalty);
-		for (const AFGBuildableRailroadTrack* Track : Other.Occupied)
+		auto AddOn = [this, &Out](const AFGBuildableRailroadTrack* Track, const FOccupancy& Occupancy)
 		{
 			for (const AFGBuildableRailroadTrack* Conflict : GetConflicts(Track))
 			{
-				Out.FindOrAdd(Conflict).Penalty += StandPenalty;
+				FOccupancy& Added = Out.FindOrAdd(Conflict).Occupancies.Add_GetRef(Occupancy);
+				Added.bOnTrack = Conflict == Track;
 			}
-		}
-		for (const TWeakObjectPtr<AFGBuildableRailroadTrack>& Claim : Other.Claims)
+		};
+		auto ExitOn = [&Other](const AFGBuildableRailroadTrack* Track) -> const UFGRailroadTrackConnectionComponent*
 		{
-			const AFGBuildableRailroadTrack* Track = Claim.Get();
-			if (Track && !Other.Occupied.Contains(const_cast<AFGBuildableRailroadTrack*>(Track)))
-			{
-				for (const AFGBuildableRailroadTrack* Conflict : GetConflicts(Track))
-				{
-					Out.FindOrAdd(Conflict).Penalty += ClaimPenalty;
-				}
-			}
-		}
-		if (Other.bManaged)
+			const FATRouteStep* Step = Other.Route.FindByPredicate([Track](const FATRouteStep& Candidate) { return Candidate.Track == Track; });
+			return Step ? Step->Exit : nullptr;
+		};
+
+		// Standing: until it is expected to move off; moving: until its tail has left the track.
+		const bool bStanding = Other.Speed < 100.f;
+		float StandSeconds = !Other.bManaged ? (OtherTrain->IsDocked() ? DockedClearSeconds : UnmanagedClearSeconds)
+			: (Other.ClearSeconds > 0.f ? Other.ClearSeconds : StandingClearSeconds);
+		for (const AFGBuildableRailroadTrack* Track : Other.Occupied)
 		{
-			for (const FATRouteStep& Step : Other.Route)
+			FOccupancy Occupancy;
+			Occupancy.Exit = ExitOn(Track);
+			Occupancy.bStanding = bStanding;
+			Occupancy.bWaitsForSelf = Other.BlockedBy == Self.Train;
+			Occupancy.End = bStanding ? StandSeconds : GetClearDistance(Other, Track, INDEX_NONE) / FMath::Max(Other.Speed, FollowMinSpeed);
+			AddOn(Track, Occupancy);
+		}
+		if (!Other.bManaged)
+		{
+			continue;
+		}
+		// Its route ahead, at its speed now picking up to its top speed, after any wait.
+		const float Delay = bStanding ? StandSeconds : 0.f;
+		const float Acceleration = GetAcceleration(Other, 0.5f);
+		const float Top = GetTopSpeed(OtherTrain);
+		for (const FATRouteStep& Step : Other.Route)
+		{
+			const float Front = Step.EndDistance - Other.FrontAhead;
+			if (Front > OthersRouteHorizon)
 			{
-				if (Step.EndDistance - Other.FrontAhead > OthersRouteHorizon)
-				{
-					break;
-				}
-				Out.FindOrAdd(Step.Track).UpcomingExits.Add(Step.Exit);
+				break;
 			}
-			for (const FATRouteStep& Step : Other.Route)
+			if (Other.Occupied.Contains(Step.Track))
 			{
-				if (!HoldsTrack(Other, Step.Track))
-				{
-					break;
-				}
-				Out.FindOrAdd(Step.Track).HeldExits.Add(Step.Exit);
+				continue;
 			}
+			FOccupancy Occupancy;
+			Occupancy.Exit = Step.Exit;
+			Occupancy.Start = Delay + TimeToCover(Front - Step.Track->GetLength(), Other.Speed, Acceleration, Top);
+			Occupancy.End = Delay + TimeToCover(Front + Other.Length, Other.Speed, Acceleration, Top);
+			AddOn(Step.Track, Occupancy);
+		}
+		for (const FATRouteStep& Step : Other.Route)
+		{
+			if (!HoldsTrack(Other, Step.Track))
+			{
+				break;
+			}
+			Out.FindOrAdd(Step.Track).HeldExits.Add(Step.Exit);
 		}
 	}
 }
 
-float AATTrafficSubsystem::GetCongestionCost(const TMap<const AFGBuildableRailroadTrack*, FCongestion>& Congestion, const AFGBuildableRailroadTrack* Track,
-	const UFGRailroadTrackConnectionComponent* Exit, bool bNewRoute)
+float AATTrafficSubsystem::GetTrackSeconds(const TMap<const AFGBuildableRailroadTrack*, FCongestion>& Congestion, const AFGBuildableRailroadTrack* Track,
+	const UFGRailroadTrackConnectionComponent* Exit, float Arrival, const FRouteSpeed& Speed, bool bNewRoute)
 {
+	const float Length = Track ? Track->GetLength() : 0.f;
+	const float Seconds = Length / Speed.Cruise;
 	const FCongestion* Entry = Congestion.Find(Track);
 	if (!Entry)
 	{
-		return 0.f;
+		return Seconds;
 	}
-	float Cost = Entry->Penalty;
-	for (const UFGRailroadTrackConnectionComponent* UpcomingExit : Entry->UpcomingExits)
+	// The train is on the track from Arrival until its tail has left it.
+	const float Leave = Arrival + (Length + Speed.Length) / Speed.Cruise;
+	float Wait = 0.f;
+	for (const FOccupancy& Occupancy : Entry->Occupancies)
 	{
-		Cost += UpcomingExit == Exit ? UpcomingSameWayPenalty : UpcomingOtherWayPenalty;
-	}
-	for (const UFGRailroadTrackConnectionComponent* HeldExit : Entry->HeldExits)
-	{
-		if (bNewRoute && HeldExit != Exit)
+		if (Occupancy.bWaitsForSelf)
 		{
-			Cost += HeadOnPenalty;
+			Wait = FMath::Max(Wait, WaitingForSelfSeconds);
+			continue;
+		}
+		// A train ahead going the same way is followed, unless it stands there.
+		const bool bSameWay = Occupancy.bOnTrack && Occupancy.Exit == Exit;
+		if (bSameWay && !Occupancy.bStanding)
+		{
+			if (Occupancy.Start <= Arrival && Occupancy.End > Arrival)
+			{
+				Wait = FMath::Max(Wait, FollowHeadwaySeconds);
+			}
+			continue;
+		}
+		if (Arrival < Occupancy.End && Leave > Occupancy.Start)
+		{
+			Wait = FMath::Max(Wait, Occupancy.End - Arrival);
 		}
 	}
-	return Cost;
+	if (bNewRoute)
+	{
+		for (const UFGRailroadTrackConnectionComponent* HeldExit : Entry->HeldExits)
+		{
+			if (HeldExit != Exit)
+			{
+				Wait = FMath::Max(Wait, HeadOnSeconds);
+			}
+		}
+	}
+	// Waiting costs the wait and, up to a full stop, the time lost braking and picking up speed again.
+	return Seconds + Wait + FMath::Min(Wait, Speed.StopLoss);
+}
+
+AATTrafficSubsystem::FRouteSpeed AATTrafficSubsystem::GetRouteSpeed(const FATTrafficTrain& State) const
+{
+	FRouteSpeed Speed;
+	Speed.Cruise = FMath::Max(GetTopSpeed(State.Train.Get()), 500.f);
+	Speed.Length = State.Length;
+	const float Acceleration = GetAcceleration(State, 0.5f);
+	const float Deceleration = GetPlanningDeceleration(State, Speed.Cruise) * ServiceBrakeShare;
+	Speed.StopLoss = Speed.Cruise / (2.f * Acceleration) + Speed.Cruise / (2.f * FMath::Max(Deceleration, MinPlanDeceleration));
+	return Speed;
 }
 
 void AATTrafficSubsystem::ConsiderReroute(FATTrafficTrain& State)
@@ -1998,29 +2059,34 @@ void AATTrafficSubsystem::ConsiderReroute(FATTrafficTrain& State)
 	const double Begin = FPlatformTime::Seconds();
 	TMap<const AFGBuildableRailroadTrack*, FCongestion> Congestion;
 	BuildCongestion(State, Congestion);
-	float CurrentCost = 0.f;
+	const FRouteSpeed Speed = GetRouteSpeed(State);
+	// Both routes are timed from the end of the claims.
+	const float StartSeconds = TimeToCover(FMath::Max(0.f, State.Route[Commit].EndDistance - State.FrontAhead), State.Speed, GetAcceleration(State, 0.5f), Speed.Cruise);
+	float CurrentSeconds = StartSeconds;
 	float CurrentLength = 0.f;
 	for (int32 Index = Commit + 1; Index < State.Route.Num(); ++Index)
 	{
 		CurrentLength += State.Route[Index].Track->GetLength();
-		CurrentCost += State.Route[Index].Track->GetLength() + GetCongestionCost(Congestion, State.Route[Index].Track, State.Route[Index].Exit, false);
+		CurrentSeconds += GetTrackSeconds(Congestion, State.Route[Index].Track, State.Route[Index].Exit, CurrentSeconds, Speed, false);
 	}
 
-	const TArray<UFGRailroadTrackConnectionComponent*> Alternative = FATRouter::FindRoute(Start, Goal, false,
-		[&Congestion](const AFGBuildableRailroadTrack* Track, const UFGRailroadTrackConnectionComponent* Exit) { return GetCongestionCost(Congestion, Track, Exit, true); });
+	const TArray<UFGRailroadTrackConnectionComponent*> Alternative = FATRouter::FindFastestRoute(Start, Goal, StartSeconds,
+		[&Congestion, &Speed](const AFGBuildableRailroadTrack* Track, const UFGRailroadTrackConnectionComponent* Exit, float Arrival)
+		{
+			return GetTrackSeconds(Congestion, Track, Exit, Arrival, Speed, true);
+		});
 	if (Alternative.Num() < 2)
 	{
 		return;
 	}
 	bool bSame = Alternative.Num() == State.Route.Num() - Commit;
-	float NewCost = 0.f;
+	float NewSeconds = StartSeconds;
 	for (int32 Index = 1; Index < Alternative.Num(); ++Index)
 	{
-		const AFGBuildableRailroadTrack* Track = Alternative[Index]->GetTrack();
-		NewCost += (Track ? Track->GetLength() : 0.f) + GetCongestionCost(Congestion, Track, Alternative[Index], true);
+		NewSeconds += GetTrackSeconds(Congestion, Alternative[Index]->GetTrack(), Alternative[Index], NewSeconds, Speed, true);
 		bSame = bSame && Alternative[Index] == State.Route[Commit + Index].Exit;
 	}
-	if (bSame || NewCost > CurrentCost - FMath::Max(RerouteMinGain, CurrentCost * RerouteMinGainShare))
+	if (bSame || NewSeconds > CurrentSeconds - FMath::Max(RerouteMinGainSeconds, CurrentSeconds * RerouteMinGainShare))
 	{
 		return;
 	}
@@ -2035,8 +2101,8 @@ void AATTrafficSubsystem::ConsiderReroute(FATTrafficTrain& State)
 	const bool bApplied = FATRouter::ApplyPath(Train, Path, Goal);
 	++State.Reroutes;
 	State.RerouteCooldown = RerouteCooldownSeconds;
-	UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s rerouted after %s: cost %.0f -> %.0f m, length %.0f -> %.0f m, applied %s (%.2f ms)"),
-		*TrainName(Train), *TrackName(State.Route[Commit].Track), CurrentCost / 100.f, NewCost / 100.f, CurrentLength / 100.f,
+	UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s rerouted after %s: %.0f -> %.0f s to its goal, length %.0f -> %.0f m, applied %s (%.2f ms)"),
+		*TrainName(Train), *TrackName(State.Route[Commit].Track), CurrentSeconds, NewSeconds, CurrentLength / 100.f,
 		FATRouter::GetRouteLength(Alternative) / 100.f, bApplied ? TEXT("yes") : TEXT("NO"), (FPlatformTime::Seconds() - Begin) * 1000.0);
 }
 

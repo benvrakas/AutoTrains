@@ -21,11 +21,17 @@ namespace
 
 TArray<UFGRailroadTrackConnectionComponent*> FATRouter::FindRoute(UFGRailroadTrackConnectionComponent* Start, UFGRailroadTrackConnectionComponent* Goal, bool bObeyOneWay)
 {
-	return FindRoute(Start, Goal, bObeyOneWay, [](const AFGBuildableRailroadTrack*, const UFGRailroadTrackConnectionComponent*) { return 0.f; });
+	return Search(Start, Goal, bObeyOneWay, 0.f, [](const AFGBuildableRailroadTrack* Track, const UFGRailroadTrackConnectionComponent*, float) { return Track->GetLength(); });
 }
 
-TArray<UFGRailroadTrackConnectionComponent*> FATRouter::FindRoute(UFGRailroadTrackConnectionComponent* Start, UFGRailroadTrackConnectionComponent* Goal, bool bObeyOneWay,
-	TFunctionRef<float(const AFGBuildableRailroadTrack*, const UFGRailroadTrackConnectionComponent*)> ExtraCost)
+TArray<UFGRailroadTrackConnectionComponent*> FATRouter::FindFastestRoute(UFGRailroadTrackConnectionComponent* Start, UFGRailroadTrackConnectionComponent* Goal,
+	float StartSeconds, TFunctionRef<float(const AFGBuildableRailroadTrack*, const UFGRailroadTrackConnectionComponent*, float)> StepSeconds)
+{
+	return Search(Start, Goal, false, StartSeconds, StepSeconds);
+}
+
+TArray<UFGRailroadTrackConnectionComponent*> FATRouter::Search(UFGRailroadTrackConnectionComponent* Start, UFGRailroadTrackConnectionComponent* Goal, bool bObeyOneWay,
+	float StartCost, TFunctionRef<float(const AFGBuildableRailroadTrack*, const UFGRailroadTrackConnectionComponent*, float)> StepCost)
 {
 	TArray<UFGRailroadTrackConnectionComponent*> Route;
 	if (!Start || !Goal)
@@ -36,8 +42,8 @@ TArray<UFGRailroadTrackConnectionComponent*> FATRouter::FindRoute(UFGRailroadTra
 	TMap<UFGRailroadTrackConnectionComponent*, float> BestCost;
 	TMap<UFGRailroadTrackConnectionComponent*, UFGRailroadTrackConnectionComponent*> Previous;
 	TArray<FOpenNode> Open;
-	BestCost.Add(Start, 0.f);
-	Open.HeapPush({Start, 0.f});
+	BestCost.Add(Start, StartCost);
+	Open.HeapPush({Start, StartCost});
 	while (Open.Num() > 0)
 	{
 		FOpenNode Node;
@@ -62,7 +68,7 @@ TArray<UFGRailroadTrackConnectionComponent*> FATRouter::FindRoute(UFGRailroadTra
 			{
 				continue;
 			}
-			const float Cost = Node.Cost + Track->GetLength() + ExtraCost(Track, Next);
+			const float Cost = Node.Cost + StepCost(Track, Next, Node.Cost);
 			const float* Known = BestCost.Find(Next);
 			if (!Known || Cost < *Known)
 			{

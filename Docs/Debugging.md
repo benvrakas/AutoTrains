@@ -440,3 +440,12 @@ train, then a row per train every 0.2 s:
   follow limit off and pass-through on, until each drives its length + 300 m (2 min at most); `faults.log` gets the
   trains and their reasons. `planner: CROSSING:` logs any train standing on a track crossing one another train holds,
   to find the remaining hard-stop cause.
+- 1.0.0 session (20:05-21:15) deadlocks: (1) Steel Pipe Xtra Steel/EBeams GTHR Train and Coated Plates RSC
+  Train/ACU GTHR Train A: the rear train, 0 m behind, had been granted (through the follow exception) a track past the
+  front one, its own booking there 45+ min away; the front one waited for that hold. 1.1.0 grants only up to the
+  plan's next wait, which is behind the front train. (2) AI Limiter RSC standing in merge switch 123 wasn't allowed
+  on ("would stand on ... which that train is booked on"): safe-stop trimming counted every future booking when the
+  train had no planned departure, including bookings that waited for it. Removed in 1.1.0; SIPP only avoids a
+  standing place while another booking there overlaps in time. (3) Cycles dropped out of detection for single updates
+  and were logged again each time (708 times) and, in 1.1.0, would have restarted the passing-through timer; a cycle
+  seen again within 10 s is now the same deadlock.

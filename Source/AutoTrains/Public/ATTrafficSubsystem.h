@@ -572,8 +572,11 @@ private:
 	double mConflictsBuiltAt = -1e9;
 	// Set when a track missing from the conflict model was looked up.
 	mutable bool mConflictsStale = false;
-	// The deadlocks logged and still going on, by their trains' names, to log each one once, and since when each lasts
-	// (world seconds).
-	TSet<FString> mLoggedDeadlocks;
-	TMap<FString, double> mDeadlockSince;
+	// Deadlocks going on, by their trains' names: when each was first and last seen (world seconds).
+	struct FDeadlockSeen
+	{
+		double First = 0.0;
+		double Last = 0.0;
+	};
+	TMap<FString, FDeadlockSeen> mDeadlocks;
 };

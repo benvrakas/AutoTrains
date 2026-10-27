@@ -91,6 +91,8 @@ namespace
 	// long-wait warning. [s] [cm/s]
 	constexpr float DeadlockWaitSeconds = 20.f;
 	constexpr float DeadlockShowSpeed = 50.f;
+	// A deadlock not seen for this long is over. [s]
+	constexpr double DeadlockForgetSeconds = 10.0;
 	// A blocked train slower than this counts as waiting. [cm/s]
 	constexpr float PlannerWaitSpeed = 300.f;
 
@@ -299,7 +301,7 @@ FString AATTrafficSubsystem::SetEnabled(bool bEnabled)
 	mPlanSummaryAt = GetWorld() ? GetWorld()->GetTimeSeconds() + 60.0 : 0.0;
 	mUpdateTimer = 0.f;
 	mSinceUpdate = 0.f;
-	mLoggedDeadlocks.Reset();
+	mDeadlocks.Reset();
 	if (bEnabled)
 	{
 		RebuildConflicts();
@@ -1112,9 +1114,9 @@ void AATTrafficSubsystem::LogDeadlocks()
 {
 	const double Now = GetWorld()->GetTimeSeconds();
 	// Follow each long-waiting train's chain of trains it waits for; a chain that comes back is a deadlock. Every train
-	// in one is marked; a cycle is logged when it first shows up.
+	// in one is marked; a cycle is logged when it first shows up. One that drops out of sight for a moment and comes back
+	// within DeadlockForgetSeconds is the same deadlock still going on.
 	TSet<const FATTrafficTrain*> InCycle;
-	TSet<FString> Signatures;
 	for (const TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Pair : mTrains)
 	{
 		const FATTrafficTrain& Start = Pair.Value;
@@ -1146,13 +1148,18 @@ void AATTrafficSubsystem::LogDeadlocks()
 		TArray<FString> Sorted = Names;
 		Sorted.Sort();
 		const FString Signature = FString::Join(Sorted, TEXT("|"));
-		Signatures.Add(Signature);
-		const double Since = mDeadlockSince.FindOrAdd(Signature, Now);
-		if (mSettings.bGhostDeadlocks && Now - Since >= mSettings.GhostAfterSeconds)
+		FDeadlockSeen* Seen = mDeadlocks.Find(Signature);
+		const bool bNew = !Seen;
+		if (bNew)
 		{
-			GhostThrough(Chain, Now - Since);
+			Seen = &mDeadlocks.Add(Signature, {Now, Now});
 		}
-		if (mLoggedDeadlocks.Contains(Signature))
+		Seen->Last = Now;
+		if (mSettings.bGhostDeadlocks && Now - Seen->First >= mSettings.GhostAfterSeconds)
+		{
+			GhostThrough(Chain, Now - Seen->First);
+		}
+		if (!bNew)
 		{
 			continue;
 		}
@@ -1168,15 +1175,13 @@ void AATTrafficSubsystem::LogDeadlocks()
 			}
 		}
 	}
-	// A cycle that breaks up is logged again if it comes back.
-	for (auto It = mDeadlockSince.CreateIterator(); It; ++It)
+	for (auto It = mDeadlocks.CreateIterator(); It; ++It)
 	{
-		if (!Signatures.Contains(It.Key()))
+		if (Now - It.Value().Last > DeadlockForgetSeconds)
 		{
 			It.RemoveCurrent();
 		}
 	}
-	mLoggedDeadlocks = MoveTemp(Signatures);
 	for (TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Pair : mTrains)
 	{
 		Pair.Value.bDeadlocked = InCycle.Contains(&Pair.Value);

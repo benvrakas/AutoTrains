@@ -461,3 +461,14 @@ train, then a row per train every 0.2 s:
   The one deadlock (Circuit Board/Heavy Oil Residue [Coke Steel], ghosted after 61 s) had both fronts on track
   2146636522; `FrontIndexOn` found each on the other's route at step 0 and so each treated the other as ahead and
   first. It now checks which front is nearer the track's end, as `GetRouteOrder` already did.
+- 1.1.1 session (18:09-20:04 local): receding mutual waits mostly gone; 3 deadlocks ghosted. 18:12 was inherited from
+  the save: under 1.1.0 at 17:45 Reinforced Plates and MF Resource each drove onto one of two crossings
+  (2143118901/2142548751) and needed the other, then sat "waiting for ?" (no cycle seen, no ghosting) for 22 minutes.
+  19:47 (MF Resource leaving J-Spires R-Plates SRC, Reinforced Plates heading in, single track 2147407495): once MF's
+  grant stopped short of 2147407495 its booking there was unheld, so the higher-ranked Reinforced Plates ignored it,
+  planned to drive onto 2147407495 and wait at its end until MF left the track MF stood on, which MF could only leave
+  onto 2147407495; both waits receded to 2669 s. Same family: hard stops (~20/h, at 100+ km/h with 0 to -30 m left,
+  `at_overrun_why.py`): 20 of 22 "stands on" a crossing track whose other train was late. Fixed in 1.2.0 with
+  committed bookings (`MarkCommitted`, respected under every scope). Ghosting trains no longer log CHECK FAILED or
+  "can't stop short". Not yet explained: 19:34 four-train cycle of plan waits (Coated Plates RSC Train, Coated Plates
+  RSC B, ACU GTHR A, Steel Pipe Xtra Steel), "no plan after 32 waits" repeats for Reinforced Plates and Rubber SNK.

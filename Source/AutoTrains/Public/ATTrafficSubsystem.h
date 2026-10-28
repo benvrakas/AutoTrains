@@ -505,8 +505,8 @@ private:
 	// crossing one another train holds.
 	FString mLastDoubleHold;
 	TSet<FString> mLoggedCrossings;
-	// Pairs of tracks the game counts as overlapping, logged once as crossing or not.
-	TSet<FString> mLoggedPairs;
+	// Pairs of tracks the game counts as overlapping that were logged as not crossing.
+	TSet<FString> mLoggedClearPairs;
 
 	// Vehicles the acceleration and top speed settings have changed.
 	TMap<TWeakObjectPtr<AFGRailroadVehicle>, FATVehicleBase> mVehicleBase;

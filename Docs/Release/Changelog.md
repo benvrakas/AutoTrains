@@ -9,8 +9,11 @@
   pass with its corrections ("no plan after 32 waits" is gone) and the separate route search, so the route a search
   finds is exactly the plan the train then drives.
 - **Straights planned as one stretch:** speed and stops are only decided at switches, crossings, platforms and
-  one-way signals, so planning has far less to look at on lines built from many short pieces. Trains queue on a
-  straight one behind the other and plan to stand behind the trains already waiting there.
+  one-way signals, so planning has far less to look at on lines built from many short pieces; trains on a straight simply queue
+  one behind the other.
+- **Fixed: trains slowing for each other at junctions where their tracks only run close.** Two tracks count as
+  crossing only where their centre lines come within 5.5 m, not wherever the game sees their outlines overlap (curves
+  a foundation apart).
 - **A train that finds no way goes first:** when a train's plan fails because a train planned before it is in the
   way, it is planned before that train for the rest of its trip and the round is planned again (new setting
   Planning retries, 3 by default). A train is never put before one ahead of it on the same line.

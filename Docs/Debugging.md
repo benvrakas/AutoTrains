@@ -519,3 +519,11 @@ train, then a row per train every 0.2 s:
   end is now allowed at any speed reached. The squared-speed slack added for the first standstill was no cause and is
   reverted; harder braking when already too fast, crawling past a track end too close to stop at, 32 speed bands
   and planning a train without a plan at once stay (each closes a real gap).
+- 6e1071b session (03:31-03:46 local): Cable RSC waited for AI Limiter RSC at a junction on track 2146916052 vs
+  2146621121, a pair from AFGBuildableRailroadTrack::GetOverlappingTracks that never meets (the game counts curves a
+  foundation apart as overlapping, as the user confirmed for vanilla blocks). Crossings now need the centre lines
+  within JointClearance (sampled every JointFoulStep, 3D); dropped pairs are logged once. Also: the queue-behind stop
+  shift of the run merging (QueueAhead) counted same-way trains merely passing the run's last track, pushed the stop
+  behind where a follower already was and made plans fail every other cycle ("no way on past switch 130", many tail
+  windows missed, cycles up to 78 ms with retries); removed, the same-way rule already lets followers plan to wait at a
+  run's end behind the leader.

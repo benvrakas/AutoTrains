@@ -851,7 +851,6 @@ void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds, bool bW
 	Cycle->Graph = mSearchGraph;
 	Cycle->Now = Now;
 	Cycle->Headway = GetSafetyMarginSeconds();
-	Cycle->QueueGap = GetStopDistance();
 	// Retries end by half the update interval, so the cycle is in by the next update.
 	Cycle->MaxRetries = FMath::RoundToInt(mSettings.PlanRetries);
 	Cycle->RetrySeconds = mSettings.UpdateIntervalSeconds * 0.5;

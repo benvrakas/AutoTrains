@@ -199,8 +199,6 @@ struct FATSippCycle
 	TSharedPtr<const FATSippGraph, ESPMode::ThreadSafe> Graph;
 	double Now = 0.0;
 	double Headway = 0.0;
-	// Gap a train keeps to the one ahead when they queue. [cm]
-	float QueueGap = 0.f;
 	// How often and for how long the turns may be planned again with a failed train moved up. [s]
 	int32 MaxRetries = 0;
 	double RetrySeconds = 0.0;

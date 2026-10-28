@@ -547,9 +547,7 @@ namespace
 				}
 				const bool bGoalNode = IsGoal(State.Step + Run.Num(), End);
 				const float SpeedSquared = FMath::Square(State.Speed);
-				// Behind the same-way trains still waiting there when it could get there first.
-				const float Queue = bGoalNode ? 0.f : QueueAhead(End, State.Arrive + (NodePos - State.Pos) / Top);
-				const float StopAt = NodePos - (bGoalNode ? 0.f : Graph.StopMarginOf[End]) - Queue;
+				const float StopAt = NodePos - (bGoalNode ? 0.f : Graph.StopMarginOf[End]);
 				if (StopAt - State.Pos >= MinMove && (StopAt <= ForcedReach || SpeedSquared <= 2.f * Brake * (StopAt - State.Pos) + 1.f))
 				{
 					Move(Index, Run, NodePos, StopAt, 0.f, true);
@@ -617,22 +615,6 @@ namespace
 			}
 		}
 
-		// How far back from the end of Node's track the train stands at Time behind the same-way trains still on it then:
-		// their lengths and the gap kept to each. [cm]
-		float QueueAhead(int32 Node, double Time) const
-		{
-			const int32 Track = Graph.TrackOf[Node];
-			float Queue = 0.f;
-			for (const FATSippBooking& Booking : Table.ByResource[Track])
-			{
-				if (Booking.Owner != Slot && Booking.Exit == Node && Booking.Via == INDEX_NONE && Booking.Enter < Time && Booking.Clear > Time
-					&& Cycle.Trains.IsValidIndex(Booking.Owner) && !IsBehind(Booking.Owner, Track))
-				{
-					Queue += Cycle.Trains[Booking.Owner].Length + Cycle.QueueGap;
-				}
-			}
-			return Queue;
-		}
 
 		void NoteBlock(int32 Index, int32 By, int32 Resource, bool bByRank)
 		{

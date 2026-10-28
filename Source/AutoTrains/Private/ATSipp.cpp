@@ -57,13 +57,6 @@ namespace
 		return Time >= ATSippNever * 0.5;
 	}
 
-	// Slack on squared speeds when telling whether one is reachable from another, well above float rounding.
-	// [cm^2/s^2]
-	float SquaredSlack(float A, float B)
-	{
-		return 1e-3f * FMath::Max(A, B) + 100.f;
-	}
-
 	// Time from standstill over Distance, speeding up at Accel to Top. [s]
 	double RestTime(float Distance, float Top, float Accel)
 	{
@@ -98,12 +91,11 @@ namespace
 			Brake = InBrake;
 			const float FromSquared = FMath::Square(From);
 			const float ToSquared = FMath::Square(To);
-			const float Slack = SquaredSlack(FromSquared, ToSquared);
 			if (bHarder && Length > 0.f)
 			{
 				Brake = FMath::Max(Brake, (FromSquared - ToSquared) / (2.f * Length));
 			}
-			if (ToSquared > FromSquared + 2.f * Accel * Length + Slack || ToSquared < FromSquared - 2.f * Brake * Length - Slack)
+			if (ToSquared > FromSquared + 2.f * Accel * Length + 1.f || ToSquared < FromSquared - 2.f * Brake * Length - 1.f)
 			{
 				return false;
 			}
@@ -541,7 +533,7 @@ namespace
 				const bool bGoalNode = IsGoal(State.Step + 1, Next);
 				const float StopAt = NodePos - (bGoalNode ? 0.f : Graph.StopMarginOf[Next]);
 				const float SpeedSquared = FMath::Square(State.Speed);
-				if (StopAt - State.Pos >= MinMove && (StopAt <= ForcedReach || SpeedSquared <= 2.f * Brake * (StopAt - State.Pos) + SquaredSlack(SpeedSquared, 0.f)))
+				if (StopAt - State.Pos >= MinMove && (StopAt <= ForcedReach || SpeedSquared <= 2.f * Brake * (StopAt - State.Pos) + 1.f))
 				{
 					Move(Index, Next, Track, NodePos, StopAt, 0.f, true);
 				}
@@ -554,7 +546,8 @@ namespace
 				// Down to a crawl at least, so a train braking to a stop can still pass a track end too close to stop at.
 				const float Slowest = FMath::Max(NodePos <= ForcedReach ? 0.f : FMath::Sqrt(FMath::Max(SpeedSquared - 2.f * Brake * Pass, 0.f)), MinPassSpeed);
 				TArray<float, TInlineAllocator<6>> Speeds;
-				if (Fastest >= MinPassSpeed)
+				// However slow: a train standing at a track end gets past it only creeping.
+				if (Fastest > 0.f)
 				{
 					Speeds.Add(Fastest);
 				}

@@ -512,3 +512,10 @@ train, then a row per train every 0.2 s:
   (`MovedAheadOf`); bounded by the Planning retries setting and half the update interval. The move sticks for the leg
   (LegStart just before the other train's). Logs: `is planned before ... from now on`, `planning retry limit
   reached`, and `N trains moved up after a failed plan` in the 60 s summary.
+- Second standstill (c2b684a, 03:16-03:25 local): every train at a station "no way to its goal (1 states; left out:
+  0 ...)". The real cause of both standstills: a train standing with its front at its track's end (trains stand so
+  at stations) had no move at all, since passing a track end needed at least 0.5 m/s and speeding up from standstill
+  over the last centimetre reaches about 0.08 m/s; trains waiting for it then never moved either. Passing a track
+  end is now allowed at any speed reached. The squared-speed slack added for the first standstill was no cause and is
+  reverted; harder braking when already too fast, crawling past a track end too close to stop at, 32 speed bands
+  and planning a train without a plan at once stay (each closes a real gap).

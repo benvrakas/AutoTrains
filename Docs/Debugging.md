@@ -543,3 +543,10 @@ train, then a row per train every 0.2 s:
   each run's length-weighted grade to its accel/brake (FATSippGraph::GradeOf), and the catch gets -GradeAhead (the
   game's restrictive grade weakens braking when positive). Watch for "freight platforms move cargo in" and the new
   "(expected ..; load/unload once, cargo moved)" stay lines.
+- 1.3.1 session (12:21-12:45 local, 17 trains): station stays predicted within 0.5 s (27.1 s with cargo, 15.0 s
+  without); no deadlocks, crossings, pass-throughs or slow updates. Bug: Reinforced Plates Train at 120 km/h lost the
+  track 3 m ahead it held from its last grant when its plan failed for a cycle ("its plan has no slot there yet":
+  CanEnter refused any resource without a plan entry), and forced braking stopped it at 552 m/s^2. Held resources
+  are now kept without a plan slot, like locked ones (only a train standing there or holding it stops it). Open:
+  1-15 brief plan failures a minute, ~90% "tail windows missed" (no wait place where the body clears the next
+  booking), each gone the next cycle.

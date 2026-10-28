@@ -438,7 +438,9 @@ bool AATTrafficSubsystem::CanEnter(FATTrafficTrain& Self, const FResourceKey& Ke
 	FString& OutWhy) const
 {
 	const AFGTrain* SelfTrain = Self.Train.Get();
-	if (IsOpen(Enter))
+	// Without a slot in its plan nothing new is given, but what it held from its last grant it keeps.
+	const bool bUnplanned = IsOpen(Enter);
+	if (bUnplanned && !bHeldBefore)
 	{
 		OutBlocker = mTrains.Find(Self.PlanWaitFor);
 		OutWhy = TEXT("its plan has no slot there yet");
@@ -461,9 +463,9 @@ bool AATTrafficSubsystem::CanEnter(FATTrafficTrain& Self, const FResourceKey& Ke
 			Keys.Add(Crossing);
 		}
 	}
-	// Held from its last grant and locked (it may not stop short of it at service braking): the train keeps it whatever
-	// was booked since; only a train standing there or holding it stops it.
-	const bool bKeeps = bHeldBefore && bLocked;
+	// Held from its last grant and locked (it may not stop short of it at service braking) or without a slot in its
+	// plan: the train keeps it whatever was booked since; only a train standing there or holding it stops it.
+	const bool bKeeps = bHeldBefore && (bLocked || bUnplanned);
 	for (const FResourceKey& Checked : Keys)
 	{
 		const TArray<FBooking>* Bookings = bKeeps ? nullptr : mBookings.Find(Checked);

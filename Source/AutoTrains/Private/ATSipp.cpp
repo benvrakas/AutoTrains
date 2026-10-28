@@ -37,7 +37,7 @@ void FATSippTable::Remove(int32 Owner)
 namespace
 {
 	// Search size limit per plan (some MB at most).
-	constexpr int32 MaxStates = 100000;
+	constexpr int32 MaxStates = 200000;
 	// A train standing at a track end tries at most MaxWindows windows of the way on, each found within MaxShifts
 	// moves of its departure.
 	constexpr int32 MaxWindows = 4;
@@ -50,11 +50,18 @@ namespace
 	// Speeds a train may pass a track end at besides the fastest and slowest it can reach there, as shares of its
 	// cruising speed, and the number of speed bands its states there are told apart by.
 	constexpr float PassShares[] = {0.25f, 0.5f, 0.75f};
-	constexpr float SpeedBands = 8.f;
+	constexpr float SpeedBands = 32.f;
 
 	bool IsNever(double Time)
 	{
 		return Time >= ATSippNever * 0.5;
+	}
+
+	// Slack on squared speeds when telling whether one is reachable from another, well above float rounding.
+	// [cm^2/s^2]
+	float SquaredSlack(float A, float B)
+	{
+		return 1e-3f * FMath::Max(A, B) + 100.f;
 	}
 
 	// Time from standstill over Distance, speeding up at Accel to Top. [s]
@@ -81,8 +88,8 @@ namespace
 		float Accel = 1.f;
 		float Brake = 1.f;
 
-		// Returns false if To can't be reached from From over Length.
-		bool Make(float InLength, float InFrom, float InTo, float Top, float InAccel, float InBrake)
+		// Returns false if To can't be reached from From over Length; bHarder: braking harder than Brake where it must.
+		bool Make(float InLength, float InFrom, float InTo, float Top, float InAccel, float InBrake, bool bHarder)
 		{
 			Length = InLength;
 			From = InFrom;
@@ -91,7 +98,12 @@ namespace
 			Brake = InBrake;
 			const float FromSquared = FMath::Square(From);
 			const float ToSquared = FMath::Square(To);
-			if (ToSquared > FromSquared + 2.f * Accel * Length + 1.f || ToSquared < FromSquared - 2.f * Brake * Length - 1.f)
+			const float Slack = SquaredSlack(FromSquared, ToSquared);
+			if (bHarder && Length > 0.f)
+			{
+				Brake = FMath::Max(Brake, (FromSquared - ToSquared) / (2.f * Length));
+			}
+			if (ToSquared > FromSquared + 2.f * Accel * Length + Slack || ToSquared < FromSquared - 2.f * Brake * Length - Slack)
 			{
 				return false;
 			}
@@ -193,6 +205,7 @@ namespace
 			Accel = FMath::Max(Train.Accel, 1.f);
 			Brake = FMath::Max(Train.Brake, 1.f);
 			Top = FMath::Max3(Train.Cruise, Train.Speed, MinPassSpeed * 2.f);
+			ForcedReach = FMath::Square(Train.Speed) / (2.f * Brake);
 		}
 
 		// Plans the train along Route (bLastIsGoal: its last step is the goal), else to its furthest stop there, where it
@@ -203,6 +216,9 @@ namespace
 			const int32 Stand = Final != INDEX_NONE ? Final : FurthestStopped != INDEX_NONE ? FurthestStopped : FurthestAny;
 			Build(Stand, Final != INDEX_NONE, Out);
 			Out.States = States.Num();
+			Out.RejectedMotion = RejectedMotion;
+			Out.RejectedTail = RejectedTail;
+			Out.RejectedStay = RejectedStay;
 		}
 
 		// The fastest way from where the train is, along its route up to step Commit, then over the whole network to the
@@ -226,6 +242,7 @@ namespace
 			States.Reset();
 			Best.Reset();
 			ReachedTracks.Reset();
+			RejectedMotion = RejectedTail = RejectedStay = 0;
 			FState Start;
 			Start.bStopped = Train.bStanding;
 			Start.Speed = Train.bStanding ? 0.f : Train.Speed;
@@ -260,6 +277,7 @@ namespace
 					{
 						return Item.State;
 					}
+					RejectedStay += State.bStopped ? 1 : 0;
 					continue;
 				}
 				if (States.Num() >= MaxStates)
@@ -519,7 +537,7 @@ namespace
 				const bool bGoalNode = IsGoal(State.Step + 1, Next);
 				const float StopAt = NodePos - (bGoalNode ? 0.f : Graph.StopMarginOf[Next]);
 				const float SpeedSquared = FMath::Square(State.Speed);
-				if (StopAt - State.Pos >= MinMove && SpeedSquared <= 2.f * Brake * (StopAt - State.Pos) + 1.f)
+				if (StopAt - State.Pos >= MinMove && (StopAt <= ForcedReach || SpeedSquared <= 2.f * Brake * (StopAt - State.Pos) + SquaredSlack(SpeedSquared, 0.f)))
 				{
 					Move(Index, Next, Track, NodePos, StopAt, 0.f, true);
 				}
@@ -529,7 +547,8 @@ namespace
 					continue;
 				}
 				const float Fastest = FMath::Min(Top, FMath::Sqrt(SpeedSquared + 2.f * Accel * Pass));
-				const float Slowest = FMath::Sqrt(FMath::Max(SpeedSquared - 2.f * Brake * Pass, 0.f));
+				// Down to a crawl at least, so a train braking to a stop can still pass a track end too close to stop at.
+				const float Slowest = FMath::Max(NodePos <= ForcedReach ? 0.f : FMath::Sqrt(FMath::Max(SpeedSquared - 2.f * Brake * Pass, 0.f)), MinPassSpeed);
 				TArray<float, TInlineAllocator<6>> Speeds;
 				if (Fastest >= MinPassSpeed)
 				{
@@ -570,8 +589,9 @@ namespace
 			const FState State = States[Index];
 			const float Distance = To - State.Pos;
 			FEdge Edge;
-			if (!Edge.Make(Distance, State.Speed, Speed, Top, Accel, Brake))
+			if (!Edge.Make(Distance, State.Speed, Speed, Top, Accel, Brake, To <= ForcedReach))
 			{
+				++RejectedMotion;
 				return;
 			}
 			// What the move starts on: the switch joint at the track end it comes from, then the track.
@@ -657,6 +677,7 @@ namespace
 					}
 					if (bHopeless)
 					{
+						++RejectedTail;
 						return;
 					}
 				}
@@ -664,6 +685,7 @@ namespace
 				{
 					if (!bCanWait || Later <= Leave || IsNever(Later))
 					{
+						RejectedTail += Cause == INDEX_NONE ? 1 : 0;
 						return;
 					}
 					Leave = Later;
@@ -942,6 +964,9 @@ namespace
 		float Accel = 1.f;
 		float Brake = 1.f;
 		float Top = 1.f;
+		// How far the front gets before service braking from the speed now could stop it: moves ending within it may
+		// brake harder, as the train has to. [cm]
+		float ForcedReach = 0.f;
 		const TArray<int32>* Route = nullptr;
 		bool bFree = false;
 		bool bGoalAtEnd = true;
@@ -951,6 +976,11 @@ namespace
 		TSet<int32> ReachedTracks;
 		int32 FurthestStopped = INDEX_NONE;
 		int32 FurthestAny = 0;
+		// Moves left out because the train can't reach the speed, its tail can't keep to a window, or the stay at the
+		// goal doesn't fit, for the log.
+		int32 RejectedMotion = 0;
+		int32 RejectedTail = 0;
+		int32 RejectedStay = 0;
 	};
 }
 

@@ -176,7 +176,12 @@ struct FATSippResult
 	double OldArrival = ATSippNever;
 	int32 SearchStates = 0;
 	double SearchMilliseconds = 0.0;
+	// The plan's search: its states, and the moves it left out because the train couldn't reach the speed, its tail
+	// couldn't keep to a window, or the stay at the goal didn't fit.
 	int32 States = 0;
+	int32 RejectedMotion = 0;
+	int32 RejectedTail = 0;
+	int32 RejectedStay = 0;
 };
 
 // One planning cycle: every train in turn (slot order) removes its own bookings and books its new plan around the

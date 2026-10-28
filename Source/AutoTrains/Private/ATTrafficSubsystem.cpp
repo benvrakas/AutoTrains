@@ -564,6 +564,7 @@ void AATTrafficSubsystem::ReadTrain(FATTrafficTrain& State, AFGTrain* Train) con
 		State.bForcedBrake = false;
 		State.bCatchArmed = false;
 		State.ClearSeconds = -1.f;
+		State.bHasPlan = false;
 	}
 }
 

@@ -783,7 +783,7 @@ void AATTrafficSubsystem::FillSippTrain(const FATTrafficTrain& State, const FATS
 	}
 }
 
-void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds)
+void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds, bool bWait)
 {
 	if (!mSearchGraph.IsValid())
 	{
@@ -966,6 +966,12 @@ void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds)
 		}
 	}
 	mCycle = Cycle;
+	if (bWait)
+	{
+		ATSipp::Run(*Cycle);
+		ApplyPlanCycle();
+		return;
+	}
 	ATSipp::Launch(Cycle);
 }
 
@@ -1044,6 +1050,7 @@ void AATTrafficSubsystem::ApplyPlan(FATTrafficTrain& State, const FATSippCycle& 
 		ApplyReroute(State, Cycle, Slot);
 	}
 	++mPlans;
+	State.bHasPlan = true;
 	State.PlanTrackEnter.Reset();
 	State.PlanJointEnter.Reset();
 	State.PlanTrackLocked.Reset();
@@ -1095,7 +1102,8 @@ void AATTrafficSubsystem::ApplyPlan(FATTrafficTrain& State, const FATSippCycle& 
 		if (!Failure.IsEmpty())
 		{
 			++mPlanFailures;
-			UE_LOG(LogAutoTrains, Log, TEXT("planner: %s: %s; it stands before it until that train has passed"), *NameOf(Train), *Failure);
+			UE_LOG(LogAutoTrains, Log, TEXT("planner: %s: %s; it stands before it until that train has passed (%d states; left out: %d moves out of its reach, %d tail windows missed, %d stays at the goal that don't fit)"),
+				*NameOf(Train), *Failure, Result.States, Result.RejectedMotion, Result.RejectedTail, Result.RejectedStay);
 		}
 		State.PlanFailure = Failure;
 	}
@@ -1244,6 +1252,13 @@ void AATTrafficSubsystem::UpdatePlannedTraffic(float DeltaSeconds)
 			Driving.Add(Pair.Value);
 		}
 	}
+	// A train driven without a plan yet would be given no track: planned at once, on this thread.
+	if (Driving.ContainsByPredicate([](const FATTrafficTrain* State) { return !State->bHasPlan; }))
+	{
+		mCycle.Reset();
+		StartPlanCycle(Now, mSinceCycle + DeltaSeconds, true);
+		mSinceCycle = 0.f;
+	}
 	Driving.Sort([](const FATTrafficTrain& A, const FATTrafficTrain& B)
 	{
 		return static_cast<uint32>(A.PlanRank) < static_cast<uint32>(B.PlanRank);
@@ -1356,7 +1371,7 @@ void AATTrafficSubsystem::UpdatePlannedTraffic(float DeltaSeconds)
 	mSinceCycle += DeltaSeconds;
 	if (!mCycle.IsValid())
 	{
-		StartPlanCycle(Now, mSinceCycle);
+		StartPlanCycle(Now, mSinceCycle, false);
 		mSinceCycle = 0.f;
 	}
 	else

@@ -153,6 +153,8 @@ struct FATTrafficTrain
 	TWeakObjectPtr<AFGBuildableRailroadStation> LegGoal;
 	// Place in this update's planning order of self-driving trains, first 0; INDEX_NONE for other trains.
 	int32 PlanRank = INDEX_NONE;
+	// Whether a planning cycle has planned it since it was last driven by the game or a player.
+	bool bHasPlan = false;
 	// When the plan has the front enter each route track and switch (world seconds), and which of those bookings are
 	// locked.
 	TMap<const AFGBuildableRailroadTrack*, double> PlanTrackEnter;
@@ -422,8 +424,9 @@ private:
 	// Lists the resources along State's route with the front positions at which it enters and clears them, plus those
 	// its tail still holds behind the front (entered already).
 	void CollectPasses(const FATTrafficTrain& State, TArray<FPass>& Out) const;
-	// Starts a planning cycle (ATSipp) on worker threads: every train in turn, with the bookings as they are now.
-	void StartPlanCycle(double Now, float DeltaSeconds);
+	// Starts a planning cycle (ATSipp) on worker threads: every train in turn, with the bookings as they are now;
+	// bWait runs it on this thread and applies it at once.
+	void StartPlanCycle(double Now, float DeltaSeconds, bool bWait);
 	// Takes the finished cycle's bookings and plans.
 	void ApplyPlanCycle();
 	// Fills a cycle train from State's route: motion, the resources it holds, can't stop short of or has behind it, and

@@ -491,3 +491,13 @@ train, then a row per train every 0.2 s:
   updates waited for one`), the cycle's table replaces `mBookings` when it lands (Tick), grants stay on the game
   thread. Failures read `no way on past <resource> for <train>`; reroutes `rerouted after ...: <old> -> <new> s to
   its goal, a -> b tracks ... (route search: n states, m ms on a worker)`.
+- First ATSipp test (a9d7d4a, 02:43-02:58 local): every train came to a standstill; almost every plan "no way to its
+  goal" with no train named, 187 bookings, cycles 2.4 ms. Causes: (1) the search never braked harder than service
+  braking, so a train already too fast for its next stop (approaching its station) had no plan, stood for good, and
+  its followers (same way, open Clear) failed after it; the old FProfile braked harder where it had to. Moves ending
+  within the service stopping distance from the speed now may now brake as hard as needed. (2) A braking train under
+  0.5 m/s at a track end too close to stop at had no move; passing speeds go down to a crawl. (3) 8 speed bands let a
+  slightly faster state that can't stop prune a slower one that can; now 32. (4) Before the first cycle landed no
+  train had a plan, so none was granted anything (forced braking at up to 358 m/s^2): a driven train without a plan
+  is now planned at once on the game thread. Failure lines now count the moves left out (out of reach, tail window,
+  stay at the goal).

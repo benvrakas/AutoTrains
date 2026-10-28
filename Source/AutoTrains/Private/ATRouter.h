@@ -14,7 +14,7 @@ class FATRouter
 {
 public:
 	// Returns the fastest route from Start, reached StartSeconds from now, to Goal, both included, or an empty array;
-	// one-way signals don't count, since trains ignore signals. StepSeconds (track, exit connection, seconds from now
+	// signals only set the directions track may be used in, as in the game. StepSeconds (track, exit connection, seconds from now
 	// the track is reached) gives the seconds to get over each track.
 	static TArray<UFGRailroadTrackConnectionComponent*> FindFastestRoute(UFGRailroadTrackConnectionComponent* Start, UFGRailroadTrackConnectionComponent* Goal,
 		float StartSeconds, TFunctionRef<float(const AFGBuildableRailroadTrack*, const UFGRailroadTrackConnectionComponent*, float)> StepSeconds);

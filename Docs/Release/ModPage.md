@@ -67,10 +67,16 @@ you like, and let the trains sort it out.
 ### Getting started
 
 1. **Back up your save.**
-2. Install the mod and load your world. Existing signals stay where they are but are ignored while traffic control is
-   on, so you can try the mod without removing anything.
+2. Install the mod and load your world. Existing signals stay where they are but no longer stop trains while traffic
+   control is on, so you can try the mod without removing anything.
 3. To get rid of signals for good, type `/at removesignals confirm` in chat. It dismantles every block and path
    signal in the world. There's no refund and no undo.
+
+### One-way track
+
+Signals still set direction, as in the game: no train passes a signal from behind. To keep trains on the right side of
+a double track, or to make a link one-way, place one block signal facing the way trains should go. A signal on each
+side of the track (back to back) allows both ways.
 
 ### Works with
 

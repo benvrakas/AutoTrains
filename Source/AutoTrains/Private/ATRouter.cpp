@@ -45,6 +45,11 @@ TArray<UFGRailroadTrackConnectionComponent*> FATRouter::FindFastestRoute(UFGRail
 		{
 			break;
 		}
+		// The game's one-way rule: no passing a signal from behind.
+		if (Node.Connection->GetTrailingSignal() && !Node.Connection->GetFacingSignal())
+		{
+			continue;
+		}
 		for (UFGRailroadTrackConnectionComponent* Entry : Node.Connection->GetConnections())
 		{
 			UFGRailroadTrackConnectionComponent* Next = Entry ? Entry->GetOpposite() : nullptr;

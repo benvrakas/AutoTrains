@@ -6,7 +6,8 @@ reroutes so that no two trains ever need the same track at the same time. Trains
 roundabouts, take the fastest route through everyone's bookings, and docked trains' departures are booked ahead from
 their timetables.
 
-- Existing signals are ignored while traffic control is on; `/at removesignals confirm` removes them all.
+- Existing signals don't stop trains while traffic control is on; they only keep the game's one-way rule (no passing
+  a signal from behind), so a signal marks track as one-way. `/at removesignals confirm` removes them all.
 - Optional: colliding trains pass through each other instead of derailing.
 - Works with DynamicTimeTable and Freight Car Control; replaces DynamicTrainRoutes.
 - Nothing is written into save data; turning traffic control off (or uninstalling) gives trains back to signals.

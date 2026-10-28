@@ -103,7 +103,7 @@ EExecutionStatus AATChatCommand::ExecuteCommand_Implementation(UCommandSender* S
 	{
 		if (Arguments.Num() != 2 || !Arguments[1].Equals(TEXT("confirm"), ESearchCase::IgnoreCase))
 		{
-			Sender->SendChatMessage(TEXT("This dismantles every block and path signal in the world. Type /at removesignals confirm to do it."));
+			Sender->SendChatMessage(TEXT("This dismantles every block and path signal in the world, also the ones that keep trains to one direction on one-way track. Type /at removesignals confirm to do it."));
 			return EExecutionStatus::BAD_ARGUMENTS;
 		}
 		Sender->SendChatMessage(Control->RemoveAllSignals());

@@ -13,8 +13,10 @@ class AFGRailroadVehicle;
 class AFGTrain;
 class UCurveFloat;
 class UFGRailroadTrackConnectionComponent;
-struct FATSearchGraph;
-struct FATSearchTask;
+struct FATSippCycle;
+struct FATSippGraph;
+struct FATSippResult;
+struct FATSippTrain;
 
 // Full-brake braking is measured and planned per speed band of this width, up to ATBrakeBands bands; the top band
 // also covers every speed above it. [cm/s]
@@ -130,10 +132,6 @@ struct FATTrafficTrain
 	int32 Reroutes = 0;
 	// Seconds before this train may reroute again after a reroute.
 	float RerouteCooldown = 0.f;
-	// Its route search running on a worker thread, if any.
-	TSharedPtr<FATSearchTask, ESPMode::ThreadSafe> Search;
-	// Where and for whom the last search found no way along its route while its plan had one, so it's logged once.
-	FString SearchNote;
 	// Last track the train may drive to the end of; null means no limit beyond its route.
 	TWeakObjectPtr<AFGBuildableRailroadTrack> AuthorityTrack;
 	// ATC path and path segment of the authority track.
@@ -155,20 +153,22 @@ struct FATTrafficTrain
 	TWeakObjectPtr<AFGBuildableRailroadStation> LegGoal;
 	// Place in this update's planning order of self-driving trains, first 0; INDEX_NONE for other trains.
 	int32 PlanRank = INDEX_NONE;
-	// When the plan has the front enter each route step's track and the switch before it (world seconds; a large value
-	// where nothing is booked).
-	TArray<double> PlanTrackEnter;
-	TArray<double> PlanJointEnter;
-	// Whether those bookings are locked.
-	TArray<bool> PlanTrackLocked;
-	TArray<bool> PlanJointLocked;
-	// The plan's first wait still ahead: where the front stands [cm], when it moves off (world seconds, -1 for none), and
-	// the train it waits for.
+	// When the plan has the front enter each route track and switch (world seconds), and which of those bookings are
+	// locked.
+	TMap<const AFGBuildableRailroadTrack*, double> PlanTrackEnter;
+	TMap<int32, double> PlanJointEnter;
+	TSet<const AFGBuildableRailroadTrack*> PlanTrackLocked;
+	TSet<int32> PlanJointLocked;
+	// The plan's first wait still ahead: at the end of the track left through PlanWaitExit, or where the train stands
+	// (bPlanWaitHere); when it moves off (world seconds, -1 for none), and the train it waits for. PlanWaitAt: how far
+	// ahead of the front that is, as of the last grant [cm].
+	TWeakObjectPtr<UFGRailroadTrackConnectionComponent> PlanWaitExit;
+	bool bPlanWaitHere = false;
 	float PlanWaitAt = -1.f;
 	double PlanDepart = -1.0;
 	TWeakObjectPtr<AFGTrain> PlanWaitFor;
-	// When the plan has the front reach the goal's track, and what it was at the last route search (world seconds, -1
-	// unknown).
+	// When the plan has the front reach the goal's track end, and what it was at the last route search (world seconds,
+	// -1 unknown).
 	double PlanArrival = -1.0;
 	double SearchedArrival = -1.0;
 	// Why the last plan failed and which train it is committed against, empty if neither; a summary for /at traffic.
@@ -414,17 +414,9 @@ private:
 		// holding up a train planned before it; it can't give way inside that stretch.
 		bool bCommitted = false;
 	};
-	// Which other bookings a plan has to keep clear of: all but the uncommitted ones of self-driving trains planned after
-	// it, all but self-driving trains' uncommitted ones, or locked ones (uncommitted: neither locked, held nor committed).
-	enum class EConflictScope : uint8
-	{
-		Ranked,
-		NotUnlockedMoving,
-		LockedOnly,
-	};
 	// One resource a train passes on its route: the front position at which it enters it, the one at which its tail
-	// has cleared it [cm along the route from the front], the times [world s], and the route step it belongs to
-	// (INDEX_NONE for what the tail holds behind the route).
+	// has cleared it [cm along the route from the front], and the route step it belongs to (INDEX_NONE for what the tail
+	// holds behind the route).
 	struct FPass
 	{
 		FResourceKey Key;
@@ -432,31 +424,7 @@ private:
 		const UFGRailroadTrackConnectionComponent* Via = nullptr;
 		float EnterAt = 0.f;
 		float ClearAt = 0.f;
-		double Enter = 0.0;
-		double Clear = 0.0;
 		int32 RouteIndex = INDEX_NONE;
-		bool bLocked = false;
-		bool bHeld = false;
-		bool bCommitted = false;
-	};
-	// A wait in a plan: the front stands at At [cm along the route] until Until.
-	struct FWait
-	{
-		float At = 0.f;
-		double Until = 0.0;
-	};
-	struct FPlan
-	{
-		TArray<FWait> Waits;
-		TArray<FPass> Passes;
-		// The train whose booking caused the first wait; why planning failed, if it did; a train booked on a resource
-		// this one can no longer stop short of, if any, and that resource.
-		const AFGTrain* WaitFor = nullptr;
-		FString Failure;
-		const AFGTrain* CommittedWith = nullptr;
-		FString CommittedAt;
-		// Distance within which the train can't stop any more. [cm]
-		float Committed = 0.f;
 	};
 	// The resources an owner has bookings on, to remove them again.
 	struct FOwnerBookings
@@ -466,62 +434,35 @@ private:
 	};
 
 	static float GetSafetyMarginSeconds();
-	// Plans and books every train in turn, then gives each self-driving train its movement authority from the bookings.
+	// Applies a finished planning cycle, gives each self-driving train its movement authority from the bookings, and
+	// starts the next cycle.
 	void UpdatePlannedTraffic(float DeltaSeconds);
 	// Lists the resources along State's route with the front positions at which it enters and clears them, plus those
 	// its tail still holds behind the front (entered already).
 	void CollectPasses(const FATTrafficTrain& State, TArray<FPass>& Out) const;
-	// Times Passes for State's motion with Waits, from Now; the train stays GoalDwell at its goal. [s]
-	void TimePasses(const FATTrafficTrain& State, const FRouteSpeed& Speed, const TArray<FWait>& Waits, double Now, double GoalDwell, TArray<FPass>& Passes) const;
-	// Plans State around the other trains' bookings in Scope, starting from FixedWaits: each conflict adds a wait at the
-	// last place to stand before it; with no such place the train stands for good before it. Its locked passes are kept
-	// whatever others booked.
-	void PlanTrain(const FATTrafficTrain& State, double Now, const TArray<FWait>& FixedWaits, double GoalDwell, EConflictScope Scope, FPlan& Plan) const;
-	// Marks State's timed Passes as committed from the furthest one it holds or can't stop short of up to the first of
-	// StopPoints where its whole body stands on nothing a train planned before it has booked from its arrival on.
-	void MarkCommitted(const FATTrafficTrain& State, const FRouteSpeed& Speed, const TArray<FWait>& Waits, double Now, double GoalDwell, double Headway,
-		const TArray<float>& StopPoints, TArray<FPass>& Passes) const;
-	// A stretch of time another train's booking keeps a resource from this train (world seconds).
-	struct FBlock
-	{
-		double Lo = 0.0;
-		double Hi = 0.0;
-		const AFGTrain* Owner = nullptr;
-	};
-	// Adds the blocks other trains' bookings in Scope put on Pass's resource (or a track crossing it) for Self.
-	void CollectBlocks(const FATTrafficTrain& Self, const FPass& Pass, double Headway, EConflictScope Scope, TArray<FBlock>& Out) const;
-	// Safe-interval search along State's route: the earliest timetable from Now that waits only at the ends of route
-	// tracks, with the train's whole body clear of other trains' bookings while it stands there or drives on, leaving
-	// the first stop no earlier than MinDepart and staying GoalDwell at the goal. Sets the waits and the train each waits
-	// for; returns false if the goal can't be reached, the waits then ending with one for good at the furthest stop.
-	bool PlanSafeIntervals(const FATTrafficTrain& State, const FRouteSpeed& Speed, double Now, const TArray<FPass>& Passes, double MinDepart,
-		double GoalDwell, EConflictScope Scope, float Committed, TArray<FWait>& OutWaits, TArray<const AFGTrain*>& OutCauses) const;
-	// Returns another train's booking that Pass conflicts with on its resource (or a track crossing it), or null,
-	// and the time Pass would have to enter instead: after it has cleared, or, following it the same way, a headway
-	// after it both enters and clears; never ahead of a locked one. Only bookings in Scope count.
-	const FBooking* FindConflict(const FATTrafficTrain& Self, const FPass& Pass, double Headway, EConflictScope Scope, double& OutNeedEnter) const;
+	// Starts a planning cycle (ATSipp) on worker threads: every train in turn, with the bookings as they are now.
+	void StartPlanCycle(double Now, float DeltaSeconds);
+	// Takes the finished cycle's bookings and plans.
+	void ApplyPlanCycle();
+	// Fills a cycle train from State's route: motion, the resources it holds, can't stop short of or has behind it, and
+	// which trains go first or come after it on its line.
+	void FillSippTrain(const FATTrafficTrain& State, const FATSippGraph& Graph, const TMap<const AFGTrain*, int32>& SlotOf, FATSippTrain& Out) const;
+	// Keeps a self-driving train's plan from a cycle for its grants, and takes its new route if the cycle rerouted it.
+	void ApplyPlan(FATTrafficTrain& State, const FATSippCycle& Cycle, int32 Slot);
+	void ApplyReroute(FATTrafficTrain& State, const FATSippCycle& Cycle, int32 Slot);
+	// Returns true when State's route is due for a search for a faster one.
+	bool IsSearchDue(FATTrafficTrain& State, float DeltaSeconds);
 	// Indexes State's route: the route step of each track (first time on the route) and of the switch before it.
 	void IndexRoute(FATTrafficTrain& State) const;
 	// Returns the step of Of's route at which Other's front stands, the same way and ahead of Of's front, or INDEX_NONE.
 	int32 FrontIndexOn(const FATTrafficTrain& Of, const FATTrafficTrain& Other) const;
-	// Returns true if Self's plan keeps clear of Booking under Scope; bFirst: Booking goes first there whatever Scope.
-	bool IsInScope(const FATTrafficTrain& Self, const FBooking& Booking, bool bFirst, EConflictScope Scope) const;
-	// Returns true if Booker is a self-driving train planned after Self in this update.
-	bool PlansAfter(const AFGTrain* Booker, const FATTrafficTrain& Self) const;
 	// Sets PlanRank of the self-driving trains in Trains and sorts them by it: a train ahead of another on that one's
 	// route first, else the one that set off on its leg first.
 	void RankTrains(TArray<FATTrafficTrain*>& Trains) const;
 	// Returns true if Other has to pass Self before it gets to Key: Self's front stands on Other's route, the same way,
 	// before Key, and both routes run over the same tracks from there up to Key.
 	bool IsBehind(const FATTrafficTrain& Other, const FATTrafficTrain& Self, const FResourceKey& Key) const;
-	void Book(const FATTrafficTrain& State, const TArray<FPass>& Passes, EBookingKind Kind);
-	// Books what State stands on, from Now until Until.
-	void BookStanding(const FATTrafficTrain& State, double Now, double Until, EBookingKind Kind);
 	void RemoveBookings(const AFGTrain* Owner);
-	// Plans and books a self-driving train, and keeps its booked times per route step.
-	void PlanMoving(FATTrafficTrain& State, double Now);
-	// Books a docked train's stay until its expected departure, then its predicted next leg.
-	void PlanDocked(FATTrafficTrain& State, double Now);
 	// Works out State's next leg from the station it is docked at, from its timetable and the game's pathfinder.
 	void PredictDeparture(FATTrafficTrain& State, double Now);
 	// Notes docking and departure; a dock seen from its start teaches the dwell.
@@ -538,20 +479,18 @@ private:
 	// trains.
 	bool CanEnter(FATTrafficTrain& Self, const FResourceKey& Key, int32 Index, double Enter, bool bLocked, bool bHeldBefore, const UFGRailroadTrackConnectionComponent* Via,
 		const UFGRailroadTrackConnectionComponent* Exit, double Now, const FATTrafficTrain*& OutBlocker, FString& OutWhy) const;
-	// Starts State's route search on a worker thread when due, and takes a finished search's route if clearly faster.
-	void ConsiderPlannedReroute(FATTrafficTrain& State, double Now, float DeltaSeconds);
 	// Returns the last route step the train can no longer change: what it holds and what it can't stop short of.
 	int32 GetRouteCommit(const FATTrafficTrain& State) const;
-	// Takes a finished search's route for State if its route is still the one searched from and the new one is clearly
-	// faster.
-	void FinishRouteSearch(FATTrafficTrain& State, const FATSearchTask& Task);
-	// Rebuilds the network copy the route searches run on.
-	void BuildSearchGraph(const TArray<AFGBuildableRailroadTrack*>& Tracks);
+	// Rebuilds the network copy the planner runs on.
+	void BuildSearchGraph(const TArray<AFGBuildableRailroadTrack*>& Tracks, int32 JointCount);
 
 	TMap<FResourceKey, TArray<FBooking>> mBookings;
 	TMap<FObjectKey, FOwnerBookings> mOwnerBookings;
 	// The network as the route searches see it, from the last conflict model rebuild.
-	TSharedPtr<const FATSearchGraph, ESPMode::ThreadSafe> mSearchGraph;
+	TSharedPtr<const FATSippGraph, ESPMode::ThreadSafe> mSearchGraph;
+	// The planning cycle running on a worker, if any, and the time since the last one started. [s]
+	TSharedPtr<FATSippCycle, ESPMode::ThreadSafe> mCycle;
+	float mSinceCycle = 0.f;
 	// The traffic state of each train by its pointer, for the current update.
 	TMap<const AFGTrain*, FATTrafficTrain*> mStateOf;
 	// Last dwell of each train at each station, and the last one by any train at each station. [s]
@@ -565,6 +504,9 @@ private:
 	int32 mPlanReroutes = 0;
 	int32 mPlanPredictions = 0;
 	int32 mPlanUpdates = 0;
+	int32 mCycles = 0;
+	int32 mCyclesLate = 0;
+	double mCycleMilliseconds = 0.0;
 	double mPlanSeconds = 0.0;
 	double mPlanSummaryAt = 0.0;
 	double mPlanSlowLoggedAt = -1e9;

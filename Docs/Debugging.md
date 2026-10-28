@@ -484,3 +484,10 @@ train, then a row per train every 0.2 s:
   `FindConflict`, `Request.Holds` limits the wait at the start (any rank; their `Enter - H - reach / cruise`), a
   train whose plan has a finite arrival keeps its route when the search finds none (`keeps its route` line, once
   per place/train), and `no way` lines say where and why (`FATSearchBlock`).
+- 1.3.0 planner (full multi-train SIPP, ATSipp): the per-update PlanTrain/PlanSafeIntervals pair (cruise + stop-loss
+  timetable, then up to 32 corrective waits with FProfile) and the separate graph route search were two models that
+  disagreed (false "no way", reroute storms, "no plan after 32 waits"). Now one search with the train's own speed
+  profile is both: planning cycles run on a worker (`planner: last 60 s: ... N cycles, X ms each on a worker, N
+  updates waited for one`), the cycle's table replaces `mBookings` when it lands (Tick), grants stay on the game
+  thread. Failures read `no way on past <resource> for <train>`; reroutes `rerouted after ...: <old> -> <new> s to
+  its goal, a -> b tracks ... (route search: n states, m ms on a worker)`.

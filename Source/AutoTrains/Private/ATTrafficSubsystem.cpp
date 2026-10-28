@@ -2,7 +2,7 @@
 #include "ATConfig.h"
 #include "ATControlSubsystem.h"
 #include "ATRouter.h"
-#include "ATRouteSearch.h"
+#include "ATSipp.h"
 #include "Algo/AnyOf.h"
 #include "AutoTrains.h"
 #include "Buildables/FGBuildableRailroadStation.h"
@@ -186,6 +186,11 @@ void AATTrafficSubsystem::Tick(float DeltaSeconds)
 	{
 		return;
 	}
+	// A planning cycle's plans as soon as they are in.
+	if (mCycle.IsValid() && mCycle->bDone.load(std::memory_order_acquire))
+	{
+		ApplyPlanCycle();
+	}
 	mUpdateTimer -= DeltaSeconds;
 	mSinceUpdate += DeltaSeconds;
 	if (mUpdateTimer <= 0.f)
@@ -296,6 +301,7 @@ FString AATTrafficSubsystem::SetEnabled(bool bEnabled)
 	mTrains.Reset();
 	mBookings.Reset();
 	mOwnerBookings.Reset();
+	mCycle.Reset();
 	mPlanSummaryAt = GetWorld() ? GetWorld()->GetTimeSeconds() + 60.0 : 0.0;
 	mUpdateTimer = 0.f;
 	mSinceUpdate = 0.f;
@@ -1386,16 +1392,16 @@ void AATTrafficSubsystem::RebuildConflicts()
 	{
 		Crossings += Pair.Value.Num() > 1 ? 1 : 0;
 	}
-	BuildSearchGraph(Tracks);
+	BuildSearchGraph(Tracks, JointCount);
 	mConflictsBuiltAt = FPlatformTime::Seconds();
 	mConflictsStale = false;
 	UE_LOG(LogAutoTrains, Log, TEXT("traffic: conflict model rebuilt: %d tracks, %d switch joints (longest fouling zone %.0f m), %d crossing tracks, %.1f ms"),
 		Tracks.Num(), JointCount, LongestFoul / 100.f, Crossings, (mConflictsBuiltAt - Begin) * 1000.0);
 }
 
-void AATTrafficSubsystem::BuildSearchGraph(const TArray<AFGBuildableRailroadTrack*>& Tracks)
+void AATTrafficSubsystem::BuildSearchGraph(const TArray<AFGBuildableRailroadTrack*>& Tracks, int32 JointCount)
 {
-	const TSharedRef<FATSearchGraph, ESPMode::ThreadSafe> Graph = MakeShared<FATSearchGraph, ESPMode::ThreadSafe>();
+	const TSharedRef<FATSippGraph, ESPMode::ThreadSafe> Graph = MakeShared<FATSippGraph, ESPMode::ThreadSafe>();
 	for (AFGBuildableRailroadTrack* Track : Tracks)
 	{
 		if (!Track || !Track->GetConnection(0) || !Track->GetConnection(1))
@@ -1403,6 +1409,7 @@ void AATTrafficSubsystem::BuildSearchGraph(const TArray<AFGBuildableRailroadTrac
 			continue;
 		}
 		const int32 TrackIndex = Graph->Length.Add(Track->GetLength());
+		Graph->Tracks.Add(Track);
 		Graph->TrackIndex.Add(Track, TrackIndex);
 		for (int32 End = 0; End < 2; ++End)
 		{
@@ -1415,6 +1422,8 @@ void AATTrafficSubsystem::BuildSearchGraph(const TArray<AFGBuildableRailroadTrac
 	Graph->OppositeOf.Init(INDEX_NONE, Count);
 	Graph->JointOf.Init(INDEX_NONE, Count);
 	Graph->FoulOf.Init(0.f, Count);
+	Graph->StopMarginOf.Init(0.f, Count);
+	Graph->JointFoul.Init(JointFoulDistance, JointCount);
 	Graph->OneWay.Init(false, Count);
 	Graph->Attached.SetNum(Count);
 	for (int32 Index = 0; Index < Count; ++Index)
@@ -1425,9 +1434,11 @@ void AATTrafficSubsystem::BuildSearchGraph(const TArray<AFGBuildableRailroadTrac
 		const int32 Joint = GetJoint(Connection);
 		Graph->JointOf[Index] = Joint;
 		Graph->FoulOf[Index] = GetFoulDistance(Connection);
-		if (Joint != INDEX_NONE)
+		Graph->StopMarginOf[Index] = GetStopMargin(Connection);
+		if (Graph->JointFoul.IsValidIndex(Joint))
 		{
-			Graph->JointFoul.Add(Joint, GetJointFoulDistance(Joint));
+			Graph->JointFoul[Joint] = GetJointFoulDistance(Joint);
+			Graph->MaxJointFoul = FMath::Max(Graph->MaxJointFoul, Graph->JointFoul[Joint]);
 		}
 		// The game's one-way rule: no passing a signal from behind.
 		Graph->OneWay[Index] = Connection->GetTrailingSignal() && !Connection->GetFacingSignal();

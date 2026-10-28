@@ -2,12 +2,14 @@
 
 ## 1.3.0
 
-- **New route search (safe-interval search over the whole network):** the route and where to wait on it now come out
-  of one search over the free time windows at every track, counting the train's whole length, so a train only plans
-  to wait where its body stays clear of everyone else. It replaces the old fastest-route search.
-- A reroute never leaves a train standing on track another train is due on, and a train whose plan can drive its
-  route keeps it unless the new one is clearly faster.
-- **Searches run on worker threads,** several trains at once, so rerouting no longer costs frame time.
+- **One planner for route, speed and waits (multi-train safe-interval planning):** each train's plan now comes out of
+  one search over the free time windows of every track and switch, with the train's own acceleration and braking and
+  its whole length, planned in turn around the trains before it. A train can slow down to reach a crossing just as it
+  clears instead of stopping, and only plans to stand where its body holds nobody up. This replaces the old timetable
+  pass with its corrections ("no plan after 32 waits" is gone) and the separate route search, so the route a search
+  finds is exactly the plan the train then drives.
+- **Planning runs on worker threads:** the whole planning round runs off the game thread, with route searches side by
+  side, so planning no longer costs frame time.
 
 ## 1.2.0
 

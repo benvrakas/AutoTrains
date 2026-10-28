@@ -8,7 +8,7 @@ class AFGTrain;
 class UFGRailroadTrackConnectionComponent;
 
 // Routes in the game's path format. A route is the chain of connections a train leaves each track through, from the
-// connection ahead of the train to the goal; the route search itself is in ATRouteSearch.
+// connection ahead of the train to the goal; routes are planned in ATSipp.
 class FATRouter
 {
 public:

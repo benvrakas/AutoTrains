@@ -108,12 +108,16 @@ doesn't cost frame time.
 - **Fastest route.** The search covers the whole network, so a train that would wait a long time on its usual route
   takes another one, even a longer one, when that gets it there clearly sooner. Rerouting is conservative: a new route
   must save a set time and share of the trip (settings below), and it's kept for a while.
-- **Timetables known ahead.** A docked train's departure is booked ahead from how long it stayed there last time and
-  where its timetable sends it next, so no train queues in the way another needs to leave.
+- **Timetables known ahead.** A docked train's departure is booked ahead, so no train queues in the way another needs
+  to leave. A stop set to load or unload once takes the freight platforms' fixed transfer time when there is cargo to
+  move, and the stop's set duration when there isn't, so the departure is known as soon as the platforms start (or
+  don't). Only stops set to fully load or unload go by how long the train stayed there last time.
 - **Never stuck in a junction.** A train only drives into a stretch it can get through; it won't stop with its body
   across a crossing or switch someone else is booked on.
-- **Brakes it can trust.** Each train measures how hard it really brakes at each speed and plans with that. If a
-  train still can't stop in time, the mod brakes it harder than its brakes could, the way block signals do.
+- **Brakes it can trust.** Each train measures how hard it really brakes and accelerates at each speed, with the
+  slope taken out, and plans with that. Stopping distances and stop points add the slope of the track ahead, so trains
+  stop where planned downhill and aren't held back uphill. If a train still can't stop in time, the mod brakes it
+  harder than its brakes could, the way block signals do.
 - **Deadlocks cleared.** Trains waiting for each other in a circle get the game's warning over them. With the beta
   setting on (the default), after a minute they pass through each other to clear the jam, and the case is written to
   a log you can send in.
@@ -143,7 +147,7 @@ replanning.
 | **Lookahead (m)** | 100 | Track a train is given past its braking distance. More lets trains run faster towards traffic; less keeps track free for others. |
 | **Stop distance (m)** | 10 | How far a waiting train stops short of track it hasn't been given (before a switch at least 25 m and the switch's fouling zone plus this). |
 | **Normal braking (%)** | 85 | How hard trains brake for normal stops, as a share of the braking they plan with. |
-| **Station stay estimate (seconds)** | 40 | How long a train is expected to stay at a station before it has been seen there; after that its own last stay counts. |
+| **Station stay estimate (seconds)** | 40 | How long a train is expected to stay at a stop set to fully load or unload, until it has been seen there; after that its own last stay there counts. Stops that load or unload once take the freight platforms' fixed time, or the stop's set duration when there's no cargo to move. |
 | **Clear deadlocks by passing through (beta)** | On | Trains stuck waiting for each other in a circle drive on through each other after the set time; each case is written to FactoryGame/Saved/AutoTrains/faults.log. |
 | **Pass through a deadlock after (seconds)** | 60 | How long a deadlock lasts before its trains pass through each other. |
 | **Planning retries** | 3 | When a train finds no way because a train planned before it is in the way, it is planned before that train and the round is planned again, up to this many times. 0 keeps the planning order as it is. |
@@ -181,15 +185,35 @@ side of the track (back to back) allows both ways.
   drive into another train.
 - **Uninstalling** returns trains to the game's signals. The mod stores nothing in your save. If you removed your
   signals, place them again before uninstalling, or self-driving trains will run into each other.
-- `/at traffic status` lists every moving self-driving train, how far it may drive and what it's waiting for. It's
-  the first place to look when a train seems stuck.
 
 ### Chat commands
 
-`/at traffic on|off|status`, `/at reroute on|off`, `/at list`, `/at removesignals confirm`, `/at autopilot <train|all>
-on|off`, `/at session <new name>` (renames the running session, for a copy of a save), `/at log on|off` (writes
-telemetry for bug reports). In multiplayer only the host or a server admin can change anything; everyone can use
-`/at list` and `/at traffic status`.
+Type them in the game chat. A `<train>` is its number from `/at list`, or part of its name.
+
+**Look at what the trains are doing** (anyone can use these)
+
+| Command | What it does |
+|---|---|
+| `/at list` | Every train with its number, speed, length and distance to its goal. |
+| `/at traffic status` | Every moving self-driving train, how far it may drive and what it is waiting for. The first place to look when a train seems stuck. |
+
+**Switch things on and off** (host or server admin)
+
+| Command | What it does |
+|---|---|
+| `/at traffic on` / `off` | Auto Trains drives every self-driving train, or gives the game's signals back. Same as the Traffic control setting. |
+| `/at reroute on` / `off` | Congestion rerouting on or off. Same as the Congestion rerouting setting. |
+| `/at autopilot <train> on` / `off` | Self-driving for one train. |
+| `/at autopilot all on` / `off` | Self-driving for every train. |
+
+**One-off jobs** (host or server admin)
+
+| Command | What it does |
+|---|---|
+| `/at removesignals confirm` | Dismantles every block and path signal in the world, with no refund and no undo. Without `confirm` it only explains what it would do. |
+| `/at log on` / `off` | Writes telemetry for bug reports to a CSV file in `%LOCALAPPDATA%\FactoryGame\Saved\AutoTrains`. |
+
+In multiplayer only the host or a server admin can change anything.
 
 ### Bugs and ideas
 

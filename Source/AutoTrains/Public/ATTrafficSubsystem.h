@@ -13,6 +13,8 @@ class AFGRailroadVehicle;
 class AFGTrain;
 class UCurveFloat;
 class UFGRailroadTrackConnectionComponent;
+struct FATSearchGraph;
+struct FATSearchTask;
 
 // Full-brake braking is measured and planned per speed band of this width, up to ATBrakeBands bands; the top band
 // also covers every speed above it. [cm/s]
@@ -128,6 +130,8 @@ struct FATTrafficTrain
 	int32 Reroutes = 0;
 	// Seconds before this train may reroute again after a reroute.
 	float RerouteCooldown = 0.f;
+	// Its route search running on a worker thread, if any.
+	TSharedPtr<FATSearchTask, ESPMode::ThreadSafe> Search;
 	// Last track the train may drive to the end of; null means no limit beyond its route.
 	TWeakObjectPtr<AFGBuildableRailroadTrack> AuthorityTrack;
 	// ATC path and path segment of the authority track.
@@ -532,16 +536,20 @@ private:
 	// trains.
 	bool CanEnter(FATTrafficTrain& Self, const FResourceKey& Key, int32 Index, double Enter, bool bLocked, bool bHeldBefore, const UFGRailroadTrackConnectionComponent* Via,
 		const UFGRailroadTrackConnectionComponent* Exit, double Now, const FATTrafficTrain*& OutBlocker, FString& OutWhy) const;
-	// Searches State's fastest route through the bookings when due, and takes it if clearly faster.
+	// Starts State's route search on a worker thread when due, and takes a finished search's route if clearly faster.
 	void ConsiderPlannedReroute(FATTrafficTrain& State, double Now, float DeltaSeconds);
-	// Seconds the route search counts for getting over Track, leaving through Exit, reached Arrival seconds from Now:
-	// the wait for the earliest entry no other train's booking of it, a track crossing it or the switch before it
-	// conflicts with, the time stopping costs, and driving it.
-	float GetSearchStepSeconds(const AFGTrain* Self, const AFGBuildableRailroadTrack* Track, const UFGRailroadTrackConnectionComponent* Exit, double Now,
-		float Arrival, const FRouteSpeed& Speed) const;
+	// Returns the last route step the train can no longer change: what it holds and what it can't stop short of.
+	int32 GetRouteCommit(const FATTrafficTrain& State) const;
+	// Takes a finished search's route for State if its route is still the one searched from and the new one is clearly
+	// faster.
+	void FinishRouteSearch(FATTrafficTrain& State, const FATSearchTask& Task);
+	// Rebuilds the network copy the route searches run on.
+	void BuildSearchGraph(const TArray<AFGBuildableRailroadTrack*>& Tracks);
 
 	TMap<FResourceKey, TArray<FBooking>> mBookings;
 	TMap<FObjectKey, FOwnerBookings> mOwnerBookings;
+	// The network as the route searches see it, from the last conflict model rebuild.
+	TSharedPtr<const FATSearchGraph, ESPMode::ThreadSafe> mSearchGraph;
 	// The traffic state of each train by its pointer, for the current update.
 	TMap<const AFGTrain*, FATTrafficTrain*> mStateOf;
 	// Last dwell of each train at each station, and the last one by any train at each station. [s]

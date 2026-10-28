@@ -1,5 +1,6 @@
 #include "ATTrafficSubsystem.h"
 #include "ATRouter.h"
+#include "ATRouteSearch.h"
 #include "Algo/Reverse.h"
 #include "AutoTrains.h"
 #include "Buildables/FGBuildableRailroadStation.h"
@@ -29,16 +30,12 @@ namespace
 	constexpr float SearchIntervalSeconds = 5.f;
 	constexpr double SearchWorseSeconds = 15.0;
 	constexpr float SearchFailedSeconds = 1.f;
-	// A track the search can only get onto after an open-ended booking costs this. [s]
-	constexpr float SearchBlockedSeconds = 1e6f;
 	// Trains that waited longer than WaitDumpSeconds are described in the log every WaitDumpInterval. [s]
 	constexpr double WaitDumpSeconds = 60.0;
 	constexpr double WaitDumpInterval = 30.0;
 	// A train slower than this whose follow limit leaves it less than this is named as held by its leader. [cm/s] [cm]
 	constexpr float FollowStuckSpeed = 50.f;
 	constexpr float FollowStuckDistance = 3000.f;
-	// The earliest-entry search gives up after this many shifts.
-	constexpr int32 EntryMaxShifts = 16;
 	// Safe-interval search: stops closer together than this count as one; a wait shorter than SippMinWaitSeconds is
 	// dropped; a train slower than SippStandingSpeed counts as standing. [cm] [s] [cm/s]
 	constexpr float SippMinStopGap = 100.f;
@@ -1358,89 +1355,35 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 	State.ClearSeconds = bBlocked && State.PlanDepart > Now && !IsOpen(State.PlanDepart) ? State.PlanDepart - Now : -1.f;
 }
 
-float AATTrafficSubsystem::GetSearchStepSeconds(const AFGTrain* Self, const AFGBuildableRailroadTrack* Track, const UFGRailroadTrackConnectionComponent* Exit,
-	double Now, float Arrival, const FRouteSpeed& Speed) const
+int32 AATTrafficSubsystem::GetRouteCommit(const FATTrafficTrain& State) const
 {
-	const double Headway = GetSafetyMarginSeconds();
-	FATTrafficTrain* const* SelfState = mStateOf.Find(Self);
-	const float Length = Track->GetLength();
-	const float Drive = Length / Speed.Cruise;
-	const double Reached = Now + Arrival;
-	const UFGRailroadTrackConnectionComponent* Entry = Exit ? Exit->GetOpposite() : nullptr;
-	const int32 Joint = GetJoint(Entry);
-	const double FoulBefore = Joint != INDEX_NONE ? GetFoulDistance(Entry) / Speed.Cruise : 0.0;
-	const double JointHeld = Joint != INDEX_NONE ? (Speed.Length + GetJointFoulDistance(Joint)) / Speed.Cruise : 0.0;
-	const double TrackHeld = (Length + Speed.Length) / Speed.Cruise;
-	double Enter = Reached;
-	for (int32 Shift = 0; Shift < EntryMaxShifts; ++Shift)
+	const float Stopping = GetStoppingDistance(State, State.Speed);
+	int32 Commit = 0;
+	for (int32 Index = 0; Index < State.Route.Num(); ++Index)
 	{
-		double Need = Enter;
-		const double Clear = Enter + TrackHeld;
-		for (const AFGBuildableRailroadTrack* Conflict : GetConflicts(Track))
-		{
-			FResourceKey Key;
-			Key.Track = Conflict;
-			const TArray<FBooking>* Bookings = mBookings.Find(Key);
-			if (!Bookings)
-			{
-				continue;
-			}
-			for (const FBooking& Booking : *Bookings)
-			{
-				if (Booking.Owner == Self || (SelfState && !IsInScope(**SelfState, Booking, Booking.bLocked, EConflictScope::Ranked)))
-				{
-					continue;
-				}
-				if (Conflict == Track && Booking.Exit == Exit)
-				{
-					// Following the same way: a headway behind it at both ends, or ahead of it.
-					const bool bBehind = Enter >= Booking.Enter + Headway && Clear >= Booking.Clear + Headway;
-					const bool bAhead = !Booking.bLocked && Booking.Enter >= Enter + Headway && Booking.Clear >= Clear + Headway;
-					if (!bBehind && !bAhead)
-					{
-						Need = FMath::Max(Need, IsOpen(Booking.Clear) ? OpenTime : Enter + FMath::Max(Booking.Enter + Headway - Enter, Booking.Clear + Headway - Clear));
-					}
-				}
-				else if (Enter < Booking.Clear + Headway && (Booking.bLocked || Clear + Headway > Booking.Enter))
-				{
-					Need = FMath::Max(Need, IsOpen(Booking.Clear) ? OpenTime : Booking.Clear + Headway);
-				}
-			}
-		}
-		if (Joint != INDEX_NONE)
-		{
-			FResourceKey Key;
-			Key.Joint = Joint;
-			if (const TArray<FBooking>* Bookings = mBookings.Find(Key))
-			{
-				for (const FBooking& Booking : *Bookings)
-				{
-					if (Booking.Owner != Self && (!SelfState || IsInScope(**SelfState, Booking, Booking.bLocked, EConflictScope::Ranked)) && Enter - FoulBefore < Booking.Clear + Headway && (Booking.bLocked || Enter + JointHeld + Headway > Booking.Enter))
-					{
-						Need = FMath::Max(Need, IsOpen(Booking.Clear) ? OpenTime : Booking.Clear + Headway + FoulBefore);
-					}
-				}
-			}
-		}
-		if (IsOpen(Need))
-		{
-			return SearchBlockedSeconds;
-		}
-		if (Need <= Enter + 1e-3)
+		const FATRouteStep& Step = State.Route[Index];
+		if (!HoldsTrack(State, Step.Track) && Step.EndDistance - Step.Track->GetLength() - State.FrontAhead >= Stopping + GetStopMargin(Step.Exit))
 		{
 			break;
 		}
-		Enter = Need;
+		Commit = Index;
 	}
-	// Waiting costs the wait and, up to a full stop, the time lost braking and picking up speed again.
-	const double Wait = Enter - Reached;
-	return static_cast<float>(Wait + FMath::Min(Wait, static_cast<double>(Speed.StopLoss))) + Drive;
+	return Commit;
 }
 
 void AATTrafficSubsystem::ConsiderPlannedReroute(FATTrafficTrain& State, double Now, float DeltaSeconds)
 {
 	AFGTrain* Train = State.Train.Get();
-	if (!Train || !mRerouteEnabled || !Train->mAtcData.Path.IsValid())
+	if (State.Search.IsValid() && State.Search->bDone.load(std::memory_order_acquire))
+	{
+		const TSharedPtr<FATSearchTask, ESPMode::ThreadSafe> Task = MoveTemp(State.Search);
+		State.Search.Reset();
+		if (Train && mRerouteEnabled && Train->mAtcData.Path.IsValid())
+		{
+			FinishRouteSearch(State, *Task);
+		}
+	}
+	if (!Train || !mRerouteEnabled || !Train->mAtcData.Path.IsValid() || !mSearchGraph.IsValid())
 	{
 		return;
 	}
@@ -1455,7 +1398,7 @@ void AATTrafficSubsystem::ConsiderPlannedReroute(FATTrafficTrain& State, double 
 		State.RerouteTimer = FMath::Min(State.RerouteTimer, SearchFailedSeconds);
 	}
 	const bool bWorse = State.SearchedArrival >= 0.0 && !IsOpen(State.SearchedArrival) && State.PlanArrival - State.SearchedArrival > SearchWorseSeconds;
-	if ((State.RerouteTimer > 0.f && !bWorse) || State.RerouteCooldown > 0.f || State.bAuthorityToGoal || State.Route.Num() < 3)
+	if ((State.RerouteTimer > 0.f && !bWorse) || State.RerouteCooldown > 0.f || State.bAuthorityToGoal || State.Route.Num() < 3 || State.Search.IsValid())
 	{
 		return;
 	}
@@ -1463,69 +1406,129 @@ void AATTrafficSubsystem::ConsiderPlannedReroute(FATTrafficTrain& State, double 
 	State.SearchedArrival = State.PlanArrival;
 
 	// The route can only change beyond what the train holds and what it can no longer stop short of.
-	const float Stopping = GetStoppingDistance(State, State.Speed);
-	int32 Commit = 0;
-	for (int32 Index = 0; Index < State.Route.Num(); ++Index)
-	{
-		const FATRouteStep& Step = State.Route[Index];
-		if (!HoldsTrack(State, Step.Track) && Step.EndDistance - Step.Track->GetLength() - State.FrontAhead >= Stopping + GetStopMargin(Step.Exit))
-		{
-			break;
-		}
-		Commit = Index;
-	}
+	const int32 Commit = GetRouteCommit(State);
 	if (Commit >= State.Route.Num() - 2)
 	{
 		return;
 	}
-	const double Begin = FPlatformTime::Seconds();
-	UFGRailroadTrackConnectionComponent* Start = State.Route[Commit].Exit;
-	UFGRailroadTrackConnectionComponent* Goal = State.Route.Last().Exit;
-	const AFGTrain* Self = Train;
-	const FRouteSpeed Speed = GetRouteSpeed(State);
-	auto Step = [this, Self, Now, &Speed](const AFGBuildableRailroadTrack* Track, const UFGRailroadTrackConnectionComponent* Exit, float Arrival)
+	const FATSearchGraph& Graph = *mSearchGraph;
+	const int32* Start = Graph.ConnectionIndex.Find(State.Route[Commit].Exit);
+	const int32* Goal = Graph.ConnectionIndex.Find(State.Route.Last().Exit);
+	if (!Start || !Goal)
 	{
-		return GetSearchStepSeconds(Self, Track, Exit, Now, Arrival, Speed);
-	};
-	// Both routes are timed from the end of the committed part, as the search times them.
-	const float StartSeconds = TimeToCover(FMath::Max(0.f, State.Route[Commit].EndDistance - State.FrontAhead), State.Speed, Speed.Accel, Speed.Cruise);
-	float CurrentSeconds = StartSeconds;
+		return;
+	}
+	const TSharedRef<FATSearchTask, ESPMode::ThreadSafe> Task = MakeShared<FATSearchTask, ESPMode::ThreadSafe>();
+	FATSearchRequest& Request = Task->Request;
+	Request.Graph = mSearchGraph;
+	Request.Start = *Start;
+	Request.Goal = *Goal;
 	for (int32 Index = Commit + 1; Index < State.Route.Num(); ++Index)
 	{
-		CurrentSeconds += Step(State.Route[Index].Track, State.Route[Index].Exit, CurrentSeconds);
+		const int32* Node = Graph.ConnectionIndex.Find(State.Route[Index].Exit);
+		if (!Node)
+		{
+			return;
+		}
+		Request.Current.Add(*Node);
 	}
-	const TArray<UFGRailroadTrackConnectionComponent*> Alternative = FATRouter::FindFastestRoute(Start, Goal, StartSeconds, Step);
-	if (Alternative.Num() < 2)
+	const FRouteSpeed Speed = GetRouteSpeed(State);
+	// Both routes are timed from the end of the committed part.
+	Request.StartTime = Now + TimeToCover(FMath::Max(0.f, State.Route[Commit].EndDistance - State.FrontAhead), State.Speed, Speed.Accel, Speed.Cruise);
+	Request.Length = Speed.Length;
+	Request.Cruise = Speed.Cruise;
+	Request.StopLoss = Speed.StopLoss;
+	Request.Headway = GetSafetyMarginSeconds();
+	// The bookings its plan keeps clear of.
+	const AFGTrain* Self = Train;
+	for (const TPair<FResourceKey, TArray<FBooking>>& Pair : mBookings)
 	{
-		return;
+		const int32* TrackIndex = Pair.Key.Track ? Graph.TrackIndex.Find(Pair.Key.Track) : nullptr;
+		if (Pair.Key.Joint == INDEX_NONE && !TrackIndex)
+		{
+			continue;
+		}
+		TArray<FATSearchBooking>* Into = nullptr;
+		for (const FBooking& Booking : Pair.Value)
+		{
+			if (Booking.Owner == Self || !IsInScope(State, Booking, Booking.bLocked, EConflictScope::Ranked))
+			{
+				continue;
+			}
+			if (!Into)
+			{
+				Into = Pair.Key.Joint != INDEX_NONE ? &Request.JointBookings.FindOrAdd(Pair.Key.Joint) : &Request.TrackBookings.FindOrAdd(*TrackIndex);
+			}
+			FATSearchBooking& Copy = Into->AddDefaulted_GetRef();
+			Copy.Enter = Booking.Enter;
+			Copy.Clear = IsOpen(Booking.Clear) ? ATSearchNever : Booking.Clear;
+			Copy.bLocked = Booking.bLocked;
+			const int32* Exit = Booking.Exit ? Graph.ConnectionIndex.Find(Booking.Exit) : nullptr;
+			Copy.Exit = Exit ? *Exit : INDEX_NONE;
+		}
 	}
-	bool bSame = Alternative.Num() == State.Route.Num() - Commit;
-	float NewSeconds = StartSeconds;
-	for (int32 Index = 1; Index < Alternative.Num(); ++Index)
-	{
-		NewSeconds += Step(Alternative[Index]->GetTrack(), Alternative[Index], NewSeconds);
-		bSame = bSame && Alternative[Index] == State.Route[Commit + Index].Exit;
-	}
-	if (bSame || NewSeconds > CurrentSeconds - FMath::Max(mSettings.RerouteMinGainSeconds, CurrentSeconds * mSettings.RerouteMinGainPercent / 100.f))
-	{
-		return;
-	}
+	State.Search = Task;
+	ATRouteSearch::Launch(Task);
+}
 
+void AATTrafficSubsystem::FinishRouteSearch(FATTrafficTrain& State, const FATSearchTask& Task)
+{
+	AFGTrain* Train = State.Train.Get();
+	const FATSearchRequest& Request = Task.Request;
+	const FATSearchResult& Result = Task.Result;
+	if (!Train || Request.Graph != mSearchGraph || Result.Route.Num() == 0)
+	{
+		return;
+	}
+	const FATSearchGraph& Graph = *Request.Graph;
+	// Only while the train is still on the route searched from, and can still change it at the search's start.
+	const UFGRailroadTrackConnectionComponent* StartConnection = Graph.Connections[Request.Start].Get();
+	int32 Commit = INDEX_NONE;
+	for (int32 Index = 0; Index < State.Route.Num() && Commit == INDEX_NONE; ++Index)
+	{
+		Commit = State.Route[Index].Exit == StartConnection ? Index : INDEX_NONE;
+	}
+	if (Commit == INDEX_NONE || Commit < GetRouteCommit(State) || State.Route.Num() - Commit - 1 != Request.Current.Num())
+	{
+		return;
+	}
+	for (int32 Index = 0; Index < Request.Current.Num(); ++Index)
+	{
+		if (State.Route[Commit + 1 + Index].Exit != Graph.Connections[Request.Current[Index]].Get())
+		{
+			return;
+		}
+	}
+	const double CurrentSeconds = Result.CurrentArrival >= ATSearchNever ? ATSearchNever : Result.CurrentArrival - Request.StartTime;
+	const double NewSeconds = Result.Arrival - Request.StartTime;
+	if (Result.Route == Request.Current || NewSeconds > CurrentSeconds - FMath::Max<double>(mSettings.RerouteMinGainSeconds, CurrentSeconds * mSettings.RerouteMinGainPercent / 100.0))
+	{
+		return;
+	}
 	TArray<UFGRailroadTrackConnectionComponent*> Connections;
 	for (int32 Index = 0; Index <= Commit; ++Index)
 	{
 		Connections.Add(State.Route[Index].Exit);
 	}
-	Connections.Append(&Alternative[1], Alternative.Num() - 1);
+	for (const int32 Node : Result.Route)
+	{
+		UFGRailroadTrackConnectionComponent* Connection = Graph.Connections[Node].Get();
+		if (!Connection || !Connection->GetTrack())
+		{
+			return;
+		}
+		Connections.Add(Connection);
+	}
+	UFGRailroadTrackConnectionComponent* Goal = Connections.Last();
 	const FRailroadPathSharedPtr Path = FATRouter::BuildPath(Connections, Train->mAtcData.Path->Station.Get());
 	const bool bApplied = FATRouter::ApplyPath(Train, Path, Goal);
 	++State.Reroutes;
 	++mPlanReroutes;
 	State.RerouteCooldown = mSettings.RerouteHoldSeconds;
 	State.SearchedArrival = -1.0;
-	UE_LOG(LogAutoTrains, Log, TEXT("planner: %s rerouted after %s: %.0f -> %.0f s to its goal through the bookings, %d -> %d tracks, applied %s (%.2f ms)"),
-		*NameOf(Train), *ResourceName(State.Route[Commit].Track, INDEX_NONE), CurrentSeconds, NewSeconds, State.Route.Num() - Commit - 1, Alternative.Num() - 1,
-		bApplied ? TEXT("yes") : TEXT("NO"), (FPlatformTime::Seconds() - Begin) * 1000.0);
+	UE_LOG(LogAutoTrains, Log, TEXT("planner: %s rerouted after %s: %s -> %.0f s to its goal through the bookings, %d -> %d tracks, applied %s (%d states, %.2f ms on a worker)"),
+		*NameOf(Train), *ResourceName(State.Route[Commit].Track, INDEX_NONE), CurrentSeconds >= ATSearchNever ? TEXT("no way") : *FString::Printf(TEXT("%.0f"), CurrentSeconds),
+		NewSeconds, Request.Current.Num(), Result.Route.Num(), bApplied ? TEXT("yes") : TEXT("NO"), Result.States, Result.Milliseconds);
 	if (!bApplied)
 	{
 		return;
@@ -1537,11 +1540,11 @@ void AATTrafficSubsystem::ConsiderPlannedReroute(FATTrafficTrain& State, double 
 		Route.Add(State.Route[Index]);
 	}
 	float Distance = State.Route[Commit].EndDistance;
-	for (int32 Index = 1; Index < Alternative.Num(); ++Index)
+	for (int32 Index = Commit + 1; Index < Connections.Num(); ++Index)
 	{
-		AFGBuildableRailroadTrack* Track = Alternative[Index]->GetTrack();
+		AFGBuildableRailroadTrack* Track = Connections[Index]->GetTrack();
 		Distance += Track->GetLength();
-		Route.Add({Track, Alternative[Index], Distance});
+		Route.Add({Track, Connections[Index], Distance});
 	}
 	State.Route = MoveTemp(Route);
 	State.RoutePath = Train->mAtcData.Path.Get();

@@ -2,6 +2,7 @@
 #include "ATConfig.h"
 #include "ATControlSubsystem.h"
 #include "ATRouter.h"
+#include "ATRouteSearch.h"
 #include "Algo/AnyOf.h"
 #include "AutoTrains.h"
 #include "Buildables/FGBuildableRailroadStation.h"
@@ -1385,10 +1386,71 @@ void AATTrafficSubsystem::RebuildConflicts()
 	{
 		Crossings += Pair.Value.Num() > 1 ? 1 : 0;
 	}
+	BuildSearchGraph(Tracks);
 	mConflictsBuiltAt = FPlatformTime::Seconds();
 	mConflictsStale = false;
 	UE_LOG(LogAutoTrains, Log, TEXT("traffic: conflict model rebuilt: %d tracks, %d switch joints (longest fouling zone %.0f m), %d crossing tracks, %.1f ms"),
 		Tracks.Num(), JointCount, LongestFoul / 100.f, Crossings, (mConflictsBuiltAt - Begin) * 1000.0);
+}
+
+void AATTrafficSubsystem::BuildSearchGraph(const TArray<AFGBuildableRailroadTrack*>& Tracks)
+{
+	const TSharedRef<FATSearchGraph, ESPMode::ThreadSafe> Graph = MakeShared<FATSearchGraph, ESPMode::ThreadSafe>();
+	for (AFGBuildableRailroadTrack* Track : Tracks)
+	{
+		if (!Track || !Track->GetConnection(0) || !Track->GetConnection(1))
+		{
+			continue;
+		}
+		const int32 TrackIndex = Graph->Length.Add(Track->GetLength());
+		Graph->TrackIndex.Add(Track, TrackIndex);
+		for (int32 End = 0; End < 2; ++End)
+		{
+			UFGRailroadTrackConnectionComponent* Connection = Track->GetConnection(End);
+			Graph->ConnectionIndex.Add(Connection, Graph->Connections.Add(Connection));
+			Graph->TrackOf.Add(TrackIndex);
+		}
+	}
+	const int32 Count = Graph->Connections.Num();
+	Graph->OppositeOf.Init(INDEX_NONE, Count);
+	Graph->JointOf.Init(INDEX_NONE, Count);
+	Graph->FoulOf.Init(0.f, Count);
+	Graph->OneWay.Init(false, Count);
+	Graph->Attached.SetNum(Count);
+	for (int32 Index = 0; Index < Count; ++Index)
+	{
+		const UFGRailroadTrackConnectionComponent* Connection = Graph->Connections[Index].Get();
+		const int32* Opposite = Graph->ConnectionIndex.Find(Connection->GetOpposite());
+		Graph->OppositeOf[Index] = Opposite ? *Opposite : INDEX_NONE;
+		const int32 Joint = GetJoint(Connection);
+		Graph->JointOf[Index] = Joint;
+		Graph->FoulOf[Index] = GetFoulDistance(Connection);
+		if (Joint != INDEX_NONE)
+		{
+			Graph->JointFoul.Add(Joint, GetJointFoulDistance(Joint));
+		}
+		// The game's one-way rule: no passing a signal from behind.
+		Graph->OneWay[Index] = Connection->GetTrailingSignal() && !Connection->GetFacingSignal();
+		for (const UFGRailroadTrackConnectionComponent* Other : Connection->GetConnections())
+		{
+			if (const int32* OtherIndex = Graph->ConnectionIndex.Find(Other))
+			{
+				Graph->Attached[Index].Add(*OtherIndex);
+			}
+		}
+	}
+	Graph->Conflicts.SetNum(Graph->Length.Num());
+	for (const TPair<const AFGBuildableRailroadTrack*, int32>& Pair : Graph->TrackIndex)
+	{
+		for (const AFGBuildableRailroadTrack* Conflict : GetConflicts(Pair.Key))
+		{
+			if (const int32* ConflictIndex = Graph->TrackIndex.Find(Conflict))
+			{
+				Graph->Conflicts[Pair.Value].Add(*ConflictIndex);
+			}
+		}
+	}
+	mSearchGraph = Graph;
 }
 
 const TArray<AFGBuildableRailroadTrack*>& AATTrafficSubsystem::GetConflicts(const AFGBuildableRailroadTrack* Track) const

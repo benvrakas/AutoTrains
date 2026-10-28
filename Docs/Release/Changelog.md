@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.0
+
+- **New route search (safe-interval search over the whole network):** the route and where to wait on it now come out
+  of one search over the free time windows at every track, counting the train's whole length, so a train only plans
+  to wait where its body stays clear of everyone else. It replaces the old fastest-route search.
+- **Searches run on worker threads,** several trains at once, so rerouting no longer costs frame time.
+
 ## 1.2.0
 
 - **Fixed: deadlocks on track used both ways and where two lines cross twice close together.** A train that has

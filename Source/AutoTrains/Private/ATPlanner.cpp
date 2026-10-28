@@ -1286,9 +1286,10 @@ void AATTrafficSubsystem::UpdatePlannedTraffic(float DeltaSeconds)
 			Driving.Add(Pair.Value);
 		}
 	}
-	// A train driven without a plan yet would be given no track: planned at once, on this thread.
-	if (Driving.ContainsByPredicate([](const FATTrafficTrain* State) { return !State->bHasPlan; }))
+	// Before the first cycle is in, no train would be given track: the first one is planned at once, on this thread.
+	if (!mPlannedOnce && Driving.ContainsByPredicate([](const FATTrafficTrain* State) { return !State->bHasPlan; }))
 	{
+		mPlannedOnce = true;
 		mCycle.Reset();
 		StartPlanCycle(Now, mSinceCycle + DeltaSeconds, true);
 		mSinceCycle = 0.f;

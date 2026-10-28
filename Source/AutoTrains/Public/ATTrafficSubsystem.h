@@ -478,6 +478,8 @@ private:
 	// The planning cycle running on a worker, if any, and the time since the last one started. [s]
 	TSharedPtr<FATSippCycle, ESPMode::ThreadSafe> mCycle;
 	float mSinceCycle = 0.f;
+	// Whether the first cycle since traffic control started has been planned.
+	bool mPlannedOnce = false;
 	// The traffic state of each train by its pointer, for the current update.
 	TMap<const AFGTrain*, FATTrafficTrain*> mStateOf;
 	// Last dwell of each train at each station, and the last one by any train at each station. [s]

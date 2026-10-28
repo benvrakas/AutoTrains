@@ -280,6 +280,7 @@ FString AATTrafficSubsystem::SetEnabled(bool bEnabled)
 	mBookings.Reset();
 	mOwnerBookings.Reset();
 	mCycle.Reset();
+	mPlannedOnce = false;
 	mPlanSummaryAt = GetWorld() ? GetWorld()->GetTimeSeconds() + 60.0 : 0.0;
 	mUpdateTimer = 0.f;
 	mSinceUpdate = 0.f;

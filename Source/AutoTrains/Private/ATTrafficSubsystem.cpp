@@ -69,13 +69,6 @@ namespace
 	constexpr double ConflictRebuildSeconds = 30.0;
 	constexpr double ConflictRebuildMinSeconds = 2.0;
 
-	// Pacing behind a leader crossing ahead: only a leader at least FollowMinSpeed fast, cleared the safety margin before
-	// the follower gets there. [s] [cm/s]
-	float FollowTimeMargin() { return GSafetyMargin; }
-	constexpr float FollowMinSpeed = 500.f;
-	// A train behind a leader crossing its route drives so it gets there this much later than the time the leader
-	// clears it plus the safety margin. [s]
-	constexpr float CrossingPaceSlackSeconds = 1.f;
 	// How far along its path a follower looks for the vehicles of the trains it follows. [cm]
 	constexpr float GapSearchDistance = 300000.f;
 	// Returned by GetDistanceToTrackStart for a track that isn't on the train's path.
@@ -637,34 +630,6 @@ void AATTrafficSubsystem::UpdateAuthority(FATTrafficTrain& State) const
 	RefreshClaimedJoints(State);
 }
 
-float AATTrafficSubsystem::GetLatestClearSeconds(const FATTrafficTrain& Holder, float ClearDistance, float Speed) const
-{
-	const float Reach = Holder.bAuthorityToGoal ? (Holder.Route.Num() > 0 ? Holder.Route.Last().EndDistance - Holder.FrontAhead : 0.f)
-		: GetAuthorityDistance(Holder.Train.Get()) - Holder.StopMargin;
-	if (Reach < ClearDistance || Speed <= 0.f)
-	{
-		return -1.f;
-	}
-	// Slowing evenly to stop at the end of its authority, which it may do whatever its speed now.
-	const float Deceleration = FMath::Square(Speed) / (2.f * FMath::Max(Reach, 1.f));
-	return (Speed - FMath::Sqrt(FMath::Max(0.f, FMath::Square(Speed) - 2.f * Deceleration * ClearDistance))) / Deceleration;
-}
-
-float AATTrafficSubsystem::GetClearDistance(const FATTrafficTrain& Holder, const AFGBuildableRailroadTrack* Track, int32 Joint) const
-{
-	// Past the end of the track or the switch's zone; a track behind the holder's route is one its tail is on.
-	for (const FATRouteStep& Step : Holder.Route)
-	{
-		const bool bThere = Joint != INDEX_NONE ? GetJoint(Step.Exit) == Joint : Step.Track == Track;
-		if (bThere)
-		{
-			return Step.EndDistance - Holder.FrontAhead + Holder.Length + (Joint != INDEX_NONE ? GetJointFoulDistance(Joint) : 0.f);
-		}
-	}
-	const float FromVehicles = GetTailClearDistance(Holder, Track, Joint);
-	return FromVehicles >= 0.f ? FromVehicles : Holder.Length + (Joint != INDEX_NONE ? GetJointFoulDistance(Joint) : JointFoulDistance);
-}
-
 float AATTrafficSubsystem::GetTailClearDistance(const FATTrafficTrain& Holder, const AFGBuildableRailroadTrack* Track, int32 Joint) const
 {
 	// The end of a track the train leaves it through: its route exit, or the end attached to a track a vehicle of the
@@ -887,11 +852,10 @@ float AATTrafficSubsystem::GetDistanceToTrackStart(const AFGTrain* Train, const 
 	return TrackNotOnPath;
 }
 
-float AATTrafficSubsystem::GetFollowLimit(const AFGTrain* Train, const FATTrafficTrain& State, float& OutHardLimit, float& OutPaceSpeed, FATFollowInfo* OutInfo) const
+float AATTrafficSubsystem::GetFollowLimit(const AFGTrain* Train, const FATTrafficTrain& State, float& OutHardLimit, FATFollowInfo* OutInfo) const
 {
 	float Limit = -1.f;
 	OutHardLimit = -1.f;
-	OutPaceSpeed = MAX_flt;
 	const FATTrafficTrain* Current = nullptr;
 	auto Add = [&Limit, &OutHardLimit, &Current, OutInfo](float Gap, float SoftBrake, float HardBrake, bool bVehicleOnPath)
 	{
@@ -973,47 +937,16 @@ float AATTrafficSubsystem::GetFollowLimit(const AFGTrain* Train, const FATTraffi
 			{
 				Start -= GetFoulDistance(JointEntry);
 			}
-			// A leader merging the same way moves on ahead; one crossing leaves the conflict only once it has passed:
-			// while it clears the crossing before this train, at its speed now, gets there, this train only keeps to a
-			// speed that gets it there after the leader.
+			// A leader merging the same way moves on ahead; one crossing leaves the conflict only once it has passed.
 			const bool bSameWay = Leader->Route.ContainsByPredicate([&Step](const FATRouteStep& LeaderStep)
 			{
 				return LeaderStep.Track == Step.Track && LeaderStep.Exit == Step.Exit;
 			});
-			const float Pace = bSameWay ? -1.f : GetCrossingPaceSpeed(Train, *Leader, bHeldJoint ? nullptr : Held, bHeldJoint ? Joint : INDEX_NONE, Start);
-			if (Pace >= 0.f)
-			{
-				OutPaceSpeed = FMath::Min(OutPaceSpeed, Pace);
-				break;
-			}
 			Add(FMath::Max(Start, 0.f), bSameWay ? SoftBrake : 0.f, bSameWay ? HardBrake : 0.f, false);
 			break;
 		}
 	}
 	return Limit;
-}
-
-float AATTrafficSubsystem::GetCrossingPaceSpeed(const AFGTrain* Train, const FATTrafficTrain& Leader, const AFGBuildableRailroadTrack* Track, int32 Joint,
-	float Start) const
-{
-	const AFGTrain* LeaderTrain = Leader.Train.Get();
-	const float LeaderSpeed = LeaderTrain ? FMath::Abs(LeaderTrain->mSimulationData.Velocity) : 0.f;
-	const float Speed = FMath::Abs(Train->mSimulationData.Velocity);
-	if (!LeaderTrain || LeaderSpeed < FollowMinSpeed || Start <= 0.f)
-	{
-		return -1.f;
-	}
-	const float ClearSeconds = GetLatestClearSeconds(Leader, GetClearDistance(Leader, Track, Joint), LeaderSpeed);
-	if (ClearSeconds < 0.f)
-	{
-		return -1.f;
-	}
-	const float Seconds = ClearSeconds + FollowTimeMargin();
-	if (Speed * Seconds >= Start)
-	{
-		return -1.f;
-	}
-	return Start / (Seconds + CrossingPaceSlackSeconds);
 }
 
 float AATTrafficSubsystem::GetLeaderTravel(const FATTrafficTrain& Leader, float Braking) const
@@ -1201,7 +1134,6 @@ AATTrafficSubsystem::FRouteSpeed AATTrafficSubsystem::GetRouteSpeed(const FATTra
 	Speed.Length = State.Length;
 	const float Acceleration = State.AccelSeen > 0.f ? FMath::Max(State.AccelSeen, MinPlanAcceleration) : GetAcceleration(State, 0.5f);
 	const float Deceleration = GetPlanningDeceleration(State, Speed.Cruise) * GetNormalBrakingShare();
-	Speed.StopLoss = Speed.Cruise / (2.f * Acceleration) + Speed.Cruise / (2.f * FMath::Max(Deceleration, MinPlanDeceleration));
 	Speed.Accel = Acceleration;
 	Speed.Brake = FMath::Max(Deceleration, MinPlanDeceleration);
 	return Speed;
@@ -1478,11 +1410,6 @@ const TArray<AFGBuildableRailroadTrack*>& AATTrafficSubsystem::GetConflicts(cons
 	return Single;
 }
 
-bool AATTrafficSubsystem::IsCrossing(const AFGBuildableRailroadTrack* Track) const
-{
-	return Track && GetConflicts(Track).Num() > 1;
-}
-
 float AATTrafficSubsystem::GetFoulDistance(const UFGRailroadTrackConnectionComponent* Connection) const
 {
 	const float* Foul = Connection ? mFoulOf.Find(Connection) : nullptr;
@@ -1601,22 +1528,6 @@ float AATTrafficSubsystem::GetAcceleration(const FATTrafficTrain& State, float S
 	return FMath::Clamp(Tractive / FMath::Max(State.Mass, 1.f) * Share, 20.f, 1200.f);
 }
 
-float AATTrafficSubsystem::TimeToCover(float Distance, float Speed, float Acceleration, float MaxSpeed)
-{
-	if (Distance <= 0.f)
-	{
-		return 0.f;
-	}
-	const float Top = FMath::Max3(MaxSpeed, Speed, 100.f);
-	const float Start = FMath::Min(Speed, Top);
-	const float ToTop = (FMath::Square(Top) - FMath::Square(Start)) / (2.f * Acceleration);
-	if (Distance <= ToTop)
-	{
-		return (FMath::Sqrt(FMath::Square(Start) + 2.f * Acceleration * Distance) - Start) / Acceleration;
-	}
-	return (Top - Start) / Acceleration + (Distance - ToTop) / Top;
-}
-
 float AATTrafficSubsystem::GetAuthorityDistance(const AFGTrain* Train) const
 {
 	const FATTrafficTrain* State = mTrains.Find(Train);
@@ -1664,12 +1575,11 @@ void AATTrafficSubsystem::ApplyAuthority(AFGTrain* Train, float DeltaSeconds)
 	const float Distance = GetAuthorityDistance(Train);
 	// Behind a leader on shared track: keep able to stop where the leader could stop.
 	float HardFollowLimit = -1.f;
-	float PaceSpeed = MAX_flt;
 	FATFollowInfo FollowInfo;
 	// Passing through a deadlock: the trains in its way don't hold it back.
 	const bool bGhost = State->GhostUntil >= 0.0;
-	const float FollowLimit = bGhost ? -1.f : GetFollowLimit(Train, *State, HardFollowLimit, PaceSpeed, &FollowInfo);
-	if (Distance < 0.f && FollowLimit < 0.f && PaceSpeed == MAX_flt)
+	const float FollowLimit = bGhost ? -1.f : GetFollowLimit(Train, *State, HardFollowLimit, &FollowInfo);
+	if (Distance < 0.f && FollowLimit < 0.f)
 	{
 		State->bFullBrake = false;
 		State->bForcedBrake = false;
@@ -1701,7 +1611,7 @@ void AATTrafficSubsystem::ApplyAuthority(AFGTrain* Train, float DeltaSeconds)
 	const float Deceleration = GetPlanningDeceleration(*State, Speed);
 	const float Allowed = GetAllowed(FollowLimit, Speed * TargetLeadSeconds, GetNormalBrakingShare());
 	const float AllowedHard = GetAllowed(HardFollowLimit, 0.f, 1.f);
-	float Target = FMath::Min(Allowed, PaceSpeed);
+	float Target = Allowed;
 	// Waiting for a train that will clear: drive at the speed that reaches the braking point as it clears, so the
 	// train rolls on instead of stopping.
 	if (Distance >= 0.f && Usable > 0.f && State->ClearSeconds > 0.f)

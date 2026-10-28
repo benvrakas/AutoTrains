@@ -269,13 +269,6 @@ private:
 	// Logs what a long-waiting train waits for: its booking and every booking at that resource, with their trains.
 	void LogWaitDump(const FATTrafficTrain& State, double Now) const;
 
-	// Returns the latest Holder, at Speed, has travelled ClearDistance if it never stops before the end of its
-	// authority (or its goal), or -1 if that comes first. [s]
-	float GetLatestClearSeconds(const FATTrafficTrain& Holder, float ClearDistance, float Speed) const;
-
-	// Returns how far Holder's front still travels until its tail has cleared Track (or Joint's fouling zone). [cm]
-	float GetClearDistance(const FATTrafficTrain& Holder, const AFGBuildableRailroadTrack* Track, int32 Joint) const;
-
 	// Returns how far Holder still travels until none of its vehicles is on Track, a track off its route, or reaches
 	// onto it past an end (or is in Joint's fouling zone); -1 if none does. [cm]
 	float GetTailClearDistance(const FATTrafficTrain& Holder, const AFGBuildableRailroadTrack* Track, int32 Joint) const;
@@ -294,14 +287,8 @@ private:
 	// Returns how far Train may go behind its follow leaders: to the nearest vehicle of one along its path (or the
 	// first track along it one holds), plus the braking distance of a leader moving on ahead the same way, counted
 	// with the strongest braking a sample counts for; -1 if it follows none. OutHardLimit is the same with the
-	// leaders' planning braking, for full brake. OutPaceSpeed is the highest speed at which Train reaches the
-	// crossings of leaders clearing them first only after they have, MAX_flt if none. [cm]
-	float GetFollowLimit(const AFGTrain* Train, const FATTrafficTrain& State, float& OutHardLimit, float& OutPaceSpeed, FATFollowInfo* OutInfo = nullptr) const;
-
-	// Returns the speed at which Train, Start away from where Leader crosses its route on Track (or passes Joint),
-	// gets there with some slack after the latest Leader, able to get past it, can have cleared it; -1 if Leader may
-	// not clear it or Train at its speed now could get there first. [cm/s]
-	float GetCrossingPaceSpeed(const AFGTrain* Train, const FATTrafficTrain& Leader, const AFGBuildableRailroadTrack* Track, int32 Joint, float Start) const;
+	// leaders' planning braking, for full brake. [cm]
+	float GetFollowLimit(const AFGTrain* Train, const FATTrafficTrain& State, float& OutHardLimit, FATFollowInfo* OutInfo = nullptr) const;
 
 	// Returns Braking, but no further than Leader may still travel: the end of its authority or its goal. [cm]
 	float GetLeaderTravel(const FATTrafficTrain& Leader, float Braking) const;
@@ -316,7 +303,6 @@ private:
 
 	// Returns Track first, then every track crossing it.
 	const TArray<AFGBuildableRailroadTrack*>& GetConflicts(const AFGBuildableRailroadTrack* Track) const;
-	bool IsCrossing(const AFGBuildableRailroadTrack* Track) const;
 
 	// Returns the switch joint Connection belongs to, or INDEX_NONE.
 	int32 GetJoint(const UFGRailroadTrackConnectionComponent* Connection) const;
@@ -335,13 +321,12 @@ private:
 	bool HoldsTrack(const FATTrafficTrain& State, const AFGBuildableRailroadTrack* Track) const;
 	static bool HoldsJoint(const FATTrafficTrain& State, int32 Joint);
 
-	// How a train is timed along a route: cruising speed and length [cm/s] [cm], the time a stop costs over driving
-	// on [s], and the acceleration and service braking it plans with [cm/s^2].
+	// How a train is timed along a route: cruising speed and length [cm/s] [cm], and the acceleration and service
+	// braking it plans with [cm/s^2].
 	struct FRouteSpeed
 	{
 		float Cruise = 500.f;
 		float Length = 0.f;
-		float StopLoss = 0.f;
 		float Accel = 100.f;
 		float Brake = 100.f;
 	};
@@ -364,9 +349,6 @@ private:
 
 	// Acceleration estimate from the consist's tractive effort and mass, times Share. [cm/s^2]
 	static float GetAcceleration(const FATTrafficTrain& State, float Share);
-
-	// Time to cover Distance from Speed accelerating at Acceleration up to MaxSpeed. [s]
-	static float TimeToCover(float Distance, float Speed, float Acceleration, float MaxSpeed);
 
 	// Scales the traction force and power draw of every locomotive of Train by Scale and, for a TopSpeed above the
 	// speed at which a locomotive's traction runs out, stretches its traction curve to TopSpeed, with the power draw

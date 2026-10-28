@@ -614,9 +614,8 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 		if (const AFGTrain* Train = State.Train.Get())
 		{
 			float HardLimit = -1.f;
-			float PaceSpeed = MAX_flt;
 			FATFollowInfo Info;
-			GetFollowLimit(Train, State, HardLimit, PaceSpeed, &Info);
+			GetFollowLimit(Train, State, HardLimit, &Info);
 			if (HardLimit >= 0.f && HardLimit < FollowStuckDistance && Info.Leader.IsValid())
 			{
 				State.BlockedBy = Info.Leader;
@@ -1403,9 +1402,8 @@ void AATTrafficSubsystem::LogWaitDump(const FATTrafficTrain& State, double Now) 
 		if (Train && Other->bManaged)
 		{
 			float HardLimit = -1.f;
-			float PaceSpeed = MAX_flt;
 			FATFollowInfo Info;
-			GetFollowLimit(Train, *Other, HardLimit, PaceSpeed, &Info);
+			GetFollowLimit(Train, *Other, HardLimit, &Info);
 			const float Authority = GetAuthorityDistance(Train);
 			Drive = FString::Printf(TEXT(", may drive %s, target %.0f km/h%s"), Authority < 0.f ? TEXT("to its goal") : *FString::Printf(TEXT("%.0f m"), Authority / 100.f),
 				Train->mAtcData.TargetSpeed * 0.036f,

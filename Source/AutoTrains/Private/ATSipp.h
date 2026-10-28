@@ -26,6 +26,9 @@ struct FATSippGraph
 	TArray<float> StopMarginOf;
 	TArray<bool> OneWay;
 	TArray<TArray<int32>> Attached;
+	// Per connection: the next one when nothing is decided there (one track attached, no switch joint, no one-way
+	// signal, neither track a platform, the next one without crossings), else INDEX_NONE.
+	TArray<int32> Through;
 	// Per track: its length [cm] and the tracks it conflicts with, itself first.
 	TArray<float> Length;
 	TArray<TArray<int32>> Conflicts;
@@ -196,6 +199,8 @@ struct FATSippCycle
 	TSharedPtr<const FATSippGraph, ESPMode::ThreadSafe> Graph;
 	double Now = 0.0;
 	double Headway = 0.0;
+	// Gap a train keeps to the one ahead when they queue. [cm]
+	float QueueGap = 0.f;
 	// How often and for how long the turns may be planned again with a failed train moved up. [s]
 	int32 MaxRetries = 0;
 	double RetrySeconds = 0.0;

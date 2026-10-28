@@ -1383,6 +1383,11 @@ void AATTrafficSubsystem::BuildSearchGraph(const TArray<AFGBuildableRailroadTrac
 			}
 		}
 	}
+	TArray<bool> Platform;
+	for (const AFGBuildableRailroadTrack* Track : Graph->Tracks)
+	{
+		Platform.Add(Track && Track->GetIsOwnedByPlatform());
+	}
 	Graph->Conflicts.SetNum(Graph->Length.Num());
 	for (const TPair<const AFGBuildableRailroadTrack*, int32>& Pair : Graph->TrackIndex)
 	{
@@ -1392,6 +1397,21 @@ void AATTrafficSubsystem::BuildSearchGraph(const TArray<AFGBuildableRailroadTrac
 			{
 				Graph->Conflicts[Pair.Value].Add(*ConflictIndex);
 			}
+		}
+	}
+	// Nothing is decided where the only way on is a plain track: no switch, no one-way signal, no platform, no crossing.
+	Graph->Through.Init(INDEX_NONE, Count);
+	for (int32 Index = 0; Index < Count; ++Index)
+	{
+		if (Graph->Attached[Index].Num() != 1 || Graph->JointOf[Index] != INDEX_NONE || Graph->OneWay[Index] || Platform[Graph->TrackOf[Index]])
+		{
+			continue;
+		}
+		const int32 Entry = Graph->Attached[Index][0];
+		const int32 NextTrack = Graph->TrackOf[Entry];
+		if (Graph->OppositeOf[Entry] != INDEX_NONE && Graph->JointOf[Entry] == INDEX_NONE && !Platform[NextTrack] && Graph->Conflicts[NextTrack].Num() <= 1)
+		{
+			Graph->Through[Index] = Graph->OppositeOf[Entry];
 		}
 	}
 	mSearchGraph = Graph;

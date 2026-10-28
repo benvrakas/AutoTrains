@@ -156,9 +156,10 @@ namespace
 	};
 
 	// The front at Pos [cm from where it is now] at Arrive with Speed, at the end of route step Step's track (Node, the
-	// connection at NodePos), stopped short of it or passing it; it left the parent at Leave over Edge, later than it got
-	// there for Cause's booking. Open: what the move here started on. BlockedBy/BlockedAt: the last booking that kept a
-	// move on from here, and whether it counted only because its train plans first.
+	// connection at NodePos), stopped short of it or passing it; it got there over a run of track starting with
+	// connection First, leaving the parent at Leave over Edge, later than it got there for Cause's booking. Opens
+	// [OpenFirst, +NumOpen): what the move here started on. BlockedBy/BlockedAt: the last booking that kept a move on from
+	// here, and whether it counted only because its train plans first.
 	struct FState
 	{
 		int32 Node = INDEX_NONE;
@@ -173,12 +174,16 @@ namespace
 		bool bStopped = false;
 		uint32 Key = 0;
 		int32 Cause = INDEX_NONE;
+		int32 First = INDEX_NONE;
+		int32 OpenFirst = 0;
 		int32 NumOpen = 0;
-		FOpenResource Open[2];
 		int32 BlockedBy = INDEX_NONE;
 		int32 BlockedAt = INDEX_NONE;
 		bool bBlockedByRank = false;
 	};
+
+	// The connections of a run of track.
+	using FRun = TArray<int32, TInlineAllocator<16>>;
 
 	struct FQueued
 	{
@@ -188,7 +193,9 @@ namespace
 	};
 
 	// One train's safe-interval search over (track end, speed, window) states with the train's own motion, body and
-	// stops, against the bookings of the table in its scope.
+	// stops, against the bookings of the table in its scope. A move runs from one place anything is decided (a switch,
+	// a crossing, a platform, a one-way signal, the goal, the end of the fixed part of the route) to the next; the
+	// tracks in between are each booked, but nothing is decided on them.
 	class FPlanner
 	{
 	public:
@@ -233,6 +240,7 @@ namespace
 			bGoalAtEnd = bInGoalAtEnd;
 			Goal = InRoute.Num() > 0 ? InRoute.Last() : INDEX_NONE;
 			States.Reset();
+			Opens.Reset();
 			Best.Reset();
 			ReachedTracks.Reset();
 			RejectedMotion = RejectedTail = RejectedStay = 0;
@@ -465,11 +473,11 @@ namespace
 				{
 					break;
 				}
-				for (int32 Open = 0; Open < State.NumOpen; ++Open)
+				for (int32 Open = State.OpenFirst; Open < State.OpenFirst + State.NumOpen; ++Open)
 				{
-					if (State.Open[Open].ClearAt > MinPos)
+					if (Opens[Open].ClearAt > MinPos)
 					{
-						Func(State.Open[Open]);
+						Func(Opens[Open]);
 					}
 				}
 			}
@@ -521,21 +529,30 @@ namespace
 					}
 				}
 			}
+			FRun Run;
 			for (const int32 Next : Nexts)
 			{
-				const int32 Track = Graph.TrackOf[Next];
+				RunFrom(State, Next, Run);
+				const int32 End = Run.Last();
+				const int32 Track = Graph.TrackOf[End];
 				if (bFree && State.Step >= Train.Commit && ReachedTracks.Contains(Track) && OnPath(Index, Track))
 				{
 					continue;
 				}
 				ReachedTracks.Add(Track);
-				const float NodePos = State.Step < 0 ? FMath::Max(Train.FirstEnd, State.Pos + MinMove) : State.NodePos + Graph.Length[Track];
-				const bool bGoalNode = IsGoal(State.Step + 1, Next);
-				const float StopAt = NodePos - (bGoalNode ? 0.f : Graph.StopMarginOf[Next]);
+				float NodePos = State.Step < 0 ? FMath::Max(Train.FirstEnd, State.Pos + MinMove) : State.NodePos + Graph.Length[Graph.TrackOf[Run[0]]];
+				for (int32 Link = 1; Link < Run.Num(); ++Link)
+				{
+					NodePos += Graph.Length[Graph.TrackOf[Run[Link]]];
+				}
+				const bool bGoalNode = IsGoal(State.Step + Run.Num(), End);
 				const float SpeedSquared = FMath::Square(State.Speed);
+				// Behind the same-way trains still waiting there when it could get there first.
+				const float Queue = bGoalNode ? 0.f : QueueAhead(End, State.Arrive + (NodePos - State.Pos) / Top);
+				const float StopAt = NodePos - (bGoalNode ? 0.f : Graph.StopMarginOf[End]) - Queue;
 				if (StopAt - State.Pos >= MinMove && (StopAt <= ForcedReach || SpeedSquared <= 2.f * Brake * (StopAt - State.Pos) + 1.f))
 				{
-					Move(Index, Next, Track, NodePos, StopAt, 0.f, true);
+					Move(Index, Run, NodePos, StopAt, 0.f, true);
 				}
 				const float Pass = NodePos - State.Pos;
 				if (bGoalNode || Pass < MinMove)
@@ -565,9 +582,56 @@ namespace
 				}
 				for (const float Speed : Speeds)
 				{
-					Move(Index, Next, Track, NodePos, NodePos, Speed, false);
+					Move(Index, Run, NodePos, NodePos, Speed, false);
 				}
 			}
+		}
+
+		// The connections of the run of track from state State's track end on through First, up to the next place anything
+		// is decided.
+		void RunFrom(const FState& State, int32 First, FRun& Out) const
+		{
+			Out.Reset();
+			Out.Add(First);
+			while (Out.Num() <= Graph.Length.Num())
+			{
+				const int32 Step = State.Step + Out.Num();
+				const int32 Node = Out.Last();
+				if (IsGoal(Step, Node) || (bFree && Step == Train.Commit))
+				{
+					return;
+				}
+				const int32 Through = Graph.Through[Node];
+				if (!bFree || Step < Train.Commit)
+				{
+					if (!Route->IsValidIndex(Step + 1) || Through != (*Route)[Step + 1])
+					{
+						return;
+					}
+				}
+				else if (Through == INDEX_NONE)
+				{
+					return;
+				}
+				Out.Add(Through);
+			}
+		}
+
+		// How far back from the end of Node's track the train stands at Time behind the same-way trains still on it then:
+		// their lengths and the gap kept to each. [cm]
+		float QueueAhead(int32 Node, double Time) const
+		{
+			const int32 Track = Graph.TrackOf[Node];
+			float Queue = 0.f;
+			for (const FATSippBooking& Booking : Table.ByResource[Track])
+			{
+				if (Booking.Owner != Slot && Booking.Exit == Node && Booking.Via == INDEX_NONE && Booking.Enter < Time && Booking.Clear > Time
+					&& Cycle.Trains.IsValidIndex(Booking.Owner) && !IsBehind(Booking.Owner, Track))
+				{
+					Queue += Cycle.Trains[Booking.Owner].Length + Cycle.QueueGap;
+				}
+			}
+			return Queue;
 		}
 
 		void NoteBlock(int32 Index, int32 By, int32 Resource, bool bByRank)
@@ -580,9 +644,9 @@ namespace
 			}
 		}
 
-		// Adds the states of the move from state Index to Node's track end (Track, at NodePos), arriving at To [cm] with
-		// Speed: leaving at once, or, standing, at the first time it fits in each of the next windows of the way on.
-		void Move(int32 Index, int32 Node, int32 Track, float NodePos, float To, float Speed, bool bStop)
+		// Adds the states of the move from state Index over Run to the end of its last track (at NodePos), arriving at To
+		// [cm] with Speed: leaving at once, or, standing, at the first time it fits in each of the next windows of the way on.
+		void Move(int32 Index, const FRun& Run, float NodePos, float To, float Speed, bool bStop)
 		{
 			const FState State = States[Index];
 			const float Distance = To - State.Pos;
@@ -592,7 +656,7 @@ namespace
 				++RejectedMotion;
 				return;
 			}
-			// What the move starts on: the switch joint at the track end it comes from, then the track.
+			// What the move starts on: the switch joint at the track end it comes from, then each track of the run.
 			struct FNew
 			{
 				int32 Resource;
@@ -601,18 +665,25 @@ namespace
 				float EnterAt;
 				float ClearAt;
 			};
-			TArray<FNew, TInlineAllocator<2>> News;
+			TArray<FNew, TInlineAllocator<16>> News;
 			if (State.Step >= 0)
 			{
 				const int32 Joint = Graph.JointOf[State.Node];
 				if (Joint != INDEX_NONE && !Train.Locked.Contains(Graph.JointResource(Joint)))
 				{
-					News.Add({Graph.JointResource(Joint), Node, State.Node, State.NodePos - Graph.FoulOf[State.Node], State.NodePos + Train.Length + Graph.JointFoul[Joint]});
+					News.Add({Graph.JointResource(Joint), Run[0], State.Node, State.NodePos - Graph.FoulOf[State.Node], State.NodePos + Train.Length + Graph.JointFoul[Joint]});
 				}
+			}
+			float TrackStart = State.Step >= 0 ? State.NodePos : 0.f;
+			for (int32 Link = 0; Link < Run.Num(); ++Link)
+			{
+				const int32 Track = Graph.TrackOf[Run[Link]];
+				const float TrackEnd = Link == Run.Num() - 1 ? NodePos : State.Step < 0 && Link == 0 ? FMath::Max(Train.FirstEnd, State.Pos + MinMove) : TrackStart + Graph.Length[Track];
 				if (!Train.Locked.Contains(Track))
 				{
-					News.Add({Track, Node, INDEX_NONE, State.NodePos, NodePos + Train.Length});
+					News.Add({Track, Run[Link], INDEX_NONE, TrackStart, TrackEnd + Train.Length});
 				}
+				TrackStart = TrackEnd;
 			}
 			const bool bCanWait = State.bStopped;
 			const double Earliest = State.Step < 0 ? FMath::Max(State.Arrive, Train.MinDepart) : State.Arrive;
@@ -623,8 +694,10 @@ namespace
 			{
 				double Later = Leave;
 				bool bFits = true;
-				FGap Gaps[2];
-				double Enters[2] = {0.0, 0.0};
+				TArray<FGap, TInlineAllocator<16>> Gaps;
+				TArray<double, TInlineAllocator<16>> Enters;
+				Gaps.SetNum(News.Num());
+				Enters.SetNum(News.Num());
 				for (int32 New = 0; New < News.Num(); ++New)
 				{
 					const bool bOnMove = News[New].EnterAt > State.Pos;
@@ -691,8 +764,9 @@ namespace
 					continue;
 				}
 				FState Next;
-				Next.Node = Node;
-				Next.Step = State.Step + 1;
+				Next.Node = Run.Last();
+				Next.First = Run[0];
+				Next.Step = State.Step + Run.Num();
 				Next.Parent = Index;
 				Next.NodePos = NodePos;
 				Next.Pos = To;
@@ -702,13 +776,14 @@ namespace
 				Next.Edge = Edge;
 				Next.bStopped = bStop;
 				Next.Cause = Leave > Earliest + MinWaitSeconds ? Cause : INDEX_NONE;
+				Next.OpenFirst = Opens.Num();
 				Next.NumOpen = News.Num();
 				uint32 Key = 0;
 				double Ends = ATSippNever;
 				double EndEnter = 0.0;
 				for (int32 New = 0; New < News.Num(); ++New)
 				{
-					Next.Open[New] = {News[New].Resource, News[New].ClearAt, Gaps[New].ClearLo, Gaps[New].ClearHi};
+					Opens.Add({News[New].Resource, News[New].ClearAt, Gaps[New].ClearLo, Gaps[New].ClearHi});
 					Key = HashCombine(Key, Gaps[New].Key);
 					if (Gaps[New].ClearHi < Ends)
 					{
@@ -728,14 +803,27 @@ namespace
 			}
 		}
 
+		// The connections of the way to state Index, every track of each run.
 		TArray<int32> RouteTo(int32 Index) const
 		{
-			TArray<int32> Nodes;
+			TArray<int32> Chain;
 			for (int32 At = Index; At != INDEX_NONE && States[At].Step >= 0; At = States[At].Parent)
 			{
-				Nodes.Add(States[At].Node);
+				Chain.Add(At);
 			}
-			Algo::Reverse(Nodes);
+			Algo::Reverse(Chain);
+			TArray<int32> Nodes;
+			for (const int32 At : Chain)
+			{
+				const FState& State = States[At];
+				int32 Node = State.First;
+				Nodes.Add(Node);
+				for (int32 Link = States[State.Parent].Step + 2; Link <= State.Step; ++Link)
+				{
+					Node = Graph.Through[Node];
+					Nodes.Add(Node);
+				}
+			}
 			return Nodes;
 		}
 
@@ -760,9 +848,12 @@ namespace
 				// Past the goal: after the stay, pulling away from standstill; past a stand for good: never.
 				return bReached && !IsNever(Train.GoalDwell) ? Last.Arrive + Train.GoalDwell + RestTime(Pos - Last.Pos, Top, Accel) : ATSippNever;
 			};
-			for (int32 Link = 1; Link < Chain.Num(); ++Link)
+			Out.Route = RouteTo(Final);
+			// Where the front is at the end of each route step.
+			TArray<float> StepEnd;
+			for (int32 Step = 0; Step < Out.Route.Num(); ++Step)
 			{
-				Out.Route.Add(States[Chain[Link]].Node);
+				StepEnd.Add(Step == 0 ? FMath::Max(Train.FirstEnd, MinMove) : StepEnd.Last() + Graph.Length[Graph.TrackOf[Out.Route[Step]]]);
 			}
 			for (const FATSippPass& Tail : Train.Tail)
 			{
@@ -773,7 +864,7 @@ namespace
 			for (int32 Step = 0; Step < Out.Route.Num(); ++Step)
 			{
 				const int32 Node = Out.Route[Step];
-				const float From = Step > 0 ? States[Chain[Step]].NodePos : 0.f;
+				const float From = Step > 0 ? StepEnd[Step - 1] : 0.f;
 				if (Step > 0)
 				{
 					const int32 Previous = Out.Route[Step - 1];
@@ -795,7 +886,7 @@ namespace
 				Pass.Resource = Graph.TrackOf[Node];
 				Pass.Exit = Node;
 				Pass.EnterAt = Step == 0 ? -1.f : From;
-				Pass.ClearAt = States[Chain[Step + 1]].NodePos + Train.Length;
+				Pass.ClearAt = StepEnd[Step] + Train.Length;
 				Pass.Step = Step;
 				Out.Passes.Add(Pass);
 			}
@@ -972,6 +1063,7 @@ namespace
 		bool bGoalAtEnd = true;
 		int32 Goal = INDEX_NONE;
 		TArray<FState> States;
+		TArray<FOpenResource> Opens;
 		TMap<uint64, double> Best;
 		TSet<int32> ReachedTracks;
 		int32 FurthestStopped = INDEX_NONE;

@@ -92,13 +92,13 @@ braking distance, speed and length. Three things fall out of that for free:
 <text x="135" y="168" fill="#7aa7f0" font-family="sans-serif" font-size="12" font-weight="bold" transform="rotate(-33 135 168)">train 1</text>
 <line x1="130" y1="215" x2="330" y2="86" stroke="#ef4444" stroke-width="2.5" stroke-dasharray="6 5"/>
 <circle cx="330" cy="86" r="5" fill="#ef4444"/>
-<text x="338" y="130" fill="#ef6a6a" font-family="sans-serif" font-size="12">unplanned: reaches the</text>
-<text x="338" y="146" fill="#ef6a6a" font-family="sans-serif" font-size="12">crossing while it is booked</text>
+<text x="470" y="112" fill="#ef6a6a" font-family="sans-serif" font-size="12">unplanned: reaches the</text>
+<text x="470" y="128" fill="#ef6a6a" font-family="sans-serif" font-size="12">crossing while it is booked</text>
 <path d="M130 215 Q 300 196 450 86" fill="none" stroke="#f59e0b" stroke-width="3.5" marker-end="url(#atarr)"/>
 <circle cx="450" cy="86" r="5" fill="#3fb96b"/>
-<text x="470" y="150" fill="#f59e0b" font-family="sans-serif" font-size="12" font-weight="bold">train 2 as planned:</text>
-<text x="470" y="166" fill="#f59e0b" font-family="sans-serif" font-size="12">eases off, then arrives as</text>
-<text x="470" y="182" fill="#f59e0b" font-family="sans-serif" font-size="12">train 1 clears. It never stops.</text>
+<text x="470" y="170" fill="#f59e0b" font-family="sans-serif" font-size="12" font-weight="bold">train 2 as planned:</text>
+<text x="470" y="186" fill="#f59e0b" font-family="sans-serif" font-size="12">eases off, then arrives as</text>
+<text x="470" y="202" fill="#f59e0b" font-family="sans-serif" font-size="12">train 1 clears. It never stops.</text>
 <g stroke="#9aa5b5"><line x1="70" y1="211" x2="70" y2="219"/><line x1="170" y1="211" x2="170" y2="219"/><line x1="270" y1="211" x2="270" y2="219"/><line x1="370" y1="211" x2="370" y2="219"/><line x1="470" y1="211" x2="470" y2="219"/><line x1="570" y1="211" x2="570" y2="219"/><line x1="670" y1="211" x2="670" y2="219"/></g>
 <g font-family="sans-serif" font-size="11" fill="#9aa5b5" text-anchor="middle"><text x="70" y="233">0 s</text><text x="170" y="233">10</text><text x="270" y="233">20</text><text x="370" y="233">30</text><text x="470" y="233">40</text><text x="570" y="233">50</text><text x="670" y="233">60</text></g>
 <text x="690" y="254" fill="#9aa5b5" font-family="sans-serif" font-size="11" text-anchor="end">time</text>

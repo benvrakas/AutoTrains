@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.2
+
+- **Fixed: sudden hard stops when a plan briefly failed.** A train whose plan found no way for a moment lost the track
+  just ahead that it had already been given, and was stopped on the spot even at full speed. It now keeps track it
+  holds; only a train standing there or holding it stops it.
+
 ## 1.3.1
 
 - **Station stays known from the timetable:** a stop set to load or unload once takes the freight platforms' fixed

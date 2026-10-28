@@ -42,9 +42,12 @@ namespace
 	// Trains stop at least this far before a switch. [cm]
 	constexpr float SwitchStopMargin = 2500.f;
 	// Distance along each track from a switch point within which a vehicle fouls the switch, at least; branches leaving
-	// a switch the same way foul it until their centre lines are JointClearance apart, measured up to JointFoulMax. [cm]
+	// a switch the same way foul it until their centre lines are the clearance apart, measured up to JointFoulMax. [cm]
 	constexpr float JointFoulDistance = 2000.f;
-	constexpr float JointClearance = 550.f;
+	// Clearance: two trains' bodies stay apart while their centre lines are at least the widest vehicle's width plus
+	// ClearanceMargin apart; DefaultClearance until a vehicle has been measured. [cm]
+	constexpr float ClearanceMargin = 50.f;
+	constexpr float DefaultClearance = 550.f;
 	constexpr float JointFoulMax = 15000.f;
 	constexpr float JointFoulStep = 200.f;
 	// A vehicle counts as on the next track only once it reaches this far past the end of its own; station tracks
@@ -1157,6 +1160,17 @@ void AATTrafficSubsystem::RebuildConflicts()
 		}
 	}
 
+	float Width = 0.f;
+	for (TActorIterator<AFGRailroadVehicle> It(GetWorld()); It; ++It)
+	{
+		const FBox Box = It->CalculateComponentsBoundingBoxInLocalSpace(true);
+		if (Box.IsValid)
+		{
+			Width = FMath::Max(Width, FMath::Min(Box.GetSize().X, Box.GetSize().Y));
+		}
+	}
+	const float Clearance = Width > 0.f ? Width + ClearanceMargin : DefaultClearance;
+
 	// Switch joints: the connections where three or more tracks meet.
 	int32 JointCount = 0;
 	for (AFGBuildableRailroadTrack* Track : Tracks)
@@ -1261,7 +1275,7 @@ void AATTrafficSubsystem::RebuildConflicts()
 					FVector OnA, OnB;
 					PointAt(Members[A], Distance, OnA);
 					PointAt(Members[B], Distance, OnB);
-					if (FVector::Dist(OnA, OnB) >= JointClearance)
+					if (FVector::Dist(OnA, OnB) >= Clearance)
 					{
 						Foul = Distance;
 						break;
@@ -1352,16 +1366,17 @@ void AATTrafficSubsystem::RebuildConflicts()
 			}
 			Checked.Add(TPair<const AFGBuildableRailroadTrack*, const AFGBuildableRailroadTrack*>(Track, Overlapping));
 			const float Distance = Closest(Track, Overlapping);
-			if (Distance >= JointClearance)
+			const bool bCrosses = Distance < Clearance;
+			const FString Pair = FString::Printf(TEXT("%s|%s|%d"), *TrackName(Track), *TrackName(Overlapping), bCrosses ? 1 : 0);
+			if (!mLoggedPairs.Contains(Pair))
+			{
+				mLoggedPairs.Add(Pair);
+				UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s and %s overlap for the game; their centre lines come within %.1f m: %s"), *TrackName(Track),
+					*TrackName(Overlapping), Distance / 100.f, bCrosses ? TEXT("a crossing") : TEXT("not a crossing"));
+			}
+			if (!bCrosses)
 			{
 				++Clear;
-				const FString Pair = TrackName(Track) + TEXT("|") + TrackName(Overlapping);
-				if (!mLoggedClearPairs.Contains(Pair))
-				{
-					mLoggedClearPairs.Add(Pair);
-					UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s and %s overlap for the game but their centre lines stay %.1f m apart: not a crossing"),
-						*TrackName(Track), *TrackName(Overlapping), Distance / 100.f);
-				}
 				continue;
 			}
 			Entry(Track).AddUnique(Overlapping);
@@ -1376,8 +1391,8 @@ void AATTrafficSubsystem::RebuildConflicts()
 	BuildSearchGraph(Tracks, JointCount);
 	mConflictsBuiltAt = FPlatformTime::Seconds();
 	mConflictsStale = false;
-	UE_LOG(LogAutoTrains, Log, TEXT("traffic: conflict model rebuilt: %d tracks, %d switch joints (longest fouling zone %.0f m), %d crossing tracks, %d overlapping pairs that don't cross, %.1f ms"),
-		Tracks.Num(), JointCount, LongestFoul / 100.f, Crossings, Clear, (mConflictsBuiltAt - Begin) * 1000.0);
+	UE_LOG(LogAutoTrains, Log, TEXT("traffic: conflict model rebuilt: %d tracks, %d switch joints (longest fouling zone %.0f m), %d crossing tracks, %d overlapping pairs that don't cross, clearance %.1f m (widest vehicle %.1f m), %.1f ms"),
+		Tracks.Num(), JointCount, LongestFoul / 100.f, Crossings, Clear, Clearance / 100.f, Width / 100.f, (mConflictsBuiltAt - Begin) * 1000.0);
 }
 
 void AATTrafficSubsystem::BuildSearchGraph(const TArray<AFGBuildableRailroadTrack*>& Tracks, int32 JointCount)

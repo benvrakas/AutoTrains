@@ -527,3 +527,8 @@ train, then a row per train every 0.2 s:
   behind where a follower already was and made plans fail every other cycle ("no way on past switch 130", many tail
   windows missed, cycles up to 78 ms with retries); removed, the same-way rule already lets followers plan to wait at a
   run's end behind the leader.
+- 5682b21 session: the 5.5 m centre-line test dropped no pair ("0 overlapping pairs that don't cross"); Coated Plates
+  RSC B waited for Reinforced Plates Train on a double-track curve (2146541664 vs 2146536845 and 2147183309) where the
+  lines come closer than 5.5 m but the trains never touch. 7b8576d measures the clearance as the widest rail
+  vehicle's local-space width plus 0.5 m (used for crossings and switch fouling zones) and logs every overlapping pair
+  once with its closest approach; check those lines for this pair before changing the rule again.

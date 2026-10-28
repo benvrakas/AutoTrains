@@ -1308,16 +1308,64 @@ void AATTrafficSubsystem::RebuildConflicts()
 		}
 		return false;
 	};
+	// The game counts tracks whose outlines overlap; they cross only where their centre lines come within the clearance.
+	auto Closest = [](const AFGBuildableRailroadTrack* A, const AFGBuildableRailroadTrack* B)
+	{
+		auto Sample = [](const AFGBuildableRailroadTrack* Track, TArray<FVector>& Out)
+		{
+			const float Length = Track->GetLength();
+			for (float Along = 0.f;; Along = FMath::Min(Along + JointFoulStep, Length))
+			{
+				FVector Location, Direction;
+				Track->GetWorldLocationAndDirectionAtDistance(Along, Location, Direction);
+				Out.Add(Location);
+				if (Along >= Length)
+				{
+					break;
+				}
+			}
+		};
+		TArray<FVector> PointsA, PointsB;
+		Sample(A, PointsA);
+		Sample(B, PointsB);
+		float Best = MAX_flt;
+		for (const FVector& PointA : PointsA)
+		{
+			for (const FVector& PointB : PointsB)
+			{
+				Best = FMath::Min(Best, FVector::DistSquared(PointA, PointB));
+			}
+		}
+		return FMath::Sqrt(Best);
+	};
+	TSet<TPair<const AFGBuildableRailroadTrack*, const AFGBuildableRailroadTrack*>> Checked;
+	int32 Clear = 0;
 	for (AFGBuildableRailroadTrack* Track : Tracks)
 	{
 		Entry(Track);
 		for (AFGBuildableRailroadTrack* Overlapping : Track->GetOverlappingTracks())
 		{
-			if (Overlapping && Overlapping != Track && !SharesJoint(Track, Overlapping))
+			if (!Overlapping || Overlapping == Track || SharesJoint(Track, Overlapping)
+				|| Checked.Contains(TPair<const AFGBuildableRailroadTrack*, const AFGBuildableRailroadTrack*>(Overlapping, Track)))
 			{
-				Entry(Track).AddUnique(Overlapping);
-				Entry(Overlapping).AddUnique(Track);
+				continue;
 			}
+			Checked.Add(TPair<const AFGBuildableRailroadTrack*, const AFGBuildableRailroadTrack*>(Track, Overlapping));
+			const float Distance = Closest(Track, Overlapping);
+			if (Distance >= JointClearance)
+			{
+				++Clear;
+				const FString Pair = TrackName(Track) + TEXT("|") + TrackName(Overlapping);
+				if (!mLoggedClearPairs.Contains(Pair))
+				{
+					mLoggedClearPairs.Add(Pair);
+					UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s and %s overlap for the game but their centre lines stay %.1f m apart: not a crossing"),
+						*TrackName(Track), *TrackName(Overlapping), Distance / 100.f);
+				}
+				continue;
+			}
+			Entry(Track).AddUnique(Overlapping);
+			Entry(Overlapping).AddUnique(Track);
 		}
 	}
 	int32 Crossings = 0;
@@ -1328,8 +1376,8 @@ void AATTrafficSubsystem::RebuildConflicts()
 	BuildSearchGraph(Tracks, JointCount);
 	mConflictsBuiltAt = FPlatformTime::Seconds();
 	mConflictsStale = false;
-	UE_LOG(LogAutoTrains, Log, TEXT("traffic: conflict model rebuilt: %d tracks, %d switch joints (longest fouling zone %.0f m), %d crossing tracks, %.1f ms"),
-		Tracks.Num(), JointCount, LongestFoul / 100.f, Crossings, (mConflictsBuiltAt - Begin) * 1000.0);
+	UE_LOG(LogAutoTrains, Log, TEXT("traffic: conflict model rebuilt: %d tracks, %d switch joints (longest fouling zone %.0f m), %d crossing tracks, %d overlapping pairs that don't cross, %.1f ms"),
+		Tracks.Num(), JointCount, LongestFoul / 100.f, Crossings, Clear, (mConflictsBuiltAt - Begin) * 1000.0);
 }
 
 void AATTrafficSubsystem::BuildSearchGraph(const TArray<AFGBuildableRailroadTrack*>& Tracks, int32 JointCount)

@@ -14,33 +14,69 @@ Train traffic without block or path signals: trains slow down, wait or take anot
 
 ## Auto Trains
 
-No more signals. Auto Trains takes over the traffic of every self-driving train: each train books the track and
-switches on its way as time slots around the other trains, and speeds up, slows down, waits or reroutes so that no
-two trains ever need the same track at the same time. Build junctions, roundabouts, crossings and single track however
-you like, and let the trains sort it out.
+No more signals. Auto Trains takes over the traffic of every self-driving train. Each train plans its trip through
+the whole network ahead of time, booking every track and switch it will use for the moments it will be there, and
+speeds up, slows down, waits or takes another route so that no two trains ever need the same piece of track at the
+same time. Build junctions, roundabouts, crossings and single track however you like, and let the trains sort it out.
 
-### How trains share the track
+### How it works: safe interval path planning
 
-- **Planned in space and time.** Every train books each track and switch on its route for the time it will be there,
-  around everyone else's bookings: a safe-interval search finds its earliest timetable and puts its waits where they
-  cost least. A train only moves onto track that is
-  its turn and that nobody else is on, and always keeps a speed at which it can stop before the end of what it has
-  been given. It's given enough track ahead to reach its cruising speed.
-- **Going first.** A train may go through a crossing or switch ahead of a train that is still far enough away to stop,
-  when it's clear before that train arrives.
-- **Never stuck in a junction.** A train that has to wait stops where it leaves the crossings and switches other
-  trains are booked on free.
-- **Fastest route.** Trains search the fastest way through the other trains' bookings and switch to it when it gets
-  them there clearly sooner, even when it's longer.
+The planner is built on **safe interval path planning (SIPP)**, a method from robotics for moving many vehicles through
+a shared map without collisions. The idea is small enough to follow in four steps.
+
+**1. Every piece of track has a timeline.** Each track and each switch has its own booking calendar. Free time is
+open; time when a train will be on it is booked. A train is on a track from the moment its front enters until its tail
+has left, so a long train books a place for longer than a short one.
+
+```
+Junction A    time ->
+              0s        20s       40s       60s       80s
+  Train 1     ░░░░░░░░░░██████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░    <- already planned
+  Train 2     ░░░░░░░░░░░░░░░░░░░░░░░░░░██████░░░░░░░░░░░░░    <- planned next
+  Free:       [ safe 0-10 s ]            [ safe 30-... s ] ...
+```
+
+**2. Free stretches of time are the "safe intervals".** The gaps between bookings are windows in which a train can
+use the track without meeting anyone. A small safety margin is kept on both sides of every booking, and it's the only
+margin: there are no hidden extra seconds.
+
+**3. Each train searches for the earliest way through the gaps.** The search doesn't just look for the shortest path.
+It looks for the earliest arrival through a sequence of track *and* time windows, using the train's real acceleration,
+braking distance, speed and length. Three things fall out of that for free:
+
+- A train may **slow down to reach a crossing just as the other train clears it**, instead of stopping and starting.
+- A train may **go first** through a junction ahead of a train that is still far away.
+- Waits **land where they cost least**, and a waiting train only stands where its whole body leaves every crossing and
+  switch that other trains are booked on free.
+
+**4. Trains are planned one after another.** The first train plans around nothing. Each next train plans around the
+bookings of the trains before it, then books its own plan. Because every plan is made around the earlier ones, they
+always fit together: no two bookings overlap, so no two trains meet. A fixed order stops trains from each waiting for
+the other, and a train that is already ahead of another on its route goes first.
+
+Plans are redone continuously, several times a second. When a train runs late, brakes harder than expected or a new
+train joins, everyone's plan is updated and the bookings move with them. The planning runs on worker threads, so it
+doesn't cost frame time.
+
+**What the trains get from it**
+
+- **Fastest route.** The search covers the whole network, so a train that would wait a long time on its usual route
+  takes another one, even a longer one, when that gets it there clearly sooner. Rerouting is conservative: a new route
+  must save a set time and share of the trip (settings below), and it's kept for a while.
 - **Timetables known ahead.** A docked train's departure is booked ahead from how long it stayed there last time and
-  where its timetable sends it next, so no train queues in the way it needs to leave.
-- **Following.** A train follows another through a junction or roundabout the same way, keeping enough distance to
-  stop if the train ahead does.
+  where its timetable sends it next, so no train queues in the way another needs to leave.
+- **Never stuck in a junction.** A train only drives into a stretch it can get through; it won't stop with its body
+  across a crossing or switch someone else is booked on.
+- **Brakes it can trust.** Each train measures how hard it really brakes at each speed and plans with that. If a
+  train still can't stop in time, the mod brakes it harder than its brakes could, the way block signals do.
 - **Deadlocks cleared.** Trains waiting for each other in a circle get the game's warning over them. With the beta
   setting on (the default), after a minute they pass through each other to clear the jam, and the case is written to
   a log you can send in.
-- **Brakes it can trust.** Each train measures how hard it really brakes at each speed and plans with that. If a
-  train still can't stop in time, the mod brakes it harder than its brakes could, the way block signals do.
+
+The method follows the safe interval planning of Phillips and Likhachev (2011) and its extension to long vehicles,
+[MT-SIPP](https://doi.org/10.3390/machines12070482) (Miao et al., 2024), which books the body of a train and not just
+its head. Auto Trains adds real train motion, whole-network route choice, learned station stays and continuous
+replanning.
 
 ### Settings (Mods menu)
 
@@ -62,6 +98,7 @@ you like, and let the trains sort it out.
 | **Station stay estimate (seconds)** | 40 | How long a train is expected to stay at a station before it has been seen there; after that its own last stay counts. |
 | **Clear deadlocks by passing through (beta)** | On | Trains stuck waiting for each other in a circle drive on through each other after the set time; each case is written to FactoryGame/Saved/AutoTrains/faults.log. |
 | **Pass through a deadlock after (seconds)** | 60 | How long a deadlock lasts before its trains pass through each other. |
+| **Planning retries** | 3 | When a train finds no way because a train planned before it is in the way, it is planned before that train and the round is planned again, up to this many times. 0 keeps the planning order as it is. |
 | **Update interval (seconds)** | 0.25 | How often trains are planned and given track. Shorter reacts faster but costs more on big networks. |
 
 ### Getting started

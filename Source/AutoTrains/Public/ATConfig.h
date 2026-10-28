@@ -37,6 +37,9 @@ struct FATSettings
 	float UpdateIntervalSeconds = 0.25f;
 	// How long a deadlock lasts before its trains pass through each other. [s]
 	float GhostAfterSeconds = 60.f;
+	// How often a planning cycle may be planned again with a train whose plan failed moved up before the train in its
+	// way.
+	float PlanRetries = 3.f;
 };
 
 // Auto Trains' mod configuration: switches and numbers shown in the Mods menu and Satisfactory Mod Manager.

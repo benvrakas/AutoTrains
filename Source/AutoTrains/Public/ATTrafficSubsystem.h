@@ -155,6 +155,8 @@ struct FATTrafficTrain
 	int32 PlanRank = INDEX_NONE;
 	// Whether a planning cycle has planned it since it was last driven by the game or a player.
 	bool bHasPlan = false;
+	// Trains it was planned before on this leg after its plan failed behind them; they don't go back before it.
+	TSet<TWeakObjectPtr<AFGTrain>> MovedAheadOf;
 	// When the plan has the front enter each route track and switch (world seconds), and which of those bookings are
 	// locked.
 	TMap<const AFGBuildableRailroadTrack*, double> PlanTrackEnter;
@@ -490,6 +492,9 @@ private:
 	int32 mPlanPredictions = 0;
 	int32 mPlanUpdates = 0;
 	int32 mCycles = 0;
+	int32 mPlanReorders = 0;
+	// The last train logged as held up past the planning retry limit.
+	FString mLastRetryLimited;
 	int32 mCyclesLate = 0;
 	double mCycleMilliseconds = 0.0;
 	double mPlanSeconds = 0.0;

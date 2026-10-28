@@ -131,6 +131,8 @@ struct FATSippTrain
 	// the resources that train only gets to after this one (it is behind this one on the same line).
 	TSet<int32> First;
 	TMap<int32, TSet<int32>> Behind;
+	// Slots this train was put before on this leg after its plan failed; they don't go back before it.
+	TSet<int32> MovedAheadOf;
 	// Its length [cm], cruising speed [cm/s], planned acceleration and service braking [cm/s^2], speed now [cm/s],
 	// whether it stands, the earliest it may move off and its stay at the goal (world s, ATSippNever if unknown).
 	float Length = 0.f;
@@ -168,6 +170,8 @@ struct FATSippResult
 	int32 StandStep = -1;
 	int32 BlockedBy = INDEX_NONE;
 	int32 BlockedAt = INDEX_NONE;
+	// Whether BlockedBy's booking counted only because that train plans first.
+	bool bBlockedByRank = false;
 	// A train booked first on a resource this one can't stop short of any more, and that resource.
 	int32 CommittedWith = INDEX_NONE;
 	int32 CommittedAt = INDEX_NONE;
@@ -184,16 +188,25 @@ struct FATSippResult
 	int32 RejectedStay = 0;
 };
 
-// One planning cycle: every train in turn (slot order) removes its own bookings and books its new plan around the
-// others' in its scope. Filled on the game thread, run on a worker, read back on the game thread once bDone.
+// One planning cycle: every train in turn (Order, slot order unless a failure moved a train up) removes its own
+// bookings and books its new plan around the others' in its scope. Filled on the game thread, run on a worker, read
+// back on the game thread once bDone.
 struct FATSippCycle
 {
 	TSharedPtr<const FATSippGraph, ESPMode::ThreadSafe> Graph;
 	double Now = 0.0;
 	double Headway = 0.0;
+	// How often and for how long the turns may be planned again with a failed train moved up. [s]
+	int32 MaxRetries = 0;
+	double RetrySeconds = 0.0;
 	TArray<FATSippTrain> Trains;
 	FATSippTable Table;
 	TArray<FATSippResult> Results;
+	// The order the turns were planned in last, each (train, train it was put before) move, and a failed train that
+	// would have been moved up past the retry limit (INDEX_NONE if none).
+	TArray<int32> Order;
+	TArray<TPair<int32, int32>> Reordered;
+	int32 RetryLimited = INDEX_NONE;
 	double Milliseconds = 0.0;
 	std::atomic<bool> bDone{false};
 	// Game thread only: the train of each slot.

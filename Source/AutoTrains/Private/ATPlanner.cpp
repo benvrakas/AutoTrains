@@ -762,6 +762,10 @@ void AATTrafficSubsystem::FillSippTrain(const FATTrafficTrain& State, const FATS
 			Out.First.Add(*OtherSlot);
 			continue;
 		}
+		if (State.MovedAheadOf.Contains(Other.Train))
+		{
+			Out.MovedAheadOf.Add(*OtherSlot);
+		}
 		const int32 SelfAt = FrontIndexOn(Other, State);
 		if (SelfAt == INDEX_NONE)
 		{
@@ -811,6 +815,7 @@ void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds, bool bW
 			{
 				State.LegStart = Now;
 				State.LegGoal = State.GoalStation;
+				State.MovedAheadOf.Reset();
 			}
 			SelfDriving.Add(&State);
 			continue;
@@ -846,6 +851,9 @@ void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds, bool bW
 	Cycle->Graph = mSearchGraph;
 	Cycle->Now = Now;
 	Cycle->Headway = GetSafetyMarginSeconds();
+	// Retries end by half the update interval, so the cycle is in by the next update.
+	Cycle->MaxRetries = FMath::RoundToInt(mSettings.PlanRetries);
+	Cycle->RetrySeconds = mSettings.UpdateIntervalSeconds * 0.5;
 	TMap<const AFGTrain*, int32> SlotOf;
 	for (const FTurn& Turn : Turns)
 	{
@@ -1023,10 +1031,36 @@ void AATTrafficSubsystem::ApplyPlanCycle()
 			Own.Keys.Add(Key);
 		}
 	}
+	// Trains moved up after a failed plan stay before the train in their way for the rest of their leg.
+	for (const TPair<int32, int32>& Move : Cycle->Reordered)
+	{
+		FATTrafficTrain* Moved = mTrains.Find(Cycle->Owners[Move.Key]);
+		FATTrafficTrain* Passed = mTrains.Find(Cycle->Owners[Move.Value]);
+		if (!Moved || !Passed)
+		{
+			continue;
+		}
+		Moved->LegStart = FMath::Min(Moved->LegStart, Passed->LegStart - 0.001);
+		Moved->MovedAheadOf.Add(Passed->Train);
+		++mPlanReorders;
+		UE_LOG(LogAutoTrains, Log, TEXT("planner: %s is planned before %s from now on: its plan found no way past %s's booking"), *NameOf(Moved->Train.Get()),
+			*NameOf(Passed->Train.Get()), *NameOf(Passed->Train.Get()));
+	}
+	const FString Limited = Cycle->Owners.IsValidIndex(Cycle->RetryLimited) ? NameOf(Cycle->Owners[Cycle->RetryLimited].Get()) : FString();
+	if (Limited != mLastRetryLimited && !Limited.IsEmpty())
+	{
+		UE_LOG(LogAutoTrains, Log, TEXT("planner: planning retry limit reached (%d retries, %.1f ms): %s stays held up by a train planned before it"),
+			Cycle->Reordered.Num(), Cycle->Milliseconds, *Limited);
+	}
+	mLastRetryLimited = Limited;
 	for (int32 Slot = 0; Slot < Cycle->Trains.Num(); ++Slot)
 	{
 		const FATSippTrain& Input = Cycle->Trains[Slot];
 		FATTrafficTrain* State = mTrains.Find(Cycle->Owners[Slot]);
+		if (State && Input.Kind == EATSippKind::Moving)
+		{
+			State->PlanRank = Input.Rank;
+		}
 		if (State && State->bManaged && Input.Turn == EATSippTurn::Plan && Input.Kind == EATSippKind::Moving && Cycle->Results[Slot].bPlanned)
 		{
 			ApplyPlan(*State, *Cycle, Slot);
@@ -1394,10 +1428,10 @@ void AATTrafficSubsystem::UpdatePlannedTraffic(float DeltaSeconds)
 		{
 			Bookings += Pair.Value.Num();
 		}
-		UE_LOG(LogAutoTrains, Log, TEXT("planner: last %.0f s: %d trains (%d driving), %d bookings now, %.2f ms per update; %d cycles, %.1f ms each on a worker, %d updates waited for one; %d plans, %d with a wait, %d failed, %d committed conflicts, %d reroutes, %d departures predicted"),
+		UE_LOG(LogAutoTrains, Log, TEXT("planner: last %.0f s: %d trains (%d driving), %d bookings now, %.2f ms per update; %d cycles, %.1f ms each on a worker, %d updates waited for one, %d trains moved up after a failed plan; %d plans, %d with a wait, %d failed, %d committed conflicts, %d reroutes, %d departures predicted"),
 			PlanSummarySeconds, mStateOf.Num(), Driving.Num(), Bookings, mPlanUpdates > 0 ? mPlanSeconds * 1000.0 / mPlanUpdates : 0.0, mCycles,
-			mCycles > 0 ? mCycleMilliseconds / mCycles : 0.0, mCyclesLate, mPlans, mPlanWaits, mPlanFailures, mPlanCommitted, mPlanReroutes, mPlanPredictions);
-		mPlans = mPlanWaits = mPlanFailures = mPlanCommitted = mPlanReroutes = mPlanPredictions = mPlanUpdates = mCycles = mCyclesLate = 0;
+			mCycles > 0 ? mCycleMilliseconds / mCycles : 0.0, mCyclesLate, mPlanReorders, mPlans, mPlanWaits, mPlanFailures, mPlanCommitted, mPlanReroutes, mPlanPredictions);
+		mPlans = mPlanWaits = mPlanFailures = mPlanCommitted = mPlanReroutes = mPlanPredictions = mPlanUpdates = mCycles = mCyclesLate = mPlanReorders = 0;
 		mCycleMilliseconds = 0.0;
 		mPlanSeconds = 0.0;
 		mPlanSummaryAt = Now + PlanSummarySeconds;

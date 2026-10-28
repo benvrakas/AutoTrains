@@ -8,6 +8,9 @@
   clears instead of stopping, and only plans to stand where its body holds nobody up. This replaces the old timetable
   pass with its corrections ("no plan after 32 waits" is gone) and the separate route search, so the route a search
   finds is exactly the plan the train then drives.
+- **A train that finds no way goes first:** when a train's plan fails because a train planned before it is in the
+  way, it is planned before that train for the rest of its trip and the round is planned again (new setting
+  Planning retries, 3 by default). A train is never put before one ahead of it on the same line.
 - **Planning runs on worker threads:** the whole planning round runs off the game thread, with route searches side by
   side, so planning no longer costs frame time.
 

@@ -501,3 +501,14 @@ train, then a row per train every 0.2 s:
   train had a plan, so none was granted anything (forced braking at up to 358 m/s^2): a driven train without a plan
   is now planned at once on the game thread. Failure lines now count the moves left out (out of reach, tail window,
   stay at the goal).
+- MT-SIPP paper (Docs/machines-12-00482.pdf, Miao et al. 2024) compared at the request of the sfmod-08 session.
+  Station stop conflicts (sec. 5.3, status 1-2) are covered by the existing goal stay check (StayFits: every resource
+  under the body, joints' fouling zones included, kept free of every booking in scope from arrival through dwell and
+  pull-out) and the tail-clear windows of every wait; the paper's permanent GOALS/CARS lists correspond to stays booked
+  open-ended here (trains not driven, failed plans standing for good), which later plans already avoid. Status 3 and
+  the paper's priority adjustment (sec. 6, Fig. 11) are new: ATSipp::Run plans the turns again with a failed train
+  moved before the train whose booking blocked it, when that booking counted only by planning order
+  (`bBlockedByRank`), never before a train ahead on its route nor back before one that went before it this leg
+  (`MovedAheadOf`); bounded by the Planning retries setting and half the update interval. The move sticks for the leg
+  (LegStart just before the other train's). Logs: `is planned before ... from now on`, `planning retry limit
+  reached`, and `N trains moved up after a failed plan` in the 60 s summary.

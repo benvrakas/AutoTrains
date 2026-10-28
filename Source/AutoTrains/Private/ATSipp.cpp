@@ -166,7 +166,7 @@ namespace
 	// The front at Pos [cm from where it is now] at Arrive with Speed, at the end of route step Step's track (Node, the
 	// connection at NodePos), stopped short of it or passing it; it left the parent at Leave over Edge, later than it got
 	// there for Cause's booking. Open: what the move here started on. BlockedBy/BlockedAt: the last booking that kept a
-	// move on from here, for the log.
+	// move on from here, and whether it counted only because its train plans first.
 	struct FState
 	{
 		int32 Node = INDEX_NONE;
@@ -185,6 +185,7 @@ namespace
 		FOpenResource Open[2];
 		int32 BlockedBy = INDEX_NONE;
 		int32 BlockedAt = INDEX_NONE;
+		bool bBlockedByRank = false;
 	};
 
 	struct FQueued
@@ -368,12 +369,13 @@ namespace
 		// Whether the train may enter Resource (leaving its track through Exit, coming from Via) at Enter: no booking in
 		// its scope there or on a conflicting resource is in the way, and a train the same way is a headway ahead or
 		// behind at both ends. Sets the gap it then has to clear the resource in, else the earliest later entry that might
-		// work and the train in the way.
-		bool GapAt(int32 Resource, int32 Exit, int32 Via, double Enter, FGap& Out, double& OutRetry, int32& OutBy) const
+		// work, the train in the way and whether its booking counts only because that train plans first.
+		bool GapAt(int32 Resource, int32 Exit, int32 Via, double Enter, FGap& Out, double& OutRetry, int32& OutBy, bool& bOutByRank) const
 		{
 			Out = FGap();
 			OutRetry = Enter;
 			OutBy = INDEX_NONE;
+			bOutByRank = false;
 			double After = -ATSippNever;
 			bool bClash = false;
 			const bool bHeld = Train.Held.Contains(Resource);
@@ -409,6 +411,7 @@ namespace
 							bClash = true;
 							OutRetry = FMath::Max(OutRetry, Booking.Enter + Headway);
 							OutBy = Booking.Owner;
+							bOutByRank = !bFirst && Booking.Kind == EATSippKind::Moving && !Booking.bHeld && !Booking.bCommitted;
 						}
 						continue;
 					}
@@ -427,6 +430,7 @@ namespace
 						bClash = true;
 						OutRetry = FMath::Max(OutRetry, Hi);
 						OutBy = Booking.Owner;
+						bOutByRank = !bFirst && Booking.Kind == EATSippKind::Moving && !Booking.bHeld && !Booking.bCommitted;
 					}
 				}
 			});
@@ -573,12 +577,13 @@ namespace
 			}
 		}
 
-		void NoteBlock(int32 Index, int32 By, int32 Resource)
+		void NoteBlock(int32 Index, int32 By, int32 Resource, bool bByRank)
 		{
 			if (By != INDEX_NONE)
 			{
 				States[Index].BlockedBy = By;
 				States[Index].BlockedAt = Resource;
+				States[Index].bBlockedByRank = bByRank;
 			}
 		}
 
@@ -633,9 +638,10 @@ namespace
 					Enters[New] = bOnMove ? Leave + Edge.TimeTo(News[New].EnterAt - State.Pos) : TimeAtState(Index, News[New].EnterAt);
 					double Retry = 0.0;
 					int32 By = INDEX_NONE;
-					if (!GapAt(News[New].Resource, News[New].Exit, News[New].Via, Enters[New], Gaps[New], Retry, By))
+					bool bByRank = false;
+					if (!GapAt(News[New].Resource, News[New].Exit, News[New].Via, Enters[New], Gaps[New], Retry, By, bByRank))
 					{
-						NoteBlock(Index, By, News[New].Resource);
+						NoteBlock(Index, By, News[New].Resource, bByRank);
 						// Entered before the stop, or no waiting: no later departure helps.
 						if (!bOnMove || !bCanWait || IsNever(Retry))
 						{
@@ -842,6 +848,7 @@ namespace
 			Out.StandStep = Last.Step;
 			Out.BlockedBy = Last.BlockedBy;
 			Out.BlockedAt = Last.BlockedAt;
+			Out.bBlockedByRank = Last.bBlockedByRank;
 			MarkCommitted(Chain, Final, Out);
 			FindCommittedConflict(Out);
 		}
@@ -1032,10 +1039,11 @@ void ATSipp::Run(FATSippCycle& Cycle)
 		FoundMilliseconds[Slot] = (FPlatformTime::Seconds() - Start) * 1000.0;
 	});
 
-	for (int32 Slot = 0; Slot < Count; ++Slot)
+	auto PlanTurn = [&](int32 Slot)
 	{
 		const FATSippTrain& Train = Cycle.Trains[Slot];
 		FATSippResult& Result = Cycle.Results[Slot];
+		Result = FATSippResult();
 		Cycle.Table.Remove(Slot);
 		if (Train.Turn == EATSippTurn::Standing)
 		{
@@ -1050,7 +1058,7 @@ void ATSipp::Run(FATSippCycle& Cycle)
 				Booking.bLocked = true;
 				Cycle.Table.Add(Resource, Booking);
 			}
-			continue;
+			return;
 		}
 		FPlanner Planner(Cycle, Cycle.Table, Slot);
 		Planner.Plan(Train.Route, Train.bGoal, Result);
@@ -1092,6 +1100,71 @@ void ATSipp::Run(FATSippCycle& Cycle)
 			Booking.bCommitted = Pass.bCommitted;
 			Cycle.Table.Add(Pass.Resource, Booking);
 		}
+	};
+
+	// The turns in order; a self-driving train whose plan fails on the booking of one planned before it, which counts
+	// only because that one plans first, goes before it and the turns are planned again (paper sec. 6, priority
+	// adjustment), up to MaxRetries times and RetrySeconds. A train is never put before one ahead of it on its route, nor
+	// back before one that went before it this leg.
+	const FATSippTable Initial = Cycle.Table;
+	Cycle.Order.Reset();
+	for (int32 Slot = 0; Slot < Count; ++Slot)
+	{
+		Cycle.Order.Add(Slot);
+	}
+	for (int32 Attempt = 0;; ++Attempt)
+	{
+		int32 Rank = 0;
+		for (const int32 Slot : Cycle.Order)
+		{
+			FATSippTrain& Train = Cycle.Trains[Slot];
+			Train.Rank = Train.Turn == EATSippTurn::Plan && Train.Kind == EATSippKind::Moving ? Rank++ : INDEX_NONE;
+		}
+		if (Attempt > 0)
+		{
+			Cycle.Table = Initial;
+		}
+		for (const int32 Slot : Cycle.Order)
+		{
+			PlanTurn(Slot);
+		}
+		int32 Failed = INDEX_NONE;
+		int32 Before = INDEX_NONE;
+		for (int32 Position = 0; Position < Cycle.Order.Num() && Failed == INDEX_NONE; ++Position)
+		{
+			const int32 Slot = Cycle.Order[Position];
+			const FATSippTrain& Train = Cycle.Trains[Slot];
+			const FATSippResult& Result = Cycle.Results[Slot];
+			const int32 By = Result.BlockedBy;
+			if (Train.Kind != EATSippKind::Moving || !Result.bFailed || !Result.bBlockedByRank || !Cycle.Trains.IsValidIndex(By)
+				|| Cycle.Trains[By].Kind != EATSippKind::Moving || Train.First.Contains(By) || Cycle.Trains[By].MovedAheadOf.Contains(Slot))
+			{
+				continue;
+			}
+			const int32 ByPosition = Cycle.Order.IndexOfByKey(By);
+			bool bAllowed = ByPosition < Position && !Cycle.Reordered.Contains(TPair<int32, int32>(By, Slot));
+			for (int32 Between = ByPosition; bAllowed && Between < Position; ++Between)
+			{
+				bAllowed = !Train.First.Contains(Cycle.Order[Between]);
+			}
+			if (bAllowed)
+			{
+				Failed = Slot;
+				Before = ByPosition;
+			}
+		}
+		if (Failed == INDEX_NONE)
+		{
+			break;
+		}
+		if (Attempt >= Cycle.MaxRetries || FPlatformTime::Seconds() - Begin > Cycle.RetrySeconds)
+		{
+			Cycle.RetryLimited = Failed;
+			break;
+		}
+		Cycle.Reordered.Add(TPair<int32, int32>(Failed, Cycle.Order[Before]));
+		Cycle.Order.Remove(Failed);
+		Cycle.Order.Insert(Failed, Before);
 	}
 	Cycle.Milliseconds = (FPlatformTime::Seconds() - Begin) * 1000.0;
 }

@@ -1721,20 +1721,23 @@ void AATTrafficSubsystem::ApplyAuthority(AFGTrain* Train, float DeltaSeconds)
 	}
 	// Forced braking: when its own brakes won't stop the train in time, take off the rest of the speed directly, at
 	// the deceleration that stops it at the stop point, the way the game's block signals hold a train. Once started
-	// it holds, with full brake, until the train's own brakes suffice.
+	// it holds, with full brake, until the train's own brakes suffice: what it slowed by itself since the last tick
+	// (its brakes and the slope) counts, else its planned braking.
 	const float StopWithin = FMath::Min(Distance >= 0.f ? Usable : MAX_flt, HardFollowLimit >= 0.f ? HardFollowLimit - StopDistance : MAX_flt);
 	const float Needed = StopWithin < MAX_flt ? FMath::Square(Speed) / (2.f * FMath::Max(StopWithin, ForcedBrakeMinDistance)) : 0.f;
 	const bool bOverCurve = Speed > AllowedHard + OverspeedTolerance;
 	const bool bWasFullBrake = State->bFullBrake;
 	const bool bWasForced = State->bForcedBrake;
-	State->bForcedBrake = DeltaSeconds > 0.f && Speed > 0.f && Needed > Deceleration && (bOverCurve || bWasForced);
+	const float Own = bWasForced && DeltaSeconds > 0.f ? (State->ForcedSpeed - Speed) / DeltaSeconds : Deceleration;
+	State->bForcedBrake = DeltaSeconds > 0.f && Speed > 0.f && Needed > Own && (bOverCurve || bWasForced);
 	State->bFullBrake = bOverCurve || State->bForcedBrake;
 	Atc.TargetSpeed = State->bFullBrake ? 0.f : FMath::Min(Atc.TargetSpeed, Target);
 	if (State->bForcedBrake)
 	{
 		const float Velocity = Train->mSimulationData.Velocity;
-		const float NewSpeed = FMath::Max(0.f, Speed - (Needed - Deceleration) * DeltaSeconds);
+		const float NewSpeed = FMath::Max(0.f, Speed - (Needed - Own) * DeltaSeconds);
 		Train->mSimulationData.Velocity = Velocity < 0.f ? -NewSpeed : NewSpeed;
+		State->ForcedSpeed = NewSpeed;
 		State->bForcedSinceUpdate = true;
 		if (!bWasForced)
 		{

@@ -126,6 +126,8 @@ struct FATTrafficTrain
 	// Whether the mod is taking speed off the train directly, and whether it did since the previous update.
 	bool bForcedBrake = false;
 	bool bForcedSinceUpdate = false;
+	// Speed forced braking left the train at, the last tick it acted. [cm/s]
+	float ForcedSpeed = 0.f;
 	// Seconds until the moving train that blocks this one has cleared where it blocks; -1 if unknown.
 	float ClearSeconds = -1.f;
 	// Seconds the train has stood still.

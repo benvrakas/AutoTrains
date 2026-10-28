@@ -550,3 +550,9 @@ train, then a row per train every 0.2 s:
   are now kept without a plan slot, like locked ones (only a train standing there or holding it stops it). Open:
   1-15 brief plan failures a minute, ~90% "tail windows missed" (no wait place where the body clears the next
   booking), each gone the next cycle.
+- 1.3.1 session (17:37-18:17 local, 18 trains, network being rebuilt): no deadlocks, crossings or pass-throughs.
+  Heavy Oil Residue (120) [Gunpowder] stopped at 134-498 m/s^2 three times after "its plan has no slot there yet"
+  (fixed in 1.3.2). Nitric Acid RSC sped up from 88 to 99 km/h under forced braking toward a stop 190 m ahead,
+  forced braking engaging anew every update: it took off only Needed - the planned braking (1.5 m/s^2), but the
+  train's own braking was far less (brakes building up, downhill, fluid cargo). Forced braking now measures what the
+  train slowed by itself since its last tick (State.ForcedSpeed) and takes off the rest.

@@ -5,6 +5,15 @@
 - **Fixed: sudden hard stops when a plan briefly failed.** A train whose plan found no way for a moment lost the track
   just ahead that it had already been given, and was stopped on the spot even at full speed. It now keeps track it
   holds; only a train standing there or holding it stops it.
+- **Fixed: trains running past their stop under forced braking** downhill or while their brakes were still building
+  up. Forced braking now counts what the train actually slowed by itself, not what its brakes should manage.
+- **Acceleration per train, per speed and per load:** a train's pulling power is learned at each speed as a force, so
+  a loaded train plans slower acceleration than the same train empty, and speeds it hasn't driven yet follow its
+  locomotives' traction curves (strong at low speed, fading towards top speed). More locomotives or fewer cars plan
+  faster acceleration from the start.
+- **Slopes over the whole train:** the slope a train brakes and accelerates on is taken over its whole length, from
+  its rear car to its front car, so a long train cresting a hill or entering a dip is planned as gravity really pulls
+  on it.
 
 ## 1.3.1
 

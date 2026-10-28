@@ -101,10 +101,15 @@ struct FATTrafficTrain
 	float Mass = 0.f;
 	// How far the train's front is ahead of its MU master, which the ATC distances are measured from. [cm]
 	float FrontAhead = 0.f;
-	// Slope the way it drives: of its front's track, and over its route within a few hundred metres ahead; positive
-	// uphill. [cm/cm]
+	// Slope the way it drives, positive uphill: under its body (from its rear car's centre to its front car's), and from
+	// its rear car to its route a few hundred metres ahead. [cm/cm]
 	float Grade = 0.f;
 	float GradeAhead = 0.f;
+	// Heights of its front and rear cars' centres, and how far ahead of its front they are (negative). [cm]
+	float FrontZ = 0.f;
+	float RearZ = 0.f;
+	float FrontZAt = 0.f;
+	float RearZAt = 0.f;
 	// The ATC path the route was read from and the path segment of its first step.
 	const void* RoutePath = nullptr;
 	int32 RouteFirstSegment = 0;
@@ -116,10 +121,12 @@ struct FATTrafficTrain
 	float PlanDecel[ATBrakeBands] = {};
 	// Speed at the previous update. [cm/s]
 	float LastSpeed = 0.f;
-	// Speed the train runs at when nothing holds it back, and its acceleration while speeding up, as seen; 0 until seen.
-	// [cm/s] [cm/s^2]
+	// Speed the train runs at when nothing holds it back, as seen; 0 until seen. [cm/s]
 	float CruiseSeen = 0.f;
-	float AccelSeen = 0.f;
+	// Traction measured per speed band, as acceleration with the slope taken out times mass, 0 where not measured; and
+	// the acceleration planned with in each band on level track. [cm/s^2 kg] [cm/s^2]
+	float TractionForce[ATBrakeBands] = {};
+	float PlanAccel[ATBrakeBands] = {};
 	// Whether the train is on full brake, and whether it was at the previous update.
 	bool bFullBrake = false;
 	bool bWasFullBrake = false;
@@ -349,6 +356,9 @@ private:
 	// one's but no more than a share of the air brakes' force over the train's mass with cargo; a train never
 	// measured plans with that share of the air brakes.
 	void RefreshBrakePlan(FATTrafficTrain& State) const;
+	// Sets State.PlanAccel: measured bands as measured; the others from its locomotives' traction curves at that speed,
+	// scaled by the share of them the train was seen to use in measured bands (half until measured).
+	void RefreshTractionPlan(FATTrafficTrain& State) const;
 
 	// Deceleration planned with at Speed (the train's own speed if negative). [cm/s^2]
 	static float GetPlanningDeceleration(const FATTrafficTrain& State, float Speed = -1.f);

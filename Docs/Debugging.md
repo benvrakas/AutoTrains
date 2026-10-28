@@ -556,3 +556,12 @@ train, then a row per train every 0.2 s:
   forced braking engaging anew every update: it took off only Needed - the planned braking (1.5 m/s^2), but the
   train's own braking was far less (brakes building up, downhill, fluid cargo). Forced braking now measures what the
   train slowed by itself since its last tick (State.ForcedSpeed) and takes off the rest.
+- 1.3.2 additions: traction is learned per speed band as force (TractionForce = acceleration sample + g * grade, times
+  mass), planned per band as force / current mass; unmeasured bands use the locomotives' summed CalcTractiveEffort
+  at the band's middle speed times the share seen in measured bands (0.5 until any); the planner uses the
+  time-equivalent mean acceleration from 0 to cruise. Grade is the body's mean slope: (front car Z - rear car Z) /
+  their distance, front = mSimulationData.FirstVehicle (first in the direction of travel); GradeAhead from the rear
+  car to the route ~300 m ahead. The planner's per-move slope is half the front's rise plus half the tail's over the
+  move, interpolated over track-end heights (FATSippGraph::ZOf) and the cars at the start. Log: "<train> speeds up at
+  X m/s2 at A-B km/h (t, slope %)" per first sample in a band. Not handled: a docked train leaving with a locomotive
+  at the other end starts its plan with the body's slope reversed for its first train length.

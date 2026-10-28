@@ -778,6 +778,10 @@ void AATTrafficSubsystem::FillSippTrain(const FATTrafficTrain& State, const FATS
 	Out.Accel = Speed.Accel;
 	Out.Brake = Speed.Brake;
 	Out.Speed = State.Speed;
+	Out.FrontZ = State.FrontZ;
+	Out.RearZ = State.RearZ;
+	Out.FrontZAt = State.FrontZAt;
+	Out.RearZAt = State.RearZAt;
 	Out.bStanding = State.Speed < StandingSpeed;
 	// Held: what the train holds from its last grant (route steps it holds from its front on, and the switches between
 	// them). Locked: what it stands on, can't stop short of, or holds within its full-brake stopping distance plus the

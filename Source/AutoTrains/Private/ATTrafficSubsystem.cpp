@@ -92,6 +92,8 @@ namespace
 	constexpr float CruiseRiseRate = 0.1f;
 	constexpr float CruiseFallRate = 0.005f;
 	constexpr float AccelSampleRate = 0.05f;
+	// Share of its locomotives' traction a train is planned to use until some has been measured.
+	constexpr float UnseenTractionShare = 0.5f;
 	constexpr float MinPlanCruise = 833.f;
 	constexpr float MinPlanAcceleration = 10.f;
 
@@ -385,13 +387,22 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 			const float Sample = (State.Speed - State.LastSpeed) / DeltaSeconds + GravityAcceleration * State.Grade;
 			if (Sample > 5.f && Sample < 500.f)
 			{
-				State.AccelSeen = State.AccelSeen <= 0.f ? Sample : State.AccelSeen + (Sample - State.AccelSeen) * AccelSampleRate;
+				const int32 Band = GetBrakeBand((State.LastSpeed + State.Speed) * 0.5f);
+				float& Stored = State.TractionForce[Band];
+				const float Force = Sample * State.Mass;
+				if (Stored <= 0.f)
+				{
+					UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s speeds up at %.2f m/s2 at %.0f-%.0f km/h (%.0f t, slope %.1f %%)"), *TrainName(Train), Sample / 100.f,
+						Band * ATBrakeBandWidth * 0.036f, (Band + 1) * ATBrakeBandWidth * 0.036f, State.Mass / 1000.f, State.Grade * 100.f);
+				}
+				Stored = Stored <= 0.f ? Force : Stored + (Force - Stored) * AccelSampleRate;
 			}
 		}
 		State.bWasFullBrake = State.bFullBrake;
 		State.bForcedSinceUpdate = State.bForcedBrake;
 		State.LastSpeed = State.Speed;
 		RefreshBrakePlan(State);
+		RefreshTractionPlan(State);
 		State.StoppedSeconds = State.Speed < 100.f ? State.StoppedSeconds + DeltaSeconds : 0.f;
 		if (State.GhostUntil >= 0.0)
 		{
@@ -487,21 +498,6 @@ void AATTrafficSubsystem::ReadTrain(FATTrafficTrain& State, AFGTrain* Train) con
 			}
 			State.Route.Add({Track, Exit, Distance});
 		}
-		// Slope of the front's track, and over the route ahead.
-		State.Grade = State.Route.Num() > 0 ? GetGrade(State.Route[0].Exit) : 0.f;
-		float Rise = 0.f;
-		float Along = 0.f;
-		for (const FATRouteStep& Step : State.Route)
-		{
-			const float Length = Step.Track->GetLength();
-			if (Step.EndDistance - Length > GradeAheadDistance)
-			{
-				break;
-			}
-			Rise += GetGrade(Step.Exit) * Length;
-			Along += Length;
-		}
-		State.GradeAhead = Along > 0.f ? Rise / Along : 0.f;
 	}
 
 	TArray<const UFGRailroadTrackConnectionComponent*> Overhangs;
@@ -570,6 +566,35 @@ void AATTrafficSubsystem::ReadTrain(FATTrafficTrain& State, AFGTrain* Train) con
 			{
 				State.Occupied.Add(Track);
 			}
+		}
+	}
+
+	// Slope under the body: from the rear car's centre to the front car's, the way the train goes (gravity pulls on an
+	// evenly loaded train as on that mean slope); a single car takes its route's first track.
+	const AFGRailroadVehicle* Front = Train->mSimulationData.FirstVehicle ? Train->mSimulationData.FirstVehicle.Get() : Train->GetFirstVehicle();
+	const AFGRailroadVehicle* Rear = Front == Train->GetFirstVehicle() ? Train->GetLastVehicle() : Train->GetFirstVehicle();
+	if (Front && Rear)
+	{
+		State.FrontZ = Front->GetActorLocation().Z;
+		State.RearZ = Rear->GetActorLocation().Z;
+		State.FrontZAt = -Front->GetLength() * 0.5f;
+		State.RearZAt = -(State.Length - Rear->GetLength() * 0.5f);
+		const float Span = State.FrontZAt - State.RearZAt;
+		State.Grade = Span > 100.f ? (State.FrontZ - State.RearZ) / Span : State.Route.Num() > 0 ? GetGrade(State.Route[0].Exit) : 0.f;
+	}
+	// Slope from the rear car to the route ahead.
+	State.GradeAhead = State.Grade;
+	for (int32 Index = 0; Index < State.Route.Num(); ++Index)
+	{
+		const FATRouteStep& Step = State.Route[Index];
+		const float Ahead = Step.EndDistance - State.FrontAhead;
+		if (Ahead >= GradeAheadDistance || Index == State.Route.Num() - 1)
+		{
+			if (Ahead > 0.f && Step.Exit)
+			{
+				State.GradeAhead = (Step.Exit->GetComponentLocation().Z - State.RearZ) / (Ahead - State.RearZAt);
+			}
+			break;
 		}
 	}
 
@@ -1156,11 +1181,18 @@ void AATTrafficSubsystem::LogDeadlocks()
 AATTrafficSubsystem::FRouteSpeed AATTrafficSubsystem::GetRouteSpeed(const FATTrafficTrain& State) const
 {
 	FRouteSpeed Speed;
-	// As the train has been seen to drive, within its top speed; until then its top speed and half its rated acceleration.
+	// As the train has been seen to drive, within its top speed; until then its top speed.
 	const float Top = FMath::Max(GetTopSpeed(State.Train.Get()), 500.f);
 	Speed.Cruise = State.CruiseSeen > 0.f ? FMath::Clamp(State.CruiseSeen, FMath::Min(MinPlanCruise, Top), Top) : Top;
 	Speed.Length = State.Length;
-	const float Acceleration = State.AccelSeen > 0.f ? FMath::Max(State.AccelSeen, MinPlanAcceleration) : GetAcceleration(State, 0.5f);
+	// The planned acceleration's time-equivalent mean from standstill up to cruising speed, on level track.
+	double Seconds = 0.0;
+	for (int32 Band = 0; Band < ATBrakeBands && Band * ATBrakeBandWidth < Speed.Cruise; ++Band)
+	{
+		const float Low = Band * ATBrakeBandWidth;
+		Seconds += (FMath::Min(Low + ATBrakeBandWidth, Speed.Cruise) - Low) / FMath::Max(State.PlanAccel[Band], MinPlanAcceleration);
+	}
+	const float Acceleration = Seconds > 0.0 ? Speed.Cruise / Seconds : GetAcceleration(State, UnseenTractionShare);
 	// On level track: the planner adds each stretch's slope itself.
 	const float Deceleration = FMath::Max(State.PlanDecel[GetBrakeBand(Speed.Cruise)], MinPlanDeceleration) * GetNormalBrakingShare();
 	Speed.Accel = Acceleration;
@@ -1431,7 +1463,7 @@ void AATTrafficSubsystem::BuildSearchGraph(const TArray<AFGBuildableRailroadTrac
 	Graph->OppositeOf.Init(INDEX_NONE, Count);
 	Graph->JointOf.Init(INDEX_NONE, Count);
 	Graph->FoulOf.Init(0.f, Count);
-	Graph->GradeOf.Init(0.f, Count);
+	Graph->ZOf.Init(0.f, Count);
 	Graph->StopMarginOf.Init(0.f, Count);
 	Graph->JointFoul.Init(JointFoulDistance, JointCount);
 	Graph->OneWay.Init(false, Count);
@@ -1444,7 +1476,7 @@ void AATTrafficSubsystem::BuildSearchGraph(const TArray<AFGBuildableRailroadTrac
 		const int32 Joint = GetJoint(Connection);
 		Graph->JointOf[Index] = Joint;
 		Graph->FoulOf[Index] = GetFoulDistance(Connection);
-		Graph->GradeOf[Index] = GetGrade(Connection);
+		Graph->ZOf[Index] = Connection->GetComponentLocation().Z;
 		Graph->StopMarginOf[Index] = GetStopMargin(Connection);
 		if (Graph->JointFoul.IsValidIndex(Joint))
 		{
@@ -1571,6 +1603,39 @@ void AATTrafficSubsystem::RefreshBrakePlan(FATTrafficTrain& State) const
 			Plan = FMath::Min(State.PlanDecel[Highest], AirBrakes);
 		}
 		Plan = FMath::Clamp(Plan, MinPlanDeceleration, 800.f);
+	}
+}
+
+void AATTrafficSubsystem::RefreshTractionPlan(FATTrafficTrain& State) const
+{
+	const AFGTrain* Train = State.Train.Get();
+	const float Mass = FMath::Max(State.Mass, 1.f);
+	float Curve[ATBrakeBands] = {};
+	for (AFGRailroadSubsystem::TTrainIterator It(Train ? Train->GetFirstVehicle() : nullptr); It; ++It)
+	{
+		const AFGLocomotive* Locomotive = Cast<AFGLocomotive>(*It);
+		const UFGLocomotiveMovementComponent* Movement = Locomotive ? Locomotive->GetLocomotiveMovementComponent() : nullptr;
+		for (int32 Band = 0; Movement && Band < ATBrakeBands; ++Band)
+		{
+			Curve[Band] += Movement->CalcTractiveEffort((Band + 0.5f) * ATBrakeBandWidth);
+		}
+	}
+	float Share = 0.f;
+	int32 Measured = 0;
+	for (int32 Band = 0; Band < ATBrakeBands; ++Band)
+	{
+		if (State.TractionForce[Band] > 0.f && Curve[Band] > 0.f)
+		{
+			Share += State.TractionForce[Band] / Curve[Band];
+			++Measured;
+		}
+	}
+	Share = Measured > 0 ? Share / Measured : UnseenTractionShare;
+	const float Fallback = GetAcceleration(State, UnseenTractionShare);
+	for (int32 Band = 0; Band < ATBrakeBands; ++Band)
+	{
+		const float Force = State.TractionForce[Band] > 0.f ? State.TractionForce[Band] : Curve[Band] * Share;
+		State.PlanAccel[Band] = FMath::Clamp(Force > 0.f ? Force / Mass : Fallback, MinPlanAcceleration, 1200.f);
 	}
 }
 
@@ -1963,7 +2028,7 @@ TArray<FString> AATTrafficSubsystem::DescribeAll() const
 		}
 		const float Distance = GetAuthorityDistance(State.Train.Get());
 		Lines.Add(FString::Printf(TEXT("%s: %.0f km/h (cruises %.0f, accelerates %.2f m/s2), %d claims, may drive %s, brakes at %.1f m/s2, waited %.0f s, rerouted %d times%s%s%s%s%s"),
-			*TrainName(State.Train.Get()), State.Speed * 0.036f, State.CruiseSeen * 0.036f, State.AccelSeen / 100.f, State.Claims.Num(),
+			*TrainName(State.Train.Get()), State.Speed * 0.036f, State.CruiseSeen * 0.036f, State.PlanAccel[GetBrakeBand(State.Speed)] / 100.f, State.Claims.Num(),
 			Distance < 0.f ? TEXT("to its stop") : *FString::Printf(TEXT("%.0f m"), FMath::Max(0.f, Distance - State.StopMargin) / 100.f),
 			GetPlanningDeceleration(State) / 100.f, State.WaitingSeconds, State.Reroutes, State.BlockedReason.IsEmpty() ? TEXT("") : TEXT(", "), *State.BlockedReason,
 			State.ClearSeconds > 0.f ? *FString::Printf(TEXT(" (clears in %.0f s)"), State.ClearSeconds) : TEXT(""),

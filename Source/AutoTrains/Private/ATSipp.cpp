@@ -551,16 +551,8 @@ namespace
 				}
 				const bool bGoalNode = IsGoal(State.Step + Run.Num(), End);
 				const float SpeedSquared = FMath::Square(State.Speed);
-				// Gravity along the run: uphill slows speeding up and helps braking, downhill the other way.
-				float Rise = 0.f;
-				float Along = 0.f;
-				for (const int32 Node : Run)
-				{
-					const float Length = Graph.Length[Graph.TrackOf[Node]];
-					Rise += Graph.GradeOf[Node] * Length;
-					Along += Length;
-				}
-				const float Grade = Along > 0.f ? Rise / Along : 0.f;
+				// Gravity on the body over the move: uphill slows speeding up and helps braking, downhill the other way.
+				const float Grade = BodyGrade(Index, Run, NodePos);
 				const float RunAccel = FMath::Max(Accel - Gravity * Grade, MinSlopeAccel);
 				const float RunBrake = FMath::Max(Brake + Gravity * Grade, MinSlopeBrake);
 				const float StopAt = NodePos - (bGoalNode ? 0.f : Graph.StopMarginOf[End]);
@@ -631,6 +623,54 @@ namespace
 			}
 		}
 
+
+		// Mean slope under the body over the move from state Index over Run to NodePos: half the front's rise and half the
+		// tail's over the distance, from the heights of the track ends on the way and of the train's cars at the start.
+		// [cm/cm]
+		float BodyGrade(int32 Index, const FRun& Run, float NodePos) const
+		{
+			const float From = States[Index].Pos;
+			const float Distance = NodePos - From;
+			if (Distance < MinMove)
+			{
+				return 0.f;
+			}
+			TArray<FVector2f, TInlineAllocator<64>> Points;
+			float Pos = NodePos;
+			for (int32 Link = Run.Num() - 1; Link >= 0; --Link)
+			{
+				Points.Add({Pos, Graph.ZOf[Run[Link]]});
+				Pos -= Graph.Length[Graph.TrackOf[Run[Link]]];
+			}
+			for (int32 At = Index; At != INDEX_NONE && States[At].Step >= 0; At = States[At].Parent)
+			{
+				Points.Add({States[At].NodePos, Graph.ZOf[States[At].Node]});
+				if (States[At].NodePos < From - Train.Length)
+				{
+					break;
+				}
+			}
+			Points.Add({Train.FrontZAt, Train.FrontZ});
+			Points.Add({Train.RearZAt, Train.RearZ});
+			Points.Sort([](const FVector2f& A, const FVector2f& B) { return A.X < B.X; });
+			auto ZAt = [&Points](float X)
+			{
+				if (X <= Points[0].X)
+				{
+					return Points[0].Y;
+				}
+				for (int32 Point = 1; Point < Points.Num(); ++Point)
+				{
+					if (X <= Points[Point].X)
+					{
+						const float Span = Points[Point].X - Points[Point - 1].X;
+						return Span > 0.f ? FMath::Lerp(Points[Point - 1].Y, Points[Point].Y, (X - Points[Point - 1].X) / Span) : Points[Point].Y;
+					}
+				}
+				return Points.Last().Y;
+			};
+			return (ZAt(NodePos) - ZAt(From) + ZAt(NodePos - Train.Length) - ZAt(From - Train.Length)) * 0.5f / Distance;
+		}
 
 		void NoteBlock(int32 Index, int32 By, int32 Resource, bool bByRank)
 		{

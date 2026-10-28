@@ -29,8 +29,8 @@ struct FATSippGraph
 	// Per connection: the next one when nothing is decided there (one track attached, no switch joint, no one-way
 	// signal, neither track a platform, the next one without crossings), else INDEX_NONE.
 	TArray<int32> Through;
-	// Per connection: how much its track rises per cm towards it. [cm/cm]
-	TArray<float> GradeOf;
+	// Per connection: its height. [cm]
+	TArray<float> ZOf;
 	// Per track: its length [cm] and the tracks it conflicts with, itself first.
 	TArray<float> Length;
 	TArray<TArray<int32>> Conflicts;
@@ -145,6 +145,11 @@ struct FATSippTrain
 	float Accel = 100.f;
 	float Brake = 100.f;
 	float Speed = 0.f;
+	// Heights of its front and rear cars' centres, and how far ahead of its front they are (negative). [cm]
+	float FrontZ = 0.f;
+	float RearZ = 0.f;
+	float FrontZAt = 0.f;
+	float RearZAt = 0.f;
 	bool bStanding = false;
 	double MinDepart = 0.0;
 	double GoalDwell = 0.0;

@@ -135,21 +135,6 @@ namespace
 		return Train ? Train->GetTrainName().ToString() : TEXT("?");
 	}
 
-	// Adds the tracks attached at Connection.
-	void AddAttachedTracks(const UFGRailroadTrackConnectionComponent* Connection, TSet<AFGBuildableRailroadTrack*>& Out)
-	{
-		if (!Connection)
-		{
-			return;
-		}
-		for (const UFGRailroadTrackConnectionComponent* Other : Connection->GetConnections())
-		{
-			if (Other && Other->GetTrack())
-			{
-				Out.Add(Other->GetTrack());
-			}
-		}
-	}
 }
 
 AATTrafficSubsystem::AATTrafficSubsystem()
@@ -493,6 +478,7 @@ void AATTrafficSubsystem::ReadTrain(FATTrafficTrain& State, AFGTrain* Train) con
 		}
 	}
 
+	TArray<const UFGRailroadTrackConnectionComponent*> Overhangs;
 	for (AFGRailroadSubsystem::TTrainIterator It(Train->GetFirstVehicle()); It; ++It)
 	{
 		const AFGRailroadVehicle* Vehicle = *It;
@@ -517,11 +503,9 @@ void AATTrafficSubsystem::ReadTrain(FATTrafficTrain& State, AFGTrain* Train) con
 				continue;
 			}
 			const float ToEnd = FMath::Abs(Connection->GetTrackPosition().Offset - Position.Offset);
-			// A vehicle reaching past a track end overhangs onto the tracks attached there; switches nearby are
-			// covered by the fouling zone below.
 			if (ToEnd < HalfLength - OverhangTolerance)
 			{
-				AddAttachedTracks(Connection, State.Occupied);
+				Overhangs.Add(Connection);
 			}
 			const int32 Joint = GetJoint(Connection);
 			if (Joint != INDEX_NONE && ToEnd < HalfLength + GetFoulDistance(Connection))
@@ -542,6 +526,23 @@ void AATTrafficSubsystem::ReadTrain(FATTrafficTrain& State, AFGTrain* Train) con
 				const float ToExit = FMath::Abs(Step.Exit->GetTrackPosition().Offset - Position.Offset);
 				State.FrontAhead = FMath::Max(State.FrontAhead, Step.EndDistance - ToExit + HalfLength);
 				break;
+			}
+		}
+	}
+
+	// A vehicle reaching past a track end overhangs onto the track it moves on to there: the only one attached, else (a
+	// switch) the one the train's route or another of its vehicles is on; the switch's fouling zone covers the rest.
+	const TSet<AFGBuildableRailroadTrack*> VehicleTracks = State.Occupied;
+	for (const UFGRailroadTrackConnectionComponent* Connection : Overhangs)
+	{
+		const TArray<UFGRailroadTrackConnectionComponent*> Attached = Connection->GetConnections();
+		for (const UFGRailroadTrackConnectionComponent* Other : Attached)
+		{
+			AFGBuildableRailroadTrack* Track = Other ? Other->GetTrack() : nullptr;
+			if (Track && (Attached.Num() == 1 || VehicleTracks.Contains(Track)
+				|| State.Route.ContainsByPredicate([Track](const FATRouteStep& Step) { return Step.Track == Track; })))
+			{
+				State.Occupied.Add(Track);
 			}
 		}
 	}

@@ -527,3 +527,8 @@ train, then a row per train every 0.2 s:
   behind where a follower already was and made plans fail every other cycle ("no way on past switch 130", many tail
   windows missed, cycles up to 78 ms with retries); removed, the same-way rule already lets followers plan to wait at a
   run's end behind the leader.
+- Junction slowdowns, real cause (user's idea): ReadTrain counted every track attached at a track end a vehicle
+  overhangs as occupied, including switch branches the train doesn't use; an unused branch overlapping the other line
+  (a crossover) then held the other train up ("stands on track ..."), and was booked as a tail pass. A vehicle now
+  occupies only the track it moves on to: the only one attached, or at a switch the one its route or another of its
+  vehicles is on; the joint's fouling zone covers the rest. The clearance measurement (7b8576d) was reverted.

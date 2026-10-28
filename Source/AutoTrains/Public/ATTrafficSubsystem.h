@@ -404,9 +404,12 @@ private:
 		// goes first. Held: the owner holds it from its last grant; others may still fit in ahead of it.
 		bool bLocked = false;
 		bool bHeld = false;
+		// Committed: on the owner's way from what it holds or can't stop short of to the next place it can stand without
+		// holding up a train planned before it; it can't give way inside that stretch.
+		bool bCommitted = false;
 	};
-	// Which other bookings a plan has to keep clear of: all but the neither locked nor held ones of self-driving trains
-	// planned after it, all but self-driving trains' neither locked nor held ones, or locked ones.
+	// Which other bookings a plan has to keep clear of: all but the uncommitted ones of self-driving trains planned after
+	// it, all but self-driving trains' uncommitted ones, or locked ones (uncommitted: neither locked, held nor committed).
 	enum class EConflictScope : uint8
 	{
 		Ranked,
@@ -428,6 +431,7 @@ private:
 		int32 RouteIndex = INDEX_NONE;
 		bool bLocked = false;
 		bool bHeld = false;
+		bool bCommitted = false;
 	};
 	// A wait in a plan: the front stands at At [cm along the route] until Until.
 	struct FWait
@@ -467,6 +471,10 @@ private:
 	// last place to stand before it; with no such place the train stands for good before it. Its locked passes are kept
 	// whatever others booked.
 	void PlanTrain(const FATTrafficTrain& State, double Now, const TArray<FWait>& FixedWaits, double GoalDwell, EConflictScope Scope, FPlan& Plan) const;
+	// Marks State's timed Passes as committed from the furthest one it holds or can't stop short of up to the first of
+	// StopPoints where its whole body stands on nothing a train planned before it has booked from its arrival on.
+	void MarkCommitted(const FATTrafficTrain& State, const FRouteSpeed& Speed, const TArray<FWait>& Waits, double Now, double GoalDwell, double Headway,
+		const TArray<float>& StopPoints, TArray<FPass>& Passes) const;
 	// A stretch of time another train's booking keeps a resource from this train (world seconds).
 	struct FBlock
 	{

@@ -613,6 +613,7 @@ void AATTrafficSubsystem::PlanTrain(const FATTrafficTrain& State, double Now, co
 		}
 		if (!Conflicting)
 		{
+			MarkCommitted(State, Speed, Plan.Waits, Now, GoalDwell, Headway, StopPoints, Passes);
 			Plan.Passes = MoveTemp(Passes);
 			Plan.WaitFor = FirstCause();
 			return;
@@ -652,6 +653,7 @@ void AATTrafficSubsystem::PlanTrain(const FATTrafficTrain& State, double Now, co
 			WaitCauses.Add(Cause);
 			Passes = Base;
 			TimePasses(State, Speed, Plan.Waits, Now, GoalDwell, Passes);
+			MarkCommitted(State, Speed, Plan.Waits, Now, GoalDwell, Headway, StopPoints, Passes);
 			Plan.Passes = MoveTemp(Passes);
 			Plan.WaitFor = FirstCause();
 			return;
@@ -679,6 +681,106 @@ void AATTrafficSubsystem::PlanTrain(const FATTrafficTrain& State, double Now, co
 	}
 }
 
+void AATTrafficSubsystem::MarkCommitted(const FATTrafficTrain& State, const FRouteSpeed& Speed, const TArray<FWait>& Waits, double Now, double GoalDwell,
+	double Headway, const TArray<float>& StopPoints, TArray<FPass>& Passes) const
+{
+	// The front gets at least into what the train holds or can't stop short of ahead.
+	float From = 0.f;
+	for (const FPass& Pass : Passes)
+	{
+		if (Pass.RouteIndex != INDEX_NONE && (Pass.bLocked || Pass.bHeld))
+		{
+			From = FMath::Max(From, Pass.EnterAt);
+		}
+	}
+	FProfile Profile(State.Speed, Now, Speed.Cruise, Speed.Accel, Speed.Brake);
+	for (const FWait& Wait : Waits)
+	{
+		Profile.AddStop(Wait.At, Wait.Until);
+	}
+	const float End = State.Route.Num() > 0 ? State.Route.Last().EndDistance - State.FrontAhead : 0.f;
+	Profile.Finish(End, true, GoalDwell);
+	const AFGTrain* Self = State.Train.Get();
+	// Standing with the front at At from Arrive on holds up a train planned before this one.
+	auto HoldsUp = [&](float At, double Arrive)
+	{
+		for (const FPass& Pass : Passes)
+		{
+			if (Pass.EnterAt > At || Pass.ClearAt <= At)
+			{
+				continue;
+			}
+			TArray<FResourceKey, TInlineAllocator<4>> Keys;
+			if (Pass.Key.Joint != INDEX_NONE)
+			{
+				Keys.Add(Pass.Key);
+			}
+			else
+			{
+				for (const AFGBuildableRailroadTrack* Conflict : GetConflicts(Pass.Key.Track))
+				{
+					FResourceKey Crossing;
+					Crossing.Track = Conflict;
+					Keys.Add(Crossing);
+				}
+			}
+			for (const FResourceKey& Key : Keys)
+			{
+				const TArray<FBooking>* Bookings = mBookings.Find(Key);
+				if (!Bookings)
+				{
+					continue;
+				}
+				for (const FBooking& Booking : *Bookings)
+				{
+					// Trains not driven plan nothing, ones planned after this one keep clear of it, and ones the same way
+					// queue behind it.
+					if (Booking.Owner == Self || Booking.Kind == EBookingKind::Standing || Booking.Clear + Headway <= Arrive
+						|| (Booking.Kind == EBookingKind::Moving && PlansAfter(Booking.Owner, State))
+						|| (Key == Pass.Key && Pass.Exit && Booking.Exit == Pass.Exit && Booking.Via == Pass.Via))
+					{
+						continue;
+					}
+					FATTrafficTrain* const* Other = mStateOf.Find(Booking.Owner);
+					if (Other && IsBehind(**Other, State, Key))
+					{
+						continue;
+					}
+					return true;
+				}
+			}
+		}
+		return false;
+	};
+	float Reach = From;
+	TArray<float> Places;
+	if (From <= 0.f)
+	{
+		Places.Add(0.f);
+	}
+	for (const float Point : StopPoints)
+	{
+		if (Point >= From)
+		{
+			Places.Add(Point);
+		}
+	}
+	for (const float At : Places)
+	{
+		Reach = At;
+		// Arriving, not moving off again after a wait there.
+		const double Arrive = At <= 0.f ? Now : Profile.TimeAt(At - 1.f);
+		if (IsOpen(Arrive) || !HoldsUp(At, Arrive))
+		{
+			break;
+		}
+	}
+	for (FPass& Pass : Passes)
+	{
+		Pass.bCommitted = !IsOpen(Pass.Enter) && Pass.EnterAt <= Reach;
+	}
+}
+
 void AATTrafficSubsystem::Book(const FATTrafficTrain& State, const TArray<FPass>& Passes, EBookingKind Kind)
 {
 	const AFGTrain* Booker = State.Train.Get();
@@ -703,6 +805,7 @@ void AATTrafficSubsystem::Book(const FATTrafficTrain& State, const TArray<FPass>
 		Booking.Kind = Kind;
 		Booking.bLocked = Pass.bLocked;
 		Booking.bHeld = Pass.bHeld;
+		Booking.bCommitted = Pass.bCommitted;
 		mBookings.FindOrAdd(Pass.Key).Add(Booking);
 		Own.Keys.Add(Pass.Key);
 	}
@@ -1071,7 +1174,7 @@ bool AATTrafficSubsystem::CanEnter(FATTrafficTrain& Self, const FResourceKey& Ke
 			}
 			OutBlocker = Other ? *Other : nullptr;
 			OutWhy = FString::Printf(TEXT("booked first on %s (%s, enters in %s, clear in %s)"), *ResourceName(Checked.Track, Checked.Joint),
-				Booking.bLocked ? TEXT("locked") : Booking.bHeld ? TEXT("held") : TEXT("planned"), *SecondsText(Booking.Enter - Now), *SecondsText(Booking.Clear - Now));
+				Booking.bLocked ? TEXT("locked") : Booking.bHeld ? TEXT("held") : Booking.bCommitted ? TEXT("committed") : TEXT("planned"), *SecondsText(Booking.Enter - Now), *SecondsText(Booking.Clear - Now));
 			return false;
 		}
 	}
@@ -1558,11 +1661,11 @@ void AATTrafficSubsystem::UpdatePlannedTraffic(float DeltaSeconds)
 			GrantFromPlan(*Turn.State, Now);
 		}
 	}
-	// Check: no two trains hold conflicting resources, apart from following the same way.
+	// Check: no two trains hold conflicting resources, apart from following the same way or passing through a deadlock.
 	for (const FTurn& Turn : Turns)
 	{
 		const FATTrafficTrain& State = *Turn.State;
-		if (Turn.Kind != 2)
+		if (Turn.Kind != 2 || State.GhostUntil >= 0.0)
 		{
 			continue;
 		}
@@ -1578,7 +1681,7 @@ void AATTrafficSubsystem::UpdatePlannedTraffic(float DeltaSeconds)
 				for (const TPair<const AFGTrain*, FATTrafficTrain*>& Pair : mStateOf)
 				{
 					const FATTrafficTrain& Other = *Pair.Value;
-					if (&Other == &State || !HoldsTrack(Other, Conflict) || (Conflict == Track && (State.FollowedTrains.Contains(Other.Train) || Other.FollowedTrains.Contains(State.Train))))
+					if (&Other == &State || Other.GhostUntil >= 0.0 || !HoldsTrack(Other, Conflict) || (Conflict == Track && (State.FollowedTrains.Contains(Other.Train) || Other.FollowedTrains.Contains(State.Train))))
 					{
 						continue;
 					}
@@ -1739,8 +1842,9 @@ void AATTrafficSubsystem::LogWaitDump(const FATTrafficTrain& State, double Now) 
 		for (const FBooking& Booking : Bookings ? *Bookings : TArray<FBooking>())
 		{
 			FATTrafficTrain* const* Other = mStateOf.Find(Booking.Owner);
-			Lines += FString::Printf(TEXT("\n    %s: %s %s-%s s%s%s, kind %d; %s"), *ResourceName(Key.Track, Key.Joint), *NameOf(Booking.Owner), *SecondsText(Booking.Enter - Now),
-				*SecondsText(Booking.Clear - Now), Booking.bLocked ? TEXT(" locked") : TEXT(""), Booking.bHeld ? TEXT(" held") : TEXT(""), static_cast<int32>(Booking.Kind),
+			Lines += FString::Printf(TEXT("\n    %s: %s %s-%s s%s%s%s, kind %d; %s"), *ResourceName(Key.Track, Key.Joint), *NameOf(Booking.Owner), *SecondsText(Booking.Enter - Now),
+				*SecondsText(Booking.Clear - Now), Booking.bLocked ? TEXT(" locked") : TEXT(""), Booking.bHeld ? TEXT(" held") : TEXT(""),
+				Booking.bCommitted ? TEXT(" committed") : TEXT(""), static_cast<int32>(Booking.Kind),
 				Other ? *Describe(*Other) : TEXT("gone"));
 		}
 	}
@@ -1788,9 +1892,9 @@ bool AATTrafficSubsystem::IsInScope(const FATTrafficTrain& Self, const FBooking&
 	case EConflictScope::LockedOnly:
 		return false;
 	case EConflictScope::NotUnlockedMoving:
-		return Booking.Kind != EBookingKind::Moving || Booking.bHeld;
+		return Booking.Kind != EBookingKind::Moving || Booking.bHeld || Booking.bCommitted;
 	default:
-		return Booking.Kind != EBookingKind::Moving || Booking.bHeld || !PlansAfter(Booking.Owner, Self);
+		return Booking.Kind != EBookingKind::Moving || Booking.bHeld || Booking.bCommitted || !PlansAfter(Booking.Owner, Self);
 	}
 }
 

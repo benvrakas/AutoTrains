@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.0
+
+- **Fixed: deadlocks on track used both ways and where two lines cross twice close together.** A train that has
+  started into such a stretch can't give way until it is through, so every train now keeps clear of its plan up to
+  the next place it can stand without holding anyone up, whatever the planning order. This also stops the sudden hard
+  stops in front of level crossings when the other train hadn't cleared them yet.
+- The log no longer fills with check warnings while trains pass through a deadlock.
+
 ## 1.1.1
 
 - **Fixed: two trains with their fronts on the same track each took the other to be ahead** and waited for it, a

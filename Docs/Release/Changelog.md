@@ -6,6 +6,9 @@
   started into such a stretch can't give way until it is through, so every train now keeps clear of its plan up to
   the next place it can stand without holding anyone up, whatever the planning order. This also stops the sudden hard
   stops in front of level crossings when the other train hadn't cleared them yet.
+- **Signals set direction:** rerouting keeps the game's one-way rule, so no train is sent past a signal from behind.
+  Place a block signal facing the way trains should go to keep them on the right side of a double track or to make a
+  link one-way. Signals still never stop trains.
 - The log no longer fills with check warnings while trains pass through a deadlock.
 
 ## 1.1.1

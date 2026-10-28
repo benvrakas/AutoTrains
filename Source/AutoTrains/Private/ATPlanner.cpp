@@ -1092,7 +1092,8 @@ void AATTrafficSubsystem::PlanMoving(FATTrafficTrain& State, double Now)
 	const FString Committed = Plan.CommittedWith ? FString::Printf(TEXT("%s at %s"), *NameOf(Plan.CommittedWith), *Plan.CommittedAt) : FString();
 	if (Committed != State.PlanCommitted)
 	{
-		if (!Committed.IsEmpty())
+		// Trains passing through a deadlock run into others on purpose.
+		if (!Committed.IsEmpty() && State.GhostUntil < 0.0)
 		{
 			++mPlanCommitted;
 			UE_LOG(LogAutoTrains, Warning, TEXT("planner: %s can't stop short of %s any more, which %s has booked at the same time"), *NameOf(Train),

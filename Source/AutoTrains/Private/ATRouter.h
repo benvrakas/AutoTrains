@@ -12,9 +12,6 @@ class UFGRailroadTrackConnectionComponent;
 class FATRouter
 {
 public:
-	// Returns the summed track length of Route after its first connection. [cm]
-	static float GetRouteLength(const TArray<UFGRailroadTrackConnectionComponent*>& Route);
-
 	// Builds a game path from Route; each point's distance is the track length from it to the end of the route.
 	static FRailroadPathSharedPtr BuildPath(const TArray<UFGRailroadTrackConnectionComponent*>& Route, AFGBuildableRailroadStation* Station);
 

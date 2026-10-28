@@ -62,7 +62,7 @@ Player driven trains aren't controlled; the others treat them as obstacles.
 - **Stop distance (m)** (10): how far a waiting train stops short of track it hasn't been given; before a switch at
   least 25 m and the switch's fouling zone plus this.
 - **Normal braking (%)** (85): share of the planned braking a normal stop uses (full brake is the backstop).
-- **Station stay estimate (seconds)** (40): assumed stay at a station until one there has been measured.
+- **Station stay estimate (seconds)** (40): assumed stay at a fully load or unload stop until one there has been measured.
 - **Update interval (seconds)** (0.25): how often trains are planned and given track.
 - **Clear deadlocks by passing through (beta)** (on) and **Pass through a deadlock after (seconds)** (60): see above.
 
@@ -72,14 +72,10 @@ Back up the save first.
 
 ## Setup
 
-1. Load a copy of your world. A copied save file is still named after the original session in game, because the
-   game keeps the session name inside the save data.
-2. `/at session <new name>`: renames the running session, so this and later saves and autosaves stop going to the
-   original world's session.
-3. `/at autopilot all off`, then `/at removesignals confirm`.
-4. Save, and check the save list shows it under the new session.
-5. `/at log on`, then `/at traffic on`.
-6. Turn autopilot on for two trains whose routes cross or share track: `/at autopilot <train> on`. Add more once those
+1. Load a copy of your world.
+2. `/at autopilot all off`, then `/at removesignals confirm`.
+3. `/at log on`, then `/at traffic on`.
+4. Turn autopilot on for two trains whose routes cross or share track: `/at autopilot <train> on`. Add more once those
    behave.
 
 ## Watch for
@@ -112,5 +108,4 @@ server admin) can use them, except `/at list` and `/at traffic status`.
 - `/at list`: every train with its number, speed, length and distance to its goal
 - `/at autopilot <train> on|off` or `/at autopilot all on|off`
 - `/at removesignals confirm`: dismantles every block and path signal in the loaded world
-- `/at session <new name>`: renames the running session; saves and autosaves go to the new name
 - `/at log on|off`: telemetry every 0.2 s to `%LOCALAPPDATA%\FactoryGame\Saved\AutoTrains\telemetry-<time>.csv`

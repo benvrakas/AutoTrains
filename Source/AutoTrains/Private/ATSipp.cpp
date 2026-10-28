@@ -50,6 +50,10 @@ namespace
 	// Speeds a train may pass a track end at besides the fastest and slowest it can reach there, as shares of its
 	// cruising speed, and the number of speed bands its states there are told apart by.
 	constexpr float PassShares[] = {0.25f, 0.5f, 0.75f};
+	// Gravity, and the least speeding up and braking a train plans with on a slope. [cm/s^2]
+	constexpr float Gravity = 980.f;
+	constexpr float MinSlopeAccel = 5.f;
+	constexpr float MinSlopeBrake = 20.f;
 	constexpr float SpeedBands = 32.f;
 
 	bool IsNever(double Time)
@@ -547,19 +551,31 @@ namespace
 				}
 				const bool bGoalNode = IsGoal(State.Step + Run.Num(), End);
 				const float SpeedSquared = FMath::Square(State.Speed);
-				const float StopAt = NodePos - (bGoalNode ? 0.f : Graph.StopMarginOf[End]);
-				if (StopAt - State.Pos >= MinMove && (StopAt <= ForcedReach || SpeedSquared <= 2.f * Brake * (StopAt - State.Pos) + 1.f))
+				// Gravity along the run: uphill slows speeding up and helps braking, downhill the other way.
+				float Rise = 0.f;
+				float Along = 0.f;
+				for (const int32 Node : Run)
 				{
-					Move(Index, Run, NodePos, StopAt, 0.f, true);
+					const float Length = Graph.Length[Graph.TrackOf[Node]];
+					Rise += Graph.GradeOf[Node] * Length;
+					Along += Length;
+				}
+				const float Grade = Along > 0.f ? Rise / Along : 0.f;
+				const float RunAccel = FMath::Max(Accel - Gravity * Grade, MinSlopeAccel);
+				const float RunBrake = FMath::Max(Brake + Gravity * Grade, MinSlopeBrake);
+				const float StopAt = NodePos - (bGoalNode ? 0.f : Graph.StopMarginOf[End]);
+				if (StopAt - State.Pos >= MinMove && (StopAt <= ForcedReach || SpeedSquared <= 2.f * RunBrake * (StopAt - State.Pos) + 1.f))
+				{
+					Move(Index, Run, NodePos, StopAt, 0.f, true, RunAccel, RunBrake);
 				}
 				const float Pass = NodePos - State.Pos;
 				if (bGoalNode || Pass < MinMove)
 				{
 					continue;
 				}
-				const float Fastest = FMath::Min(Top, FMath::Sqrt(SpeedSquared + 2.f * Accel * Pass));
+				const float Fastest = FMath::Min(Top, FMath::Sqrt(SpeedSquared + 2.f * RunAccel * Pass));
 				// Down to a crawl at least, so a train braking to a stop can still pass a track end too close to stop at.
-				const float Slowest = FMath::Max(NodePos <= ForcedReach ? 0.f : FMath::Sqrt(FMath::Max(SpeedSquared - 2.f * Brake * Pass, 0.f)), MinPassSpeed);
+				const float Slowest = FMath::Max(NodePos <= ForcedReach ? 0.f : FMath::Sqrt(FMath::Max(SpeedSquared - 2.f * RunBrake * Pass, 0.f)), MinPassSpeed);
 				TArray<float, TInlineAllocator<6>> Speeds;
 				// However slow: a train standing at a track end gets past it only creeping.
 				if (Fastest > 0.f)
@@ -580,7 +596,7 @@ namespace
 				}
 				for (const float Speed : Speeds)
 				{
-					Move(Index, Run, NodePos, NodePos, Speed, false);
+					Move(Index, Run, NodePos, NodePos, Speed, false, RunAccel, RunBrake);
 				}
 			}
 		}
@@ -627,13 +643,14 @@ namespace
 		}
 
 		// Adds the states of the move from state Index over Run to the end of its last track (at NodePos), arriving at To
-		// [cm] with Speed: leaving at once, or, standing, at the first time it fits in each of the next windows of the way on.
-		void Move(int32 Index, const FRun& Run, float NodePos, float To, float Speed, bool bStop)
+		// [cm] with Speed, speeding up at RunAccel and braking at RunBrake [cm/s^2]: leaving at once, or, standing, at the
+		// first time it fits in each of the next windows of the way on.
+		void Move(int32 Index, const FRun& Run, float NodePos, float To, float Speed, bool bStop, float RunAccel, float RunBrake)
 		{
 			const FState State = States[Index];
 			const float Distance = To - State.Pos;
 			FEdge Edge;
-			if (!Edge.Make(Distance, State.Speed, Speed, Top, Accel, Brake, To <= ForcedReach))
+			if (!Edge.Make(Distance, State.Speed, Speed, Top, RunAccel, RunBrake, To <= ForcedReach))
 			{
 				++RejectedMotion;
 				return;

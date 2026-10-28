@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.3.1
+
+- **Station stays known from the timetable:** a stop set to load or unload once takes the freight platforms' fixed
+  transfer time when there is cargo to move, and the stop's set duration when there isn't, so a docked train's
+  departure is known as soon as its platforms start (or don't). Only stops set to fully load or unload, which take
+  as long as the cargo does, still go by the train's last stay there; the Station stay estimate setting now only
+  applies to those.
+- **Slopes:** each train's measured braking and acceleration now leave out the slope it was on, and plans, stopping
+  distances and the game's stop point add the slope of the track ahead, so trains stop where planned downhill and
+  aren't held back uphill.
+- Removed the `/at session` chat command.
+
 ## 1.3.0
 
 - **One planner for route, speed and waits (multi-train safe-interval planning):** each train's plan now comes out of

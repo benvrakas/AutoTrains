@@ -5,17 +5,6 @@
 #include "FGRailroadTrackConnectionComponent.h"
 #include "FGTrain.h"
 
-float FATRouter::GetRouteLength(const TArray<UFGRailroadTrackConnectionComponent*>& Route)
-{
-	float Length = 0.f;
-	for (int32 Index = 1; Index < Route.Num(); ++Index)
-	{
-		const AFGBuildableRailroadTrack* Track = Route[Index] ? Route[Index]->GetTrack() : nullptr;
-		Length += Track ? Track->GetLength() : 0.f;
-	}
-	return Length;
-}
-
 FRailroadPathSharedPtr FATRouter::BuildPath(const TArray<UFGRailroadTrackConnectionComponent*>& Route, AFGBuildableRailroadStation* Station)
 {
 	FRailroadPathSharedPtr Path = MakeShared<FRailroadPath>();

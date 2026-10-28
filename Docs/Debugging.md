@@ -532,3 +532,14 @@ train, then a row per train every 0.2 s:
   (a crossover) then held the other train up ("stands on track ..."), and was booked as a tail pass. A vehicle now
   occupies only the track it moves on to: the only one attached, or at a switch the one its route or another of its
   vehicles is on; the joint's fouling zone covers the rest. The clearance measurement (7b8576d) was reverted.
+- 1.3.1: station stays from 3600+ logged stays were two values per train, ~15 s (no cargo to move: the stop's
+  DockForDuration, default 15 s) and ~27-28 s (a freight platform transfer, mTimeToCompleteLoad/Unload plus docking).
+  GetExpectedStay now uses the timetable stop's FTrainDockingRuleSet: load/unload once = transfer stay if cargo moves
+  (DockTransfer from the docked cargo platforms' status: Loading/Unloading -> 1, all Complete/Idle -> 0), else the
+  duration; IsDurationAndRule takes the larger; fully load/unload and unknown rules use the train's last such stay
+  (mDwell) or the setting. The transfer stay is learned globally (mTransferStay, starts at the platforms' time + 2 s).
+  Slopes: GetGrade(connection) = rise per cm towards it; brake and acceleration samples have g * grade (front track)
+  taken out, GetPlanningDeceleration/GetStoppingDistance/GetAllowedSpeed add g * GradeAhead (300 m), the planner adds
+  each run's length-weighted grade to its accel/brake (FATSippGraph::GradeOf), and the catch gets -GradeAhead (the
+  game's restrictive grade weakens braking when positive). Watch for "freight platforms move cargo in" and the new
+  "(expected ..; load/unload once, cargo moved)" stay lines.

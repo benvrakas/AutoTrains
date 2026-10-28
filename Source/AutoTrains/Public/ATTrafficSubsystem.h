@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "ATConfig.h"
+#include "FGTrainDockingRules.h"
 #include "Curves/RichCurve.h"
 #include "Subsystem/ModSubsystem.h"
 #include "UObject/ObjectKey.h"
@@ -100,6 +101,10 @@ struct FATTrafficTrain
 	float Mass = 0.f;
 	// How far the train's front is ahead of its MU master, which the ATC distances are measured from. [cm]
 	float FrontAhead = 0.f;
+	// Slope the way it drives: of its front's track, and over its route within a few hundred metres ahead; positive
+	// uphill. [cm/cm]
+	float Grade = 0.f;
+	float GradeAhead = 0.f;
 	// The ATC path the route was read from and the path segment of its first step.
 	const void* RoutePath = nullptr;
 	int32 RouteFirstSegment = 0;
@@ -185,12 +190,17 @@ struct FATTrafficTrain
 	bool bSeenUndocked = false;
 	double DockedAt = -1.0;
 	TWeakObjectPtr<AFGBuildableRailroadStation> DockStation;
+	// The current dock's rules, and whether its freight platforms move cargo: 1 one has, 0 all finished without, -1 not
+	// known yet.
+	FTrainDockingRuleSet DockRules;
+	int32 DockTransfer = -1;
 	// The next leg from the station the train is docked at, as the game's pathfinder finds it from the locomotive the
 	// train would leave with: route, front ahead of that locomotive [cm], the station it leads to, and when it was worked
 	// out (world seconds).
 	TArray<FATRouteStep> PredictedRoute;
 	float PredictedFrontAhead = 0.f;
 	TWeakObjectPtr<AFGBuildableRailroadStation> PredictedStation;
+	int32 PredictedStop = INDEX_NONE;
 	double PredictedAt = -1e9;
 	// The route step of each track on the route (first time) and of each switch, by track and by joint.
 	TMap<const AFGBuildableRailroadTrack*, int32> RouteIndexOf;
@@ -200,10 +210,9 @@ struct FATTrafficTrain
 	// Passing through a deadlock: until when at most (world seconds, -1 if not) and how far it still drives so. [cm]
 	double GhostUntil = -1.0;
 	float GhostLeft = 0.f;
-	// The track or switch and route step the train waits at.
+	// The track or switch the train waits at.
 	const AFGBuildableRailroadTrack* BlockedAtTrack = nullptr;
 	int32 BlockedAtJoint = INDEX_NONE;
-	int32 BlockedAtIndex = INDEX_NONE;
 };
 
 // Server only. Train traffic without signals, planned in space and time (ATPlanner.cpp): every train books the tracks
@@ -235,9 +244,6 @@ public:
 
 	// Called by the collision hook each time a train contact was let through, with the tracks the two vehicles are on.
 	static void CountPhaseThrough(AFGBuildableRailroadTrack* Track, AFGBuildableRailroadTrack* OtherTrack);
-
-	// Returns true if this mod is driving Train.
-	bool IsManaged(const AFGTrain* Train) const;
 
 	// Called after the game's AFGTrain::TickAtc for managed trains; caps the target speed to the train's authority.
 	void ApplyAuthority(AFGTrain* Train, float DeltaSeconds);
@@ -454,8 +460,16 @@ private:
 	void PredictDeparture(FATTrafficTrain& State, double Now);
 	// Notes docking and departure; a dock seen from its start teaches the dwell.
 	void TrackDocking(FATTrafficTrain& State, AFGTrain* Train, double Now);
-	// Expected stay of Train at Station: its own last one there, else any train's last one there, else a default. [s]
-	float GetExpectedDwell(const AFGTrain* Train, const AFGBuildableRailroadStation* Station) const;
+	// Expected stay of Train at Station under the stop's Rules (null if unknown), with Transfer as in DockTransfer: a load
+	// or unload once is the freight platforms' transfer if there is cargo to move (as at the train's last stay there
+	// while not known), else the stop's duration; a full load or unload, or unknown rules, as long as the train's last
+	// such stay there, else the default. [s]
+	float GetExpectedStay(const AFGTrain* Train, const AFGBuildableRailroadStation* Station, const FTrainDockingRuleSet* Rules, int32 Transfer) const;
+	// The stay of a load or unload once that moves cargo: as measured, else the platforms' transfer time plus the
+	// docking itself, else the default. [s]
+	float GetTransferStay() const;
+	// The docking rules of the stop at Index of Train's timetable if it is at Station, else null.
+	static const FTrainDockingRuleSet* GetStopRules(const AFGTrain* Train, int32 Index, const AFGBuildableRailroadStation* Station, FTrainDockingRuleSet& Storage);
 	// How far State's front is ahead of the start of Route, from its vehicles. [cm]
 	float ComputeFrontAhead(const FATTrafficTrain& State, const TArray<FATRouteStep>& Route) const;
 	// Sets State's claims: the route resources from its front up to its stopping distance plus lookahead that it may
@@ -482,9 +496,13 @@ private:
 	bool mPlannedOnce = false;
 	// The traffic state of each train by its pointer, for the current update.
 	TMap<const AFGTrain*, FATTrafficTrain*> mStateOf;
-	// Last dwell of each train at each station, and the last one by any train at each station. [s]
+	// Last full load or unload stay of each train at each station [s], and whether its last stay there moved cargo.
 	TMap<TPair<FObjectKey, FObjectKey>, float> mDwell;
-	TMap<FObjectKey, float> mStationDwell;
+	TMap<TPair<FObjectKey, FObjectKey>, bool> mLastTransfer;
+	// Stay of a load or unload once that moves cargo, as measured, and the freight platforms' transfer time (-1 until
+	// known). [s]
+	float mTransferStay = -1.f;
+	float mPlatformSeconds = -1.f;
 	// Planner counters since the last summary.
 	int32 mPlans = 0;
 	int32 mPlanWaits = 0;

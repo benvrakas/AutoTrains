@@ -120,6 +120,19 @@ namespace
 		return MaxVelocity;
 	}
 
+	// Gravity, and how far ahead a train's slope is averaged for its braking. [cm/s^2] [cm]
+	constexpr float GravityAcceleration = 980.f;
+	constexpr float GradeAheadDistance = 30000.f;
+
+	// How much Connection's track rises per cm towards it. [cm/cm]
+	float GetGrade(const UFGRailroadTrackConnectionComponent* Connection)
+	{
+		const UFGRailroadTrackConnectionComponent* Opposite = Connection ? Connection->GetOpposite() : nullptr;
+		const AFGBuildableRailroadTrack* Track = Connection ? Connection->GetTrack() : nullptr;
+		const float Length = Track ? Track->GetLength() : 0.f;
+		return Opposite && Length > 0.f ? (Connection->GetComponentLocation().Z - Opposite->GetComponentLocation().Z) / Length : 0.f;
+	}
+
 	int32 GetBrakeBand(float Speed)
 	{
 		return FMath::Clamp(FMath::FloorToInt(Speed / ATBrakeBandWidth), 0, ATBrakeBands - 1);
@@ -307,12 +320,6 @@ FString AATTrafficSubsystem::SetRerouteEnabled(bool bEnabled)
 	return Message;
 }
 
-bool AATTrafficSubsystem::IsManaged(const AFGTrain* Train) const
-{
-	const FATTrafficTrain* State = mEnabled ? mTrains.Find(Train) : nullptr;
-	return State && State->bManaged;
-}
-
 void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 {
 	const double Now = FPlatformTime::Seconds();
@@ -345,10 +352,11 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 		// standstill, and docking catches and crashes are far above 20 m/s^2.
 		if (State.bFullBrake && State.bWasFullBrake && !State.bForcedSinceUpdate && State.LastSpeed > 500.f && State.Speed > 300.f && DeltaSeconds > 0.f)
 		{
+			// Measured with the slope's pull taken out, so it is the brakes' alone.
 			const float Raw = (State.LastSpeed - State.Speed) / DeltaSeconds;
 			if (Raw > 50.f && Raw < 2000.f)
 			{
-				const float Deceleration = FMath::Min(Raw, Train->mConsistData.MaxBrakeDeceleration * MaxRatedBrakeMultiple);
+				const float Deceleration = FMath::Clamp(Raw - GravityAcceleration * State.Grade, 1.f, Train->mConsistData.MaxBrakeDeceleration * MaxRatedBrakeMultiple);
 				const int32 Band = GetBrakeBand((State.LastSpeed + State.Speed) * 0.5f);
 				const float Force = Deceleration * State.Mass;
 				float& Stored = State.BrakeForce[Band];
@@ -374,7 +382,7 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 		}
 		if (bFree && DeltaSeconds > 0.f && Target > State.Speed + 100.f && State.Speed > State.LastSpeed)
 		{
-			const float Sample = (State.Speed - State.LastSpeed) / DeltaSeconds;
+			const float Sample = (State.Speed - State.LastSpeed) / DeltaSeconds + GravityAcceleration * State.Grade;
 			if (Sample > 5.f && Sample < 500.f)
 			{
 				State.AccelSeen = State.AccelSeen <= 0.f ? Sample : State.AccelSeen + (Sample - State.AccelSeen) * AccelSampleRate;
@@ -451,6 +459,8 @@ void AATTrafficSubsystem::ReadTrain(FATTrafficTrain& State, AFGTrain* Train) con
 	State.Vehicles.Reset();
 	State.OccupiedJoints.Reset();
 	State.FrontAhead = 0.f;
+	State.Grade = 0.f;
+	State.GradeAhead = 0.f;
 	State.RoutePath = nullptr;
 	State.Mass = 0.f;
 
@@ -477,6 +487,21 @@ void AATTrafficSubsystem::ReadTrain(FATTrafficTrain& State, AFGTrain* Train) con
 			}
 			State.Route.Add({Track, Exit, Distance});
 		}
+		// Slope of the front's track, and over the route ahead.
+		State.Grade = State.Route.Num() > 0 ? GetGrade(State.Route[0].Exit) : 0.f;
+		float Rise = 0.f;
+		float Along = 0.f;
+		for (const FATRouteStep& Step : State.Route)
+		{
+			const float Length = Step.Track->GetLength();
+			if (Step.EndDistance - Length > GradeAheadDistance)
+			{
+				break;
+			}
+			Rise += GetGrade(Step.Exit) * Length;
+			Along += Length;
+		}
+		State.GradeAhead = Along > 0.f ? Rise / Along : 0.f;
 	}
 
 	TArray<const UFGRailroadTrackConnectionComponent*> Overhangs;
@@ -1136,7 +1161,8 @@ AATTrafficSubsystem::FRouteSpeed AATTrafficSubsystem::GetRouteSpeed(const FATTra
 	Speed.Cruise = State.CruiseSeen > 0.f ? FMath::Clamp(State.CruiseSeen, FMath::Min(MinPlanCruise, Top), Top) : Top;
 	Speed.Length = State.Length;
 	const float Acceleration = State.AccelSeen > 0.f ? FMath::Max(State.AccelSeen, MinPlanAcceleration) : GetAcceleration(State, 0.5f);
-	const float Deceleration = GetPlanningDeceleration(State, Speed.Cruise) * GetNormalBrakingShare();
+	// On level track: the planner adds each stretch's slope itself.
+	const float Deceleration = FMath::Max(State.PlanDecel[GetBrakeBand(Speed.Cruise)], MinPlanDeceleration) * GetNormalBrakingShare();
 	Speed.Accel = Acceleration;
 	Speed.Brake = FMath::Max(Deceleration, MinPlanDeceleration);
 	return Speed;
@@ -1405,6 +1431,7 @@ void AATTrafficSubsystem::BuildSearchGraph(const TArray<AFGBuildableRailroadTrac
 	Graph->OppositeOf.Init(INDEX_NONE, Count);
 	Graph->JointOf.Init(INDEX_NONE, Count);
 	Graph->FoulOf.Init(0.f, Count);
+	Graph->GradeOf.Init(0.f, Count);
 	Graph->StopMarginOf.Init(0.f, Count);
 	Graph->JointFoul.Init(JointFoulDistance, JointCount);
 	Graph->OneWay.Init(false, Count);
@@ -1417,6 +1444,7 @@ void AATTrafficSubsystem::BuildSearchGraph(const TArray<AFGBuildableRailroadTrac
 		const int32 Joint = GetJoint(Connection);
 		Graph->JointOf[Index] = Joint;
 		Graph->FoulOf[Index] = GetFoulDistance(Connection);
+		Graph->GradeOf[Index] = GetGrade(Connection);
 		Graph->StopMarginOf[Index] = GetStopMargin(Connection);
 		if (Graph->JointFoul.IsValidIndex(Joint))
 		{
@@ -1548,7 +1576,7 @@ void AATTrafficSubsystem::RefreshBrakePlan(FATTrafficTrain& State) const
 
 float AATTrafficSubsystem::GetPlanningDeceleration(const FATTrafficTrain& State, float Speed)
 {
-	return FMath::Max(State.PlanDecel[GetBrakeBand(Speed >= 0.f ? Speed : State.Speed)], MinPlanDeceleration);
+	return FMath::Max(State.PlanDecel[GetBrakeBand(Speed >= 0.f ? Speed : State.Speed)] + GravityAcceleration * State.GradeAhead, MinPlanDeceleration);
 }
 
 float AATTrafficSubsystem::GetStoppingDistance(const FATTrafficTrain& State, float Speed)
@@ -1562,7 +1590,7 @@ float AATTrafficSubsystem::GetStoppingDistance(const FATTrafficTrain& State, flo
 			break;
 		}
 		const float High = Band == ATBrakeBands - 1 ? Speed : FMath::Min(Low + ATBrakeBandWidth, Speed);
-		Distance += (FMath::Square(High) - FMath::Square(Low)) / (2.f * FMath::Max(State.PlanDecel[Band], MinPlanDeceleration));
+		Distance += (FMath::Square(High) - FMath::Square(Low)) / (2.f * FMath::Max(State.PlanDecel[Band] + GravityAcceleration * State.GradeAhead, MinPlanDeceleration));
 	}
 	return Distance;
 }
@@ -1579,7 +1607,7 @@ float AATTrafficSubsystem::GetAllowedSpeed(const FATTrafficTrain& State, float D
 	{
 		const float Low = Band * ATBrakeBandWidth;
 		const float High = Low + ATBrakeBandWidth;
-		const float Deceleration = FMath::Max(State.PlanDecel[Band], MinPlanDeceleration) * Share;
+		const float Deceleration = FMath::Max(State.PlanDecel[Band] + GravityAcceleration * State.GradeAhead, MinPlanDeceleration) * Share;
 		// The speed in this band whose stop takes Distance: Below + (v^2 - Low^2) / (2 a) + v * Lag = Distance.
 		const float Constant = Below - FMath::Square(Low) / (2.f * Deceleration) - Distance;
 		const float Speed = Deceleration * (FMath::Sqrt(FMath::Square(BrakeLagSeconds) - 2.f * Constant / Deceleration) - BrakeLagSeconds);
@@ -1746,7 +1774,8 @@ void AATTrafficSubsystem::ApplyAuthority(AFGTrain* Train, float DeltaSeconds)
 		Atc.NextRestrictiveSignalConnection = const_cast<UFGRailroadTrackConnectionComponent*>(Next);
 		Atc.NextRestrictiveSignalSpeed = 0.f;
 		Atc.NextRestrictiveSignalDistance = Atc.CurrentConnectionDistance;
-		Atc.NextRestrictiveSignalGrade = 0.f;
+		// The game's grade weakens its braking when positive (downhill); ours is positive uphill.
+		Atc.NextRestrictiveSignalGrade = -State->GradeAhead;
 		Atc.NextRestrictiveSignalAspect = ERailroadSignalAspect::RSA_Clear;
 		Atc.NextRestrictiveSignalStopOffset = StopOffset;
 	}
@@ -1766,7 +1795,7 @@ void AATTrafficSubsystem::ApplyAuthority(AFGTrain* Train, float DeltaSeconds)
 			Atc.NextRestrictiveSignalConnection = const_cast<UFGRailroadTrackConnectionComponent*>(Next);
 			Atc.NextRestrictiveSignalSpeed = 0.f;
 			Atc.NextRestrictiveSignalDistance = Atc.CurrentConnectionDistance;
-			Atc.NextRestrictiveSignalGrade = 0.f;
+			Atc.NextRestrictiveSignalGrade = -State->GradeAhead;
 			Atc.NextRestrictiveSignalStopOffset = Atc.CurrentConnectionDistance;
 		}
 		Atc.NextRestrictiveSignalAspect = ERailroadSignalAspect::RSA_Stop;

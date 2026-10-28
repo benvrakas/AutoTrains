@@ -31,7 +31,7 @@ struct FATSettings
 	float StopDistanceMetres = 10.f;
 	// Share of its planned braking a train's normal stops use. [%]
 	float NormalBrakingPercent = 85.f;
-	// Stay assumed at a station until one there has been measured. [s]
+	// Stay assumed at a fully load or unload stop until one there has been measured. [s]
 	float DefaultStaySeconds = 40.f;
 	// How often trains are read, planned and given track. [s]
 	float UpdateIntervalSeconds = 0.25f;

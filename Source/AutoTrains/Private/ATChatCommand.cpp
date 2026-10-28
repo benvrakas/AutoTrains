@@ -13,7 +13,7 @@ AATChatCommand::AATChatCommand()
 	Aliases.Add(TEXT("autotrains"));
 	MinNumberOfArguments = 1;
 	bOnlyUsableByPlayer = true;
-	Usage = NSLOCTEXT("AutoTrains", "ChatUsage", "/at traffic on|off|status | reroute on|off | list | autopilot <train|all> on|off | removesignals confirm | session <new name> | log on|off   (<train> = number from /at list, or part of its name)");
+	Usage = NSLOCTEXT("AutoTrains", "ChatUsage", "/at traffic on|off|status | reroute on|off | list | autopilot <train|all> on|off | removesignals confirm | log on|off   (<train> = number from /at list, or part of its name)");
 }
 
 bool AATChatCommand::MayChangeWorld(UCommandSender* Sender)
@@ -91,13 +91,6 @@ EExecutionStatus AATChatCommand::ExecuteCommand_Implementation(UCommandSender* S
 			Sender->SendChatMessage(Traffic->SetRerouteEnabled(bOn));
 			return EExecutionStatus::COMPLETED;
 		}
-	}
-	if (Verb == TEXT("session") && Arguments.Num() >= 2)
-	{
-		TArray<FString> Words(Arguments);
-		Words.RemoveAt(0);
-		Sender->SendChatMessage(Control->SetSessionName(FString::Join(Words, TEXT(" "))));
-		return EExecutionStatus::COMPLETED;
 	}
 	if (Verb == TEXT("removesignals"))
 	{

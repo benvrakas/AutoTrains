@@ -29,6 +29,8 @@ struct FATSippGraph
 	// Per connection: the next one when nothing is decided there (one track attached, no switch joint, no one-way
 	// signal, neither track a platform, the next one without crossings), else INDEX_NONE.
 	TArray<int32> Through;
+	// Per connection: how much its track rises per cm towards it. [cm/cm]
+	TArray<float> GradeOf;
 	// Per track: its length [cm] and the tracks it conflicts with, itself first.
 	TArray<float> Length;
 	TArray<TArray<int32>> Conflicts;

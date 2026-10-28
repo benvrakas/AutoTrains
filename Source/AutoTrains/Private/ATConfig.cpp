@@ -52,7 +52,7 @@ namespace
 			{TEXT("NormalBrakingPercent"), &FATSettings::NormalBrakingPercent, 30.f, 100.f, LOCTEXT("NormalBraking", "Normal braking (%)"),
 				LOCTEXT("NormalBrakingTip", "How hard trains brake for normal stops, 30 to 100% of the braking they plan with. Higher stops later and gets there sooner; lower is gentler and leaves room for error.")},
 			{TEXT("DefaultStaySeconds"), &FATSettings::DefaultStaySeconds, 0.f, 600.f, LOCTEXT("DefaultStay", "Station stay estimate (seconds)"),
-				LOCTEXT("DefaultStayTip", "How long a train is expected to stay at a station before it has been seen there, 0 to 600 seconds. After that each train's own last stay at that station counts.")},
+				LOCTEXT("DefaultStayTip", "How long a train is expected to stay at a stop set to fully load or unload, 0 to 600 seconds, until it has been seen there; after that its own last stay there counts. Stops that load or unload once take the freight platforms' fixed time, or the stop's set duration when there's no cargo to move.")},
 			{TEXT("GhostAfterSeconds"), &FATSettings::GhostAfterSeconds, 10.f, 600.f, LOCTEXT("GhostAfter", "Pass through a deadlock after (seconds)"),
 				LOCTEXT("GhostAfterTip", "How long trains stay deadlocked, 10 to 600 seconds, before they pass through each other (when that's on).")},
 			{TEXT("PlanRetries"), &FATSettings::PlanRetries, 0.f, 10.f, LOCTEXT("PlanRetries", "Planning retries"),

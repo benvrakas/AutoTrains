@@ -5,8 +5,6 @@
 #include "Buildables/FGBuildableRailroadTrack.h"
 #include "EngineUtils.h"
 #include "FGDismantleInterface.h"
-#include "FGGameMode.h"
-#include "FGGameState.h"
 #include "FGLocomotive.h"
 #include "FGLocomotiveMovementComponent.h"
 #include "FGRailroadSubsystem.h"
@@ -316,24 +314,6 @@ FString AATControlSubsystem::RemoveAllSignals()
 	{
 		UE_LOG(LogAutoTrains, Log, TEXT("Signals in the world one second after removal: %d"), CountSignals());
 	}), 1.f, false);
-	return Message;
-}
-
-FString AATControlSubsystem::SetSessionName(const FString& Name)
-{
-	AFGGameMode* GameMode = Cast<AFGGameMode>(GetWorld()->GetAuthGameMode());
-	AFGGameState* GameState = GetWorld()->GetGameState<AFGGameState>();
-	if (!GameMode || !GameState || Name.TrimStartAndEnd().IsEmpty())
-	{
-		UE_LOG(LogAutoTrains, Warning, TEXT("Session rename failed: game mode %s, game state %s, name \"%s\""), *GetNameSafe(GameMode), *GetNameSafe(GameState), *Name);
-		return TEXT("Couldn't rename the session.");
-	}
-	const FString Previous = GameMode->GetSaveSessionName();
-	GameMode->SetSaveSessionName(Name.TrimStartAndEnd());
-	GameState->SetSessionName(Name.TrimStartAndEnd());
-	const FString Message = FString::Printf(TEXT("Session renamed from \"%s\" to \"%s\". Save now; from here on saves and autosaves go to the new session."),
-		*Previous, *GameMode->GetSaveSessionName());
-	UE_LOG(LogAutoTrains, Log, TEXT("%s"), *Message);
 	return Message;
 }
 

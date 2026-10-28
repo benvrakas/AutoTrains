@@ -4,6 +4,7 @@
 #include "AutoTrains.h"
 #include "Buildables/FGBuildableRailroadStation.h"
 #include "Buildables/FGBuildableRailroadTrack.h"
+#include "Buildables/FGBuildableTrainPlatformCargo.h"
 #include "FGLocomotive.h"
 #include "FGRailroadSubsystem.h"
 #include "FGRailroadTimeTable.h"
@@ -39,6 +40,10 @@ namespace
 	constexpr double PlanWaitGraceSeconds = 0.5;
 	// Planner counters are logged this often. [s]
 	constexpr double PlanSummarySeconds = 60.0;
+	// Time the docking itself adds to a freight platform's transfer, until a stay has been measured, and the share a new
+	// measurement moves the transfer stay by. [s]
+	constexpr float DockingSeconds = 2.f;
+	constexpr float TransferStayRate = 0.2f;
 	// An update slower than this is logged, at most once per SlowLogSeconds. [s]
 	constexpr double SlowUpdateSeconds = 0.02;
 	constexpr double SlowLogSeconds = 10.0;
@@ -201,21 +206,39 @@ void AATTrafficSubsystem::RemoveBookings(const AFGTrain* Booker)
 	}
 }
 
-float AATTrafficSubsystem::GetExpectedDwell(const AFGTrain* Train, const AFGBuildableRailroadStation* Station) const
+float AATTrafficSubsystem::GetExpectedStay(const AFGTrain* Train, const AFGBuildableRailroadStation* Station, const FTrainDockingRuleSet* Rules, int32 Transfer) const
 {
-	if (!Station)
+	const TPair<FObjectKey, FObjectKey> Key{FObjectKey(Train), FObjectKey(Station)};
+	if (!Station || !Rules || Rules->DockingDefinition == ETrainDockingDefinition::TDD_FullyLoadUnload)
 	{
-		return mSettings.DefaultStaySeconds;
+		const float* Own = Station ? mDwell.Find(Key) : nullptr;
+		return Own ? *Own : mSettings.DefaultStaySeconds;
 	}
-	if (const float* Own = mDwell.Find(TPair<FObjectKey, FObjectKey>(FObjectKey(Train), FObjectKey(Station))))
+	const bool* Last = mLastTransfer.Find(Key);
+	const bool bTransfer = Transfer >= 0 ? Transfer > 0 : !Last || *Last;
+	const float Once = bTransfer ? GetTransferStay() : Rules->DockForDuration;
+	return Rules->IsDurationAndRule ? FMath::Max(Rules->DockForDuration, Once) : Once;
+}
+
+float AATTrafficSubsystem::GetTransferStay() const
+{
+	return mTransferStay > 0.f ? mTransferStay : mPlatformSeconds > 0.f ? mPlatformSeconds + DockingSeconds : mSettings.DefaultStaySeconds;
+}
+
+const FTrainDockingRuleSet* AATTrafficSubsystem::GetStopRules(const AFGTrain* Train, int32 Index, const AFGBuildableRailroadStation* Station, FTrainDockingRuleSet& Storage)
+{
+	AFGRailroadTimeTable* TimeTable = Train ? Train->GetTimeTable() : nullptr;
+	TArray<FTimeTableStop> Stops;
+	if (TimeTable)
 	{
-		return *Own;
+		TimeTable->GetStops(Stops);
 	}
-	if (const float* Any = mStationDwell.Find(FObjectKey(Station)))
+	if (!Station || !Stops.IsValidIndex(Index) || !Stops[Index].Station || Stops[Index].Station->GetStation() != Station)
 	{
-		return *Any;
+		return nullptr;
 	}
-	return mSettings.DefaultStaySeconds;
+	Storage = Stops[Index].DockingRuleSet;
+	return &Storage;
 }
 
 void AATTrafficSubsystem::TrackDocking(FATTrafficTrain& State, AFGTrain* Train, double Now)
@@ -226,6 +249,7 @@ void AATTrafficSubsystem::TrackDocking(FATTrafficTrain& State, AFGTrain* Train, 
 		// A dock already going on when this mod first saw the train started at an unknown time.
 		State.DockedAt = State.bSeenUndocked ? Now : -1.0;
 		State.DockStation = Train->mDockedAtStation.Get();
+		State.DockTransfer = -1;
 		State.PredictedRoute.Reset();
 		State.PredictedStation = nullptr;
 		State.PredictedAt = -1e9;
@@ -236,15 +260,58 @@ void AATTrafficSubsystem::TrackDocking(FATTrafficTrain& State, AFGTrain* Train, 
 		if (State.DockedAt >= 0.0 && Station)
 		{
 			const float Dwell = Now - State.DockedAt;
-			const float Before = GetExpectedDwell(Train, Station);
-			mDwell.Add(TPair<FObjectKey, FObjectKey>(FObjectKey(Train), FObjectKey(Station)), Dwell);
-			mStationDwell.Add(FObjectKey(Station), Dwell);
-			UE_LOG(LogAutoTrains, Log, TEXT("planner: %s left %s after %.1f s (expected %.1f s)"), *NameOf(Train), *StationName(Station), Dwell, Before);
+			const float Before = GetExpectedStay(Train, Station, &State.DockRules, State.DockTransfer);
+			const TPair<FObjectKey, FObjectKey> Key{FObjectKey(Train), FObjectKey(Station)};
+			const bool bFully = State.DockRules.DockingDefinition == ETrainDockingDefinition::TDD_FullyLoadUnload;
+			if (bFully)
+			{
+				mDwell.Add(Key, Dwell);
+			}
+			else
+			{
+				mLastTransfer.Add(Key, State.DockTransfer > 0);
+				if (State.DockTransfer > 0)
+				{
+					mTransferStay = mTransferStay > 0.f ? mTransferStay + (Dwell - mTransferStay) * TransferStayRate : Dwell;
+				}
+			}
+			UE_LOG(LogAutoTrains, Log, TEXT("planner: %s left %s after %.1f s (expected %.1f s; %s, %s)"), *NameOf(Train), *StationName(Station), Dwell, Before,
+				bFully ? TEXT("fully load/unload") : TEXT("load/unload once"), State.DockTransfer > 0 ? TEXT("cargo moved") : State.DockTransfer == 0 ? TEXT("no cargo to move") : TEXT("cargo unknown"));
 		}
 		State.DockedAt = -1.0;
 		State.PredictedRoute.Reset();
 		State.PredictedStation = nullptr;
 		State.LegStart = -1.0;
+	}
+	// While docked: the stop's rules, and whether the freight platforms move cargo.
+	AFGBuildableRailroadStation* Docked = bDocked ? State.DockStation.Get() : nullptr;
+	if (Docked)
+	{
+		State.DockRules = Docked->GetDockedTrainRuleSet();
+		bool bUndecided = false;
+		for (AFGBuildableTrainPlatform* Platform : Docked->mDockedPlatformList)
+		{
+			const AFGBuildableTrainPlatformCargo* Cargo = Cast<AFGBuildableTrainPlatformCargo>(Platform);
+			if (!Cargo)
+			{
+				continue;
+			}
+			if (mPlatformSeconds < 0.f)
+			{
+				mPlatformSeconds = FMath::Max(Cargo->mTimeToCompleteLoad, Cargo->mTimeToCompleteUnload);
+				UE_LOG(LogAutoTrains, Log, TEXT("planner: freight platforms move cargo in %.1f s"), mPlatformSeconds);
+			}
+			const ETrainPlatformDockingStatus Status = Cargo->GetDockingStatus();
+			if (Status == ETrainPlatformDockingStatus::ETPDS_Loading || Status == ETrainPlatformDockingStatus::ETPDS_Unloading)
+			{
+				State.DockTransfer = 1;
+			}
+			bUndecided = bUndecided || (Status != ETrainPlatformDockingStatus::ETPDS_Complete && Status != ETrainPlatformDockingStatus::ETPDS_IdleWaitForTime);
+		}
+		if (State.DockTransfer < 0 && !bUndecided)
+		{
+			State.DockTransfer = 0;
+		}
 	}
 	if (!bDocked)
 	{
@@ -297,6 +364,7 @@ void AATTrafficSubsystem::PredictDeparture(FATTrafficTrain& State, double Now)
 	const AFGBuildableRailroadStation* Docked = State.DockStation.Get();
 	const int32 Current = FMath::Clamp(TimeTable->GetCurrentStop(), 0, Stops.Num() - 1);
 	AFGBuildableRailroadStation* Next = nullptr;
+	int32 NextStop = INDEX_NONE;
 	for (int32 Offset = 0; Offset < Stops.Num() && !Next; ++Offset)
 	{
 		const FTimeTableStop& Stop = Stops[(Current + Offset) % Stops.Num()];
@@ -304,6 +372,7 @@ void AATTrafficSubsystem::PredictDeparture(FATTrafficTrain& State, double Now)
 		if (Station && Station != Docked)
 		{
 			Next = Station;
+			NextStop = (Current + Offset) % Stops.Num();
 		}
 	}
 	if (!Next)
@@ -357,9 +426,10 @@ void AATTrafficSubsystem::PredictDeparture(FATTrafficTrain& State, double Now)
 	State.PredictedRoute = MoveTemp(Best);
 	State.PredictedFrontAhead = ComputeFrontAhead(State, State.PredictedRoute);
 	State.PredictedStation = Next;
+	State.PredictedStop = NextStop;
 	++mPlanPredictions;
 	UE_LOG(LogAutoTrains, Log, TEXT("planner: %s docked at %s, expected to stay %.0f s; next leg to %s: %d tracks, %.0f m, leaving with %s"), *NameOf(Train),
-		*StationName(Docked), GetExpectedDwell(Train, Docked), *StationName(Next), State.PredictedRoute.Num(), BestLength / 100.f,
+		*StationName(Docked), GetExpectedStay(Train, Docked, &State.DockRules, State.DockTransfer), *StationName(Next), State.PredictedRoute.Num(), BestLength / 100.f,
 		BestLocomotive == Train->GetMultipleUnitMaster() ? TEXT("its lead locomotive") : TEXT("another locomotive (the other way)"));
 }
 
@@ -582,7 +652,6 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 		{
 			State.BlockedAtTrack = Where.StartsWith(TEXT("the switch")) ? nullptr : Step.Track;
 			State.BlockedAtJoint = Where.StartsWith(TEXT("the switch")) ? Joint : INDEX_NONE;
-			State.BlockedAtIndex = Index;
 			State.BlockedBy = Blocker ? Blocker->Train : nullptr;
 			State.BlockedReason = FString::Printf(TEXT("waits for %s before %s, %.0f m ahead: %s"), *NameOf(Blocker ? Blocker->Train.Get() : nullptr), *Where,
 				FMath::Max(Begin, 0.f) / 100.f, *Why);
@@ -825,7 +894,7 @@ void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds, bool bW
 		if (Train->IsDocked())
 		{
 			Turn.Kind = 1;
-			Turn.Order = State.DockedAt >= 0.0 ? State.DockedAt + GetExpectedDwell(Train, State.DockStation.Get()) - Now : 0.f;
+			Turn.Order = State.DockedAt >= 0.0 ? State.DockedAt + GetExpectedStay(Train, State.DockStation.Get(), &State.DockRules, State.DockTransfer) - Now : 0.f;
 		}
 		Turns.Add(Turn);
 	}
@@ -888,7 +957,9 @@ void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds, bool bW
 			Out.Kind = EATSippKind::Moving;
 			Out.bRanked = true;
 			Out.MinDepart = Now;
-			Out.GoalDwell = GetExpectedDwell(Train, State.GoalStation.Get());
+			FTrainDockingRuleSet Rules;
+			const AFGRailroadTimeTable* TimeTable = Train ? Train->GetTimeTable() : nullptr;
+			Out.GoalDwell = GetExpectedStay(Train, State.GoalStation.Get(), GetStopRules(Train, TimeTable ? TimeTable->GetCurrentStop() : INDEX_NONE, State.GoalStation.Get(), Rules), -1);
 			Out.Commit = GetRouteCommit(State);
 			Out.bSearch = IsSearchDue(State, DeltaSeconds) && Out.Commit < Out.Route.Num() - 2;
 			Out.MinGainSeconds = mSettings.RerouteMinGainSeconds;
@@ -898,7 +969,7 @@ void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds, bool bW
 		if (Turns[Slot].Kind == 1)
 		{
 			const double Start = State.DockedAt >= 0.0 ? State.DockedAt : Now;
-			const double Depart = FMath::Max(Start + GetExpectedDwell(Train, State.DockStation.Get()), Now + OverdueDepartSeconds);
+			const double Depart = FMath::Max(Start + GetExpectedStay(Train, State.DockStation.Get(), &State.DockRules, State.DockTransfer), Now + OverdueDepartSeconds);
 			if (State.PredictedRoute.Num() == 0 && Now - State.PredictedAt > PredictRetrySeconds && Train && Train->IsSelfDrivingEnabled())
 			{
 				PredictDeparture(State, Now);
@@ -918,7 +989,8 @@ void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds, bool bW
 				Out.Kind = EATSippKind::Predicted;
 				Out.bRanked = false;
 				Out.MinDepart = Depart;
-				Out.GoalDwell = GetExpectedDwell(Train, State.PredictedStation.Get());
+				FTrainDockingRuleSet Rules;
+				Out.GoalDwell = GetExpectedStay(Train, State.PredictedStation.Get(), GetStopRules(Train, State.PredictedStop, State.PredictedStation.Get(), Rules), -1);
 				continue;
 			}
 			Out.Kind = EATSippKind::Predicted;

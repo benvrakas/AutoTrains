@@ -9,6 +9,8 @@ namespace
 	// How far behind the front a track can still be under the train's body or a switch's fouling zone. [cm]
 	constexpr float BodyReachMargin = 5000.f;
 
+	using EWay = FATSearchBlock::EWay;
+
 	// A window of entry times. [world s]
 	struct FInterval
 	{
@@ -16,16 +18,28 @@ namespace
 		double Hi = 0.0;
 	};
 
+	// Entry times a booking rules out, and how it meets the train. [world s]
+	struct FForbidden
+	{
+		double Lo = 0.0;
+		double Hi = 0.0;
+		const FATSearchBooking* Booking = nullptr;
+		EWay Way = EWay::Crossing;
+	};
+
 	// The front at the end of Node's track, having entered it at Enter in a window that allowed entering up to Hi, and
-	// reaching the end at Arrive. [world s]
+	// reaching the end at Arrive [world s]; Along is the track length from the start to there [cm], Step the index of
+	// Node in a route searched along (-1 at the start).
 	struct FState
 	{
 		int32 Node = INDEX_NONE;
 		int32 Window = 0;
 		int32 Parent = INDEX_NONE;
+		int32 Step = -1;
 		double Enter = 0.0;
 		double Hi = ATSearchNever;
 		double Arrive = 0.0;
+		float Along = 0.f;
 	};
 
 	struct FOpen
@@ -54,20 +68,15 @@ namespace
 			ReachedTracks.Reset();
 		}
 
-		// The entry windows of Node's track, entered through the connection at its other end: times the front may enter
-		// so that neither the track (nor a track crossing it) nor the switch at its start is booked while the train is on
-		// it, or a train ahead the same way stays a headway ahead at both ends.
-		const TArray<FInterval>& WindowsOf(int32 Node)
+		// The entry times at which the front, coming from From, may not enter Node's track: while the track, a track
+		// crossing it or the switch at its start would be booked by someone else as the train passes, or a train the
+		// same way would not stay a headway ahead at both ends.
+		void CollectForbidden(int32 From, int32 Node, TArray<FForbidden>& Out) const
 		{
-			if (const TArray<FInterval>* Known = Cache.Find(Node))
-			{
-				return *Known;
-			}
 			const double Speed = Request.Cruise;
 			const double H = Request.Headway;
 			const int32 Track = Graph.TrackOf[Node];
 			const double OnTrack = (Graph.Length[Track] + Request.Length) / Speed;
-			TArray<FInterval> Forbidden;
 			for (const int32 Conflict : Graph.Conflicts[Track])
 			{
 				const TArray<FATSearchBooking>* Bookings = Request.TrackBookings.Find(Conflict);
@@ -84,53 +93,103 @@ namespace
 						const double Ahead = Booking.bLocked ? -ATSearchNever : FMath::Min(Booking.Enter - H, (bOpen ? ATSearchNever : Booking.Clear) - H - OnTrack);
 						if (Behind > Ahead)
 						{
-							Forbidden.Add({Ahead, Behind});
+							Out.Add({Ahead, Behind, &Booking, EWay::SameWay});
 						}
 					}
 					else
 					{
-						Forbidden.Add({Booking.bLocked ? -ATSearchNever : Booking.Enter - H - OnTrack, bOpen ? ATSearchNever : Booking.Clear + H});
+						Out.Add({Booking.bLocked ? -ATSearchNever : Booking.Enter - H - OnTrack, bOpen ? ATSearchNever : Booking.Clear + H, &Booking, EWay::Crossing});
 					}
 				}
 			}
 			const int32 Entry = Graph.OppositeOf[Node];
 			const int32 Joint = Entry != INDEX_NONE ? Graph.JointOf[Entry] : INDEX_NONE;
-			if (Joint != INDEX_NONE)
+			const TArray<FATSearchBooking>* Bookings = Joint != INDEX_NONE ? Request.JointBookings.Find(Joint) : nullptr;
+			if (!Bookings)
 			{
-				if (const TArray<FATSearchBooking>* Bookings = Request.JointBookings.Find(Joint))
+				return;
+			}
+			// The zone is entered Before ahead of the track and left OnJoint after entering the track.
+			const double Before = Graph.FoulOf[Entry] / Speed;
+			const double OnJoint = (Request.Length + Graph.JointFoul.FindRef(Joint)) / Speed;
+			for (const FATSearchBooking& Booking : *Bookings)
+			{
+				const bool bOpen = Booking.Clear >= ATSearchNever;
+				if (Booking.Exit == Node && Booking.Via == From)
 				{
-					const double Before = Graph.FoulOf[Entry] / Speed;
-					const double OnJoint = (Request.Length + Graph.JointFoul.FindRef(Joint)) / Speed;
-					for (const FATSearchBooking& Booking : *Bookings)
+					const double Behind = bOpen ? ATSearchNever : FMath::Max(Booking.Enter + H + Before, Booking.Clear + H - OnJoint);
+					const double Ahead = Booking.bLocked ? -ATSearchNever : FMath::Min(Booking.Enter - H + Before, (bOpen ? ATSearchNever : Booking.Clear) - H - OnJoint);
+					if (Behind > Ahead)
 					{
-						Forbidden.Add({Booking.bLocked ? -ATSearchNever : Booking.Enter - H - OnJoint, Booking.Clear >= ATSearchNever ? ATSearchNever : Booking.Clear + H + Before});
+						Out.Add({Ahead, Behind, &Booking, EWay::SameWay});
 					}
 				}
-			}
-			Forbidden.Sort([](const FInterval& A, const FInterval& B) { return A.Lo < B.Lo; });
-			TArray<FInterval>& Windows = Cache.Add(Node);
-			double From = -ATSearchNever;
-			for (const FInterval& Window : Forbidden)
-			{
-				if (Window.Lo > From + 1e-3)
+				else
 				{
-					Windows.Add({From, Window.Lo});
+					Out.Add({Booking.bLocked ? -ATSearchNever : Booking.Enter - H - OnJoint, bOpen ? ATSearchNever : Booking.Clear + H + Before, &Booking, EWay::Switch});
 				}
-				From = FMath::Max(From, Window.Hi);
 			}
-			if (From < ATSearchNever)
+		}
+
+		// The windows of entry times outside CollectForbidden's.
+		const TArray<FInterval>& WindowsOf(int32 From, int32 Node)
+		{
+			const uint64 Key = (static_cast<uint64>(static_cast<uint32>(From)) << 32) | static_cast<uint32>(Node);
+			if (const TArray<FInterval>* Known = Cache.Find(Key))
 			{
-				Windows.Add({From, ATSearchNever});
+				return *Known;
+			}
+			TArray<FForbidden> Forbidden;
+			CollectForbidden(From, Node, Forbidden);
+			Forbidden.Sort([](const FForbidden& A, const FForbidden& B) { return A.Lo < B.Lo; });
+			TArray<FInterval>& Windows = Cache.Add(Key);
+			double Lo = -ATSearchNever;
+			for (const FForbidden& Block : Forbidden)
+			{
+				if (Block.Lo > Lo + 1e-3)
+				{
+					Windows.Add({Lo, Block.Lo});
+				}
+				Lo = FMath::Max(Lo, Block.Hi);
+			}
+			if (Lo < ATSearchNever)
+			{
+				Windows.Add({Lo, ATSearchNever});
 			}
 			return Windows;
 		}
 
 		// Latest the front may move off from the end of the state's track: every track still under the body, and every
-		// switch whose fouling zone it still reaches, must be left by the end of the window it was entered in.
-		double LatestDeparture(int32 StateIndex) const
+		// switch whose fouling zone it still reaches, must be left by the end of the window it was entered in, and what
+		// the body holds at the start before another train is booked onto it. OutLimit becomes the state whose window
+		// sets it, or -1 for a hold with OutHold its index.
+		double LatestDeparture(int32 StateIndex, int32* OutLimit = nullptr, int32* OutHold = nullptr) const
 		{
 			const double Speed = Request.Cruise;
 			double Latest = ATSearchNever;
+			auto Limit = [&](double Time, int32 State, int32 Hold)
+			{
+				if (Time < Latest)
+				{
+					Latest = Time;
+					if (OutLimit)
+					{
+						*OutLimit = State;
+					}
+					if (OutHold)
+					{
+						*OutHold = Hold;
+					}
+				}
+			};
+			const float Along = States[StateIndex].Along;
+			for (int32 Hold = 0; Hold < Request.Holds.Num(); ++Hold)
+			{
+				if (Request.Holds[Hold].Reach > Along)
+				{
+					Limit(Request.Holds[Hold].Latest + Along / Speed, -1, Hold);
+				}
+			}
 			float Behind = 0.f;
 			for (int32 Index = StateIndex; Index != INDEX_NONE && States[Index].Parent != INDEX_NONE; Index = States[Index].Parent)
 			{
@@ -146,7 +205,7 @@ namespace
 					const float TrackLeft = Request.Length - Behind;
 					if (TrackLeft > 0.f)
 					{
-						Latest = FMath::Min(Latest, State.Hi + (Length + Request.Length) / Speed - TrackLeft / Speed);
+						Limit(State.Hi + (Length + Request.Length) / Speed - TrackLeft / Speed, Index, INDEX_NONE);
 					}
 					const int32 Entry = Graph.OppositeOf[State.Node];
 					const int32 Joint = Entry != INDEX_NONE ? Graph.JointOf[Entry] : INDEX_NONE;
@@ -156,7 +215,7 @@ namespace
 						const float JointLeft = Request.Length + Foul - Behind - Length;
 						if (JointLeft > 0.f)
 						{
-							Latest = FMath::Min(Latest, State.Hi + (Request.Length + Foul) / Speed - JointLeft / Speed);
+							Limit(State.Hi + (Request.Length + Foul) / Speed - JointLeft / Speed, Index, INDEX_NONE);
 						}
 					}
 				}
@@ -194,7 +253,7 @@ namespace
 			const double Reached = States[StateIndex].Arrive;
 			const double Latest = LatestDeparture(StateIndex);
 			const double Drive = Graph.Length[Track] / Request.Cruise;
-			const TArray<FInterval>& Windows = WindowsOf(Node);
+			const TArray<FInterval>& Windows = WindowsOf(States[StateIndex].Node, Node);
 			for (int32 Window = 0; Window < Windows.Num(); ++Window)
 			{
 				const FInterval& Free = Windows[Window];
@@ -202,20 +261,22 @@ namespace
 				{
 					continue;
 				}
-				if (Free.Lo > Latest)
+				const double EnterAt = FMath::Max(Free.Lo, Reached);
+				if (EnterAt > Latest)
 				{
 					break;
 				}
-				const double EnterAt = FMath::Max(Free.Lo, Reached);
 				// A wait costs, up to a full stop, the time lost braking and picking up speed again.
 				const double Wait = EnterAt - Reached;
 				FState Next;
 				Next.Node = Node;
 				Next.Window = Window;
 				Next.Parent = StateIndex;
+				Next.Step = States[StateIndex].Step + 1;
 				Next.Enter = EnterAt;
 				Next.Hi = Free.Hi;
 				Next.Arrive = EnterAt + Drive + FMath::Min(Wait, static_cast<double>(Request.StopLoss));
+				Next.Along = States[StateIndex].Along + Graph.Length[Track];
 				OutStates.Add(States.Add(Next));
 				ReachedTracks.Add(Track);
 			}
@@ -233,41 +294,164 @@ namespace
 			return Path;
 		}
 
+		// Returns true if the front, at From's track end, may go on through Node's track.
+		bool CanPass(int32 From, int32 Node) const
+		{
+			const int32 Entry = Graph.OppositeOf.IsValidIndex(Node) ? Graph.OppositeOf[Node] : INDEX_NONE;
+			return !Graph.OneWay[From] && Graph.Attached[From].Contains(Entry);
+		}
+
+		// Earliest arrival at Goal's track end, along Route only if given (then at its last step); returns the state, or
+		// INDEX_NONE. OutFurthest becomes the state furthest along Route that the search reached.
+		int32 Find(int32 Goal, const TArray<int32>* Route, int32* OutFurthest = nullptr)
+		{
+			Reset();
+			TMap<uint64, double> Best;
+			TArray<FOpen> Open;
+			Open.HeapPush({Request.StartTime, 0});
+			TArray<int32> Next;
+			int32 Furthest = 0;
+			while (Open.Num() > 0)
+			{
+				FOpen Item;
+				Open.HeapPop(Item);
+				const FState State = States[Item.State];
+				const uint64 Key = (static_cast<uint64>(State.Node) << 32) | static_cast<uint32>(State.Window);
+				const double* Known = Item.State != 0 ? Best.Find(Key) : nullptr;
+				if (Known && *Known < State.Arrive)
+				{
+					continue;
+				}
+				if (Route)
+				{
+					if (State.Step > States[Furthest].Step)
+					{
+						Furthest = Item.State;
+					}
+					if (State.Step == Route->Num() - 1)
+					{
+						if (OutFurthest)
+						{
+							*OutFurthest = Item.State;
+						}
+						return Item.State;
+					}
+				}
+				else if (State.Node == Goal && Item.State != 0)
+				{
+					return Item.State;
+				}
+				TArray<int32, TInlineAllocator<4>> Nodes;
+				if (Route)
+				{
+					const int32 NextNode = (*Route)[State.Step + 1];
+					if (CanPass(State.Node, NextNode))
+					{
+						Nodes.Add(NextNode);
+					}
+				}
+				else if (!Graph.OneWay[State.Node])
+				{
+					for (const int32 Entry : Graph.Attached[State.Node])
+					{
+						Nodes.Add(Graph.OppositeOf.IsValidIndex(Entry) ? Graph.OppositeOf[Entry] : INDEX_NONE);
+					}
+				}
+				for (const int32 Node : Nodes)
+				{
+					Next.Reset();
+					Enter(Item.State, Node, Next);
+					for (const int32 Candidate : Next)
+					{
+						const FState& Reached = States[Candidate];
+						const uint64 NextKey = (static_cast<uint64>(Reached.Node) << 32) | static_cast<uint32>(Reached.Window);
+						double& Stored = Best.FindOrAdd(NextKey, ATSearchNever);
+						if (Reached.Arrive < Stored)
+						{
+							Stored = Reached.Arrive;
+							Open.HeapPush({Reached.Arrive, Candidate});
+						}
+					}
+				}
+			}
+			if (OutFurthest)
+			{
+				*OutFurthest = Furthest;
+			}
+			return INDEX_NONE;
+		}
+
+		// Why Route can't be driven on from the state furthest along it.
+		FATSearchBlock DescribeBlock(const TArray<int32>& Route, int32 Furthest)
+		{
+			FATSearchBlock Block;
+			const FState& At = States[Furthest];
+			Block.Step = At.Step + 1;
+			if (!Route.IsValidIndex(Block.Step))
+			{
+				return Block;
+			}
+			const int32 Node = Route[Block.Step];
+			if (!CanPass(At.Node, Node))
+			{
+				Block.Way = Graph.OneWay[At.Node] ? EWay::Signal : EWay::NotAttached;
+				return Block;
+			}
+			Block.Reached = At.Arrive;
+			int32 LimitState = INDEX_NONE;
+			int32 Hold = INDEX_NONE;
+			Block.Latest = LatestDeparture(Furthest, &LimitState, &Hold);
+			if (LimitState == -1 && Request.Holds.IsValidIndex(Hold))
+			{
+				Block.LimitStep = -1;
+				Block.LimitOwner = Request.Holds[Hold].Owner;
+			}
+			else if (States.IsValidIndex(LimitState))
+			{
+				Block.LimitStep = States[LimitState].Step;
+				// The booking whose blocked time starts where that state's window ends.
+				TArray<FForbidden> Closing;
+				CollectForbidden(States[States[LimitState].Parent].Node, States[LimitState].Node, Closing);
+				for (const FForbidden& Forbidden : Closing)
+				{
+					if (FMath::IsNearlyEqual(Forbidden.Lo, States[LimitState].Hi, 1e-3))
+					{
+						Block.LimitOwner = Forbidden.Booking->Owner;
+					}
+				}
+			}
+			// The booking that keeps the step closed the longest from the arrival on.
+			TArray<FForbidden> Forbidden;
+			CollectForbidden(At.Node, Node, Forbidden);
+			double Covered = -ATSearchNever;
+			for (const FForbidden& Candidate : Forbidden)
+			{
+				if (Candidate.Lo <= Block.Reached && Candidate.Hi > Block.Reached && Candidate.Hi > Covered)
+				{
+					Covered = Candidate.Hi;
+					Block.Owner = Candidate.Booking->Owner;
+					Block.Way = Candidate.Way;
+					Block.bLocked = Candidate.Booking->bLocked;
+				}
+			}
+			Block.Opens = Block.Reached;
+			for (const FInterval& Window : WindowsOf(At.Node, Node))
+			{
+				if (Window.Hi >= Block.Reached)
+				{
+					Block.Opens = FMath::Max(Window.Lo, Block.Reached);
+					break;
+				}
+			}
+			return Block;
+		}
+
 		const FATSearchRequest& Request;
 		const FATSearchGraph& Graph;
 		TArray<FState> States;
-		TMap<int32, TArray<FInterval>> Cache;
+		TMap<uint64, TArray<FInterval>> Cache;
 		TSet<int32> ReachedTracks;
 	};
-
-	// When the front reaches the end of Route's last track going this way, taking the first window it can at each track.
-	double TimeRoute(FSearch& Search, const TArray<int32>& Route)
-	{
-		Search.Reset();
-		int32 At = 0;
-		TArray<int32> Next;
-		for (const int32 Node : Route)
-		{
-			const int32 From = Search.States[At].Node;
-			const int32 Entry = Search.Graph.OppositeOf.IsValidIndex(Node) ? Search.Graph.OppositeOf[Node] : INDEX_NONE;
-			if (Search.Graph.OneWay[From] || !Search.Graph.Attached[From].Contains(Entry))
-			{
-				return ATSearchNever;
-			}
-			Next.Reset();
-			Search.Enter(At, Node, Next);
-			if (Next.Num() == 0)
-			{
-				return ATSearchNever;
-			}
-			At = Next[0];
-			for (const int32 Candidate : Next)
-			{
-				At = Search.States[Candidate].Arrive < Search.States[At].Arrive ? Candidate : At;
-			}
-		}
-		return Search.States[At].Arrive;
-	}
 }
 
 void ATRouteSearch::Launch(const TSharedRef<FATSearchTask, ESPMode::ThreadSafe>& Task)
@@ -292,51 +476,20 @@ void ATRouteSearch::Run(FATSearchTask& Task)
 		return;
 	}
 	FSearch Search(Request);
-	Result.CurrentArrival = TimeRoute(Search, Request.Current);
-
-	Search.Reset();
-	TMap<uint64, double> Best;
-	TArray<FOpen> Open;
-	Open.HeapPush({Request.StartTime, 0});
-	TArray<int32> Next;
-	int32 Found = INDEX_NONE;
-	while (Open.Num() > 0)
+	if (Request.Current.Num() > 0)
 	{
-		FOpen Item;
-		Open.HeapPop(Item);
-		const FState State = Search.States[Item.State];
-		const uint64 Key = (static_cast<uint64>(State.Node) << 32) | static_cast<uint32>(State.Window);
-		const double* Known = Item.State != 0 ? Best.Find(Key) : nullptr;
-		if (Known && *Known < State.Arrive)
+		int32 Furthest = 0;
+		const int32 Reached = Search.Find(INDEX_NONE, &Request.Current, &Furthest);
+		if (Reached != INDEX_NONE)
 		{
-			continue;
+			Result.CurrentArrival = Search.States[Reached].Arrive;
 		}
-		if (State.Node == Request.Goal && Item.State != 0)
+		else
 		{
-			Found = Item.State;
-			break;
-		}
-		if (Graph->OneWay[State.Node])
-		{
-			continue;
-		}
-		for (const int32 Entry : Graph->Attached[State.Node])
-		{
-			Next.Reset();
-			Search.Enter(Item.State, Graph->OppositeOf.IsValidIndex(Entry) ? Graph->OppositeOf[Entry] : INDEX_NONE, Next);
-			for (const int32 Candidate : Next)
-			{
-				const FState& Reached = Search.States[Candidate];
-				const uint64 NextKey = (static_cast<uint64>(Reached.Node) << 32) | static_cast<uint32>(Reached.Window);
-				double& Stored = Best.FindOrAdd(NextKey, ATSearchNever);
-				if (Reached.Arrive < Stored)
-				{
-					Stored = Reached.Arrive;
-					Open.HeapPush({Reached.Arrive, Candidate});
-				}
-			}
+			Result.CurrentBlock = Search.DescribeBlock(Request.Current, Furthest);
 		}
 	}
+	const int32 Found = Search.Find(Request.Goal, nullptr);
 	Result.States = Search.States.Num();
 	if (Found != INDEX_NONE)
 	{

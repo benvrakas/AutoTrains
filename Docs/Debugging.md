@@ -472,3 +472,15 @@ train, then a row per train every 0.2 s:
   committed bookings (`MarkCommitted`, respected under every scope). Ghosting trains no longer log CHECK FAILED or
   "can't stop short". Not yet explained: 19:34 four-train cycle of plan waits (Coated Plates RSC Train, Coated Plates
   RSC B, ACU GTHR A, Steel Pipe Xtra Steel), "no plan after 32 waits" repeats for Reinforced Plates and Rubber SNK.
+- 1.3.0 test build (0abd703), 2026-10-28 01:19-01:36 local: searches took 0.3-2 ms on a worker (265-2232 states), but
+  most reroutes said `no way` for the current route and were applied, up to 61 -> 128 tracks. Causes in the search
+  model: the current route was timed greedily (first window at each track, a dead end where a later window with a
+  later end would have worked); same-way trains through a switch counted as crossing; trains behind on one line
+  (`IsBehind`) were counted and trains ahead on the route didn't go first, unlike `FindConflict`; and the start had
+  no body deadline, so a waiting train could be sent onto a route that kept it standing where another train needed
+  to pass. 01:21:21 Heavy Oil Residue [Coke Steel], waiting at the end of 2147206932 with a plan, was rerouted that
+  way into Heavy Oil Residue (120) [Gunpowder]: deadlock, ghosted after 60 s. Fixed: the current route is searched
+  like any other (restricted to its steps), joints get the same-way rule (`Exit`/`Via`), bookings are filtered as in
+  `FindConflict`, `Request.Holds` limits the wait at the start (any rank; their `Enter - H - reach / cruise`), a
+  train whose plan has a finite arrival keeps its route when the search finds none (`keeps its route` line, once
+  per place/train), and `no way` lines say where and why (`FATSearchBlock`).

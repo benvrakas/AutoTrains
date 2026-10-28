@@ -132,6 +132,8 @@ struct FATTrafficTrain
 	float RerouteCooldown = 0.f;
 	// Its route search running on a worker thread, if any.
 	TSharedPtr<FATSearchTask, ESPMode::ThreadSafe> Search;
+	// Where and for whom the last search found no way along its route while its plan had one, so it's logged once.
+	FString SearchNote;
 	// Last track the train may drive to the end of; null means no limit beyond its route.
 	TWeakObjectPtr<AFGBuildableRailroadTrack> AuthorityTrack;
 	// ATC path and path segment of the authority track.

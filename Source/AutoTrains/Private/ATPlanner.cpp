@@ -1439,8 +1439,19 @@ void AATTrafficSubsystem::ConsiderPlannedReroute(FATTrafficTrain& State, double 
 	Request.Cruise = Speed.Cruise;
 	Request.StopLoss = Speed.StopLoss;
 	Request.Headway = GetSafetyMarginSeconds();
-	// The bookings its plan keeps clear of.
 	const AFGTrain* Self = Train;
+	TMap<const AFGTrain*, int32> OwnerIndex;
+	auto OwnerOf = [&](const AFGTrain* Booker)
+	{
+		if (const int32* Known = OwnerIndex.Find(Booker))
+		{
+			return *Known;
+		}
+		FATTrafficTrain* const* Other = mStateOf.Find(Booker);
+		return OwnerIndex.Add(Booker, Request.Owners.Add(Other ? NameOf((*Other)->Train.Get()) : FString(TEXT("a train not driven"))));
+	};
+	// The bookings its plan keeps clear of, as FindConflict sees them: trains behind it along one line come after it,
+	// and nobody goes ahead of a train in front of it on its route.
 	for (const TPair<FResourceKey, TArray<FBooking>>& Pair : mBookings)
 	{
 		const int32* TrackIndex = Pair.Key.Track ? Graph.TrackIndex.Find(Pair.Key.Track) : nullptr;
@@ -1451,7 +1462,23 @@ void AATTrafficSubsystem::ConsiderPlannedReroute(FATTrafficTrain& State, double 
 		TArray<FATSearchBooking>* Into = nullptr;
 		for (const FBooking& Booking : Pair.Value)
 		{
-			if (Booking.Owner == Self || !IsInScope(State, Booking, Booking.bLocked, EConflictScope::Ranked))
+			if (Booking.Owner == Self)
+			{
+				continue;
+			}
+			bool bFirst = Booking.bLocked;
+			if (FATTrafficTrain* const* Other = mStateOf.Find(Booking.Owner))
+			{
+				if (FrontIndexOn(State, **Other) != INDEX_NONE)
+				{
+					bFirst = true;
+				}
+				else if (IsBehind(**Other, State, Pair.Key))
+				{
+					continue;
+				}
+			}
+			if (!IsInScope(State, Booking, bFirst, EConflictScope::Ranked))
 			{
 				continue;
 			}
@@ -1462,9 +1489,61 @@ void AATTrafficSubsystem::ConsiderPlannedReroute(FATTrafficTrain& State, double 
 			FATSearchBooking& Copy = Into->AddDefaulted_GetRef();
 			Copy.Enter = Booking.Enter;
 			Copy.Clear = IsOpen(Booking.Clear) ? ATSearchNever : Booking.Clear;
-			Copy.bLocked = Booking.bLocked;
+			Copy.bLocked = bFirst;
 			const int32* Exit = Booking.Exit ? Graph.ConnectionIndex.Find(Booking.Exit) : nullptr;
 			Copy.Exit = Exit ? *Exit : INDEX_NONE;
+			const int32* Via = Booking.Via ? Graph.ConnectionIndex.Find(Booking.Via) : nullptr;
+			Copy.Via = Via ? *Via : INDEX_NONE;
+			Copy.Owner = OwnerOf(Booking.Owner);
+		}
+	}
+	// What its body holds with the front at the start and others are booked onto later, whatever their rank: a new
+	// route may not keep it standing there past their arrival.
+	const float StartAt = State.Route[Commit].EndDistance - State.FrontAhead;
+	TArray<FPass> Passes;
+	CollectPasses(State, Passes);
+	for (const FPass& Pass : Passes)
+	{
+		if (Pass.RouteIndex > Commit || Pass.EnterAt > StartAt || Pass.ClearAt <= StartAt)
+		{
+			continue;
+		}
+		TArray<FResourceKey, TInlineAllocator<4>> Keys;
+		if (Pass.Key.Joint != INDEX_NONE)
+		{
+			Keys.Add(Pass.Key);
+		}
+		else
+		{
+			for (const AFGBuildableRailroadTrack* Conflict : GetConflicts(Pass.Key.Track))
+			{
+				FResourceKey Crossing;
+				Crossing.Track = Conflict;
+				Keys.Add(Crossing);
+			}
+		}
+		const float Reach = Pass.ClearAt - StartAt;
+		for (const FResourceKey& Key : Keys)
+		{
+			const TArray<FBooking>* Bookings = mBookings.Find(Key);
+			if (!Bookings)
+			{
+				continue;
+			}
+			for (const FBooking& Booking : *Bookings)
+			{
+				if (Booking.Owner == Self || Booking.Enter <= Now || IsOpen(Booking.Enter)
+					|| (Key == Pass.Key && Pass.Exit && Booking.Exit == Pass.Exit && Booking.Via == Pass.Via))
+				{
+					continue;
+				}
+				FATTrafficTrain* const* Other = mStateOf.Find(Booking.Owner);
+				if (Other && IsBehind(**Other, State, Key))
+				{
+					continue;
+				}
+				Request.Holds.Add({Booking.Enter - Request.Headway - Reach / Speed.Cruise, Reach, OwnerOf(Booking.Owner)});
+			}
 		}
 	}
 	State.Search = Task;
@@ -1505,6 +1584,50 @@ void AATTrafficSubsystem::FinishRouteSearch(FATTrafficTrain& State, const FATSea
 	{
 		return;
 	}
+	// Why the search found no way along the current route, for the log; times from the start.
+	FString NoWay;
+	if (CurrentSeconds >= ATSearchNever)
+	{
+		const FATSearchBlock& Block = Result.CurrentBlock;
+		auto OwnerName = [&](int32 Index) { return Request.Owners.IsValidIndex(Index) ? Request.Owners[Index] : FString(TEXT("nobody")); };
+		auto Step = [&](int32 Index)
+		{
+			const UFGRailroadTrackConnectionComponent* Connection = Request.Current.IsValidIndex(Index) ? Graph.Connections[Request.Current[Index]].Get() : nullptr;
+			return Connection ? ResourceName(Connection->GetTrack(), INDEX_NONE) : FString(TEXT("?"));
+		};
+		auto After = [&](double Time) { return Time >= ATSearchNever ? FString(TEXT("an unknown time")) : FString::Printf(TEXT("+%.0f s"), Time - Request.StartTime); };
+		FString Reason;
+		if (Block.Way == FATSearchBlock::EWay::Signal)
+		{
+			Reason = TEXT("a signal there faces the other way");
+		}
+		else if (Block.Way == FATSearchBlock::EWay::NotAttached)
+		{
+			Reason = TEXT("it isn't connected to the track before");
+		}
+		else
+		{
+			const TCHAR* Way = Block.Way == FATSearchBlock::EWay::SameWay ? TEXT("the same way") : Block.Way == FATSearchBlock::EWay::Switch ? TEXT("the switch") : TEXT("crossing");
+			const FString Limit = Block.LimitStep == -1 ? FString::Printf(TEXT("%s is due on what it stands on at the start"), *OwnerName(Block.LimitOwner))
+				: Block.LimitStep != INDEX_NONE ? FString::Printf(TEXT("%s is due on %s"), *OwnerName(Block.LimitOwner), *Step(Block.LimitStep)) : FString(TEXT("no limit"));
+			Reason = FString::Printf(TEXT("the front gets there at %s and has to move off by %s (%s), but %s keeps it closed (%s%s) until %s"),
+				*After(Block.Reached), *After(Block.Latest), *Limit, *OwnerName(Block.Owner), Way, Block.bLocked ? TEXT(", goes first") : TEXT(""), *After(Block.Opens));
+		}
+		NoWay = FString::Printf(TEXT("at %s (%d of %d tracks): %s"), *Step(Block.Step), Block.Step + 1, Request.Current.Num(), *Reason);
+		// The search's model is coarser than the plan's: a route the plan can drive is kept.
+		if (State.PlanFailure.IsEmpty() && State.PlanArrival >= 0.0 && !IsOpen(State.PlanArrival))
+		{
+			const FString Note = Step(Block.Step) + TEXT("|") + OwnerName(Block.Owner) + TEXT("|") + OwnerName(Block.LimitOwner);
+			if (Note != State.SearchNote)
+			{
+				State.SearchNote = Note;
+				UE_LOG(LogAutoTrains, Log, TEXT("planner: %s keeps its route: the search finds no way along it %s; its plan reaches the goal track at +%.0f s"),
+					*NameOf(Train), *NoWay, State.PlanArrival - Request.StartTime);
+			}
+			return;
+		}
+	}
+	State.SearchNote.Reset();
 	TArray<UFGRailroadTrackConnectionComponent*> Connections;
 	for (int32 Index = 0; Index <= Commit; ++Index)
 	{
@@ -1526,9 +1649,10 @@ void AATTrafficSubsystem::FinishRouteSearch(FATTrafficTrain& State, const FATSea
 	++mPlanReroutes;
 	State.RerouteCooldown = mSettings.RerouteHoldSeconds;
 	State.SearchedArrival = -1.0;
-	UE_LOG(LogAutoTrains, Log, TEXT("planner: %s rerouted after %s: %s -> %.0f s to its goal through the bookings, %d -> %d tracks, applied %s (%d states, %.2f ms on a worker)"),
+	UE_LOG(LogAutoTrains, Log, TEXT("planner: %s rerouted after %s: %s -> %.0f s to its goal through the bookings, %d -> %d tracks, applied %s (%d states, %.2f ms on a worker)%s%s"),
 		*NameOf(Train), *ResourceName(State.Route[Commit].Track, INDEX_NONE), CurrentSeconds >= ATSearchNever ? TEXT("no way") : *FString::Printf(TEXT("%.0f"), CurrentSeconds),
-		NewSeconds, Request.Current.Num(), Result.Route.Num(), bApplied ? TEXT("yes") : TEXT("NO"), Result.States, Result.Milliseconds);
+		NewSeconds, Request.Current.Num(), Result.Route.Num(), bApplied ? TEXT("yes") : TEXT("NO"), Result.States, Result.Milliseconds,
+		NoWay.IsEmpty() ? TEXT("") : TEXT("; no way along the old route "), *NoWay);
 	if (!bApplied)
 	{
 		return;

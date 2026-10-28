@@ -32,13 +32,25 @@ struct FATSearchGraph
 };
 
 // Another train's booking as a search sees it: when it holds the resource (world seconds), the connection it leaves a
-// track through (INDEX_NONE for a joint or unknown), and whether nobody may go ahead of it.
+// track through and, at a joint, the one it comes from (INDEX_NONE if unknown), whose it is (an index into the
+// request's Owners) and whether nobody may go ahead of it.
 struct FATSearchBooking
 {
 	double Enter = 0.0;
 	double Clear = 0.0;
 	int32 Exit = INDEX_NONE;
+	int32 Via = INDEX_NONE;
+	int32 Owner = INDEX_NONE;
 	bool bLocked = false;
+};
+
+// Something under the train's body when its front stands at the start that another train is booked onto later: the
+// latest the front may move off from the start, and how much further it has to go to leave it. [world s] [cm]
+struct FATSearchHold
+{
+	double Latest = 0.0;
+	float Reach = 0.f;
+	int32 Owner = INDEX_NONE;
 };
 
 // Everything one search needs, copied on the game thread.
@@ -56,9 +68,38 @@ struct FATSearchRequest
 	float Cruise = 500.f;
 	float StopLoss = 0.f;
 	double Headway = 0.0;
-	// Bookings the train has to keep clear of, by track and by joint.
+	// Bookings the train has to keep clear of, by track and by joint, and what its body holds at the start.
 	TMap<int32, TArray<FATSearchBooking>> TrackBookings;
 	TMap<int32, TArray<FATSearchBooking>> JointBookings;
+	TArray<FATSearchHold> Holds;
+	// The names of the bookings' owners, for the log.
+	TArray<FString> Owners;
+};
+
+// Why the current route can't be driven: the step of Current the front gets no further than the start of, when it gets
+// there and the latest it may move off (both ATSearchNever if it never got there), the step whose window or the hold
+// that sets that latest time (INDEX_NONE: none; -1 with LimitOwner set: a hold), and the booking keeping the step from
+// being entered then: when it lets the front in, whose it is and how it meets the train.
+struct FATSearchBlock
+{
+	enum class EWay : uint8
+	{
+		None,
+		SameWay,
+		Crossing,
+		Switch,
+		Signal,
+		NotAttached,
+	};
+	int32 Step = INDEX_NONE;
+	double Reached = 0.0;
+	double Latest = 0.0;
+	int32 LimitStep = INDEX_NONE;
+	int32 LimitOwner = INDEX_NONE;
+	double Opens = 0.0;
+	int32 Owner = INDEX_NONE;
+	EWay Way = EWay::None;
+	bool bLocked = false;
 };
 
 struct FATSearchResult
@@ -68,6 +109,7 @@ struct FATSearchResult
 	TArray<int32> Route;
 	double Arrival = 0.0;
 	double CurrentArrival = 0.0;
+	FATSearchBlock CurrentBlock;
 	int32 States = 0;
 	double Milliseconds = 0.0;
 };
@@ -86,7 +128,8 @@ namespace ATRouteSearch
 {
 	// Safe-interval search over the whole network for a train of the request's length: a state is a track end the front
 	// reaches and a window of entry times in which the next track is free of every booking for as long as the train
-	// takes to pass it; the train may wait at a track end only as long as every track under its body stays free. Runs
+	// takes to pass it; the train may wait at a track end, or at the start, only as long as everything under its body stays
+// free. Runs
 	// the task on a worker thread and sets bDone when finished.
 	void Launch(const TSharedRef<FATSearchTask, ESPMode::ThreadSafe>& Task);
 

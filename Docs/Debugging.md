@@ -565,3 +565,9 @@ train, then a row per train every 0.2 s:
   move, interpolated over track-end heights (FATSippGraph::ZOf) and the cars at the start. Log: "<train> speeds up at
   X m/s2 at A-B km/h (t, slope %)" per first sample in a band. Not handled: a docked train leaving with a locomotive
   at the other end starts its plan with the body's slope reversed for its first train length.
+- 1.3.2 test (19:04-19:46 local, 19 trains): a jam from 1 min after load to the end (40 min, ~2000 plan waits a
+  minute): Circuit Board Gather Train and Coated Plates RSC B each stood where the other's way led; both plans failed
+  "no way to its goal" (tail windows missed) without naming a train, so they waited for "?" - invisible to the
+  deadlock detector (no edge), never waiting by WaitingSeconds (needs BlockedBy), never moved up (needs BlockedBy) -
+  and eleven trains queued behind them. FGap now records the booking that sets ClearHi (HiBy, bHiByRank) and ClearLo
+  (LoBy); a tail window missed or a goal stay that doesn't fit notes that train, so failures name who is in the way.

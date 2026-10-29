@@ -142,11 +142,15 @@ namespace
 	};
 
 	// What entering a resource at a time commits the train to: its tail clears it no earlier than ClearLo (a train
-	// ahead the same way) and no later than ClearHi (the next booking); Key tells the windows apart.
+	// ahead the same way, LoBy) and no later than ClearHi (the next booking, HiBy's, counting only because its train
+	// plans first if bHiByRank); Key tells the windows apart.
 	struct FGap
 	{
 		double ClearLo = -ATSippNever;
 		double ClearHi = ATSippNever;
+		int32 LoBy = INDEX_NONE;
+		int32 HiBy = INDEX_NONE;
+		bool bHiByRank = false;
 		uint32 Key = 0;
 	};
 
@@ -155,8 +159,7 @@ namespace
 	{
 		int32 Resource = INDEX_NONE;
 		float ClearAt = 0.f;
-		double ClearLo = -ATSippNever;
-		double ClearHi = ATSippNever;
+		FGap Gap;
 	};
 
 	// The front at Pos [cm from where it is now] at Arrive with Speed, at the end of route step Step's track (Node, the
@@ -398,24 +401,39 @@ namespace
 						continue;
 					}
 					const bool bOpen = IsNever(Booking.Clear);
+					const bool bByRank = !bFirst && Booking.Kind == EATSippKind::Moving && !Booking.bHeld && !Booking.bCommitted;
+					auto LowerHi = [&](double Hi)
+					{
+						if (Hi < Out.ClearHi)
+						{
+							Out.ClearHi = Hi;
+							Out.HiBy = Booking.Owner;
+							Out.bHiByRank = bByRank;
+						}
+					};
 					if (Checked == Resource && Exit != INDEX_NONE && Booking.Exit == Exit && Booking.Via == Via)
 					{
 						// The same way: behind it, or ahead of it at both ends unless it goes first.
 						if (Enter >= Booking.Enter + Headway)
 						{
 							After = FMath::Max(After, Booking.Enter + Headway);
-							Out.ClearLo = FMath::Max(Out.ClearLo, bOpen ? ATSippNever : Booking.Clear + Headway);
+							const double Lo = bOpen ? ATSippNever : Booking.Clear + Headway;
+							if (Lo > Out.ClearLo)
+							{
+								Out.ClearLo = Lo;
+								Out.LoBy = Booking.Owner;
+							}
 						}
 						else if (!bFirst && Enter <= Booking.Enter - Headway)
 						{
-							Out.ClearHi = FMath::Min(Out.ClearHi, bOpen ? ATSippNever : Booking.Clear - Headway);
+							LowerHi(bOpen ? ATSippNever : Booking.Clear - Headway);
 						}
 						else
 						{
 							bClash = true;
 							OutRetry = FMath::Max(OutRetry, Booking.Enter + Headway);
 							OutBy = Booking.Owner;
-							bOutByRank = !bFirst && Booking.Kind == EATSippKind::Moving && !Booking.bHeld && !Booking.bCommitted;
+							bOutByRank = bByRank;
 						}
 						continue;
 					}
@@ -427,14 +445,14 @@ namespace
 					}
 					else if (Enter < Lo)
 					{
-						Out.ClearHi = FMath::Min(Out.ClearHi, Lo);
+						LowerHi(Lo);
 					}
 					else
 					{
 						bClash = true;
 						OutRetry = FMath::Max(OutRetry, Hi);
 						OutBy = Booking.Owner;
-						bOutByRank = !bFirst && Booking.Kind == EATSippKind::Moving && !Booking.bHeld && !Booking.bCommitted;
+						bOutByRank = bByRank;
 					}
 				}
 			});
@@ -499,15 +517,20 @@ namespace
 			return false;
 		}
 
-		// At the goal: everything under the body stays free through the stay and while it pulls out.
-		bool StayFits(int32 Index) const
+		// At the goal: everything under the body stays free through the stay and while it pulls out; else the booking in
+		// the way is noted.
+		bool StayFits(int32 Index)
 		{
-			const FState& State = States[Index];
+			const FState State = States[Index];
 			bool bFits = true;
 			ForEachOpen(Index, State.Pos, [&](const FOpenResource& Open)
 			{
 				const double Clear = IsNever(Train.GoalDwell) ? ATSippNever : State.Arrive + Train.GoalDwell + RestTime(Open.ClearAt - State.Pos, Top, Accel);
-				bFits = bFits && Clear <= Open.ClearHi && Clear >= Open.ClearLo;
+				if (bFits && Clear > Open.Gap.ClearHi)
+				{
+					NoteBlock(Index, Open.Gap.HiBy, Open.Resource, Open.Gap.bHiByRank);
+				}
+				bFits = bFits && Clear <= Open.Gap.ClearHi && Clear >= Open.Gap.ClearLo;
 			});
 			return bFits;
 		}
@@ -759,32 +782,29 @@ namespace
 				}
 				if (bFits)
 				{
-					// Tails clearing on this move keep to their windows; ones clearing later still can.
+					// Tails clearing on this move keep to their windows; ones clearing later still can. The booking in the way
+					// is noted.
 					bool bHopeless = false;
 					auto Check = [&](const FOpenResource& Open)
 					{
-						if (Open.ClearAt <= To)
-						{
-							const double Clear = Leave + Edge.TimeTo(Open.ClearAt - State.Pos);
-							if (Clear > Open.ClearHi)
-							{
-								bHopeless = true;
-							}
-							else if (Clear < Open.ClearLo)
-							{
-								bFits = false;
-								Later = FMath::Max(Later, Leave + (Open.ClearLo - Clear) + 1e-3);
-							}
-						}
-						else if (Leave + Edge.TimeTo(Distance) + (Open.ClearAt - To) / Top > Open.ClearHi)
+						const double Clear = Open.ClearAt <= To ? Leave + Edge.TimeTo(Open.ClearAt - State.Pos) : Leave + Edge.TimeTo(Distance) + (Open.ClearAt - To) / Top;
+						if (Clear > Open.Gap.ClearHi)
 						{
 							bHopeless = true;
+							NoteBlock(Index, Open.Gap.HiBy, Open.Resource, Open.Gap.bHiByRank);
+						}
+						else if (Open.ClearAt <= To && Clear < Open.Gap.ClearLo)
+						{
+							bFits = false;
+							Later = FMath::Max(Later, Leave + (Open.Gap.ClearLo - Clear) + 1e-3);
+							Cause = Open.Gap.LoBy;
+							NoteBlock(Index, Open.Gap.LoBy, Open.Resource, false);
 						}
 					};
 					ForEachOpen(Index, State.Pos, Check);
 					for (int32 New = 0; New < News.Num(); ++New)
 					{
-						Check({News[New].Resource, News[New].ClearAt, Gaps[New].ClearLo, Gaps[New].ClearHi});
+						Check({News[New].Resource, News[New].ClearAt, Gaps[New]});
 					}
 					if (bHopeless)
 					{
@@ -822,7 +842,7 @@ namespace
 				double EndEnter = 0.0;
 				for (int32 New = 0; New < News.Num(); ++New)
 				{
-					Opens.Add({News[New].Resource, News[New].ClearAt, Gaps[New].ClearLo, Gaps[New].ClearHi});
+					Opens.Add({News[New].Resource, News[New].ClearAt, Gaps[New]});
 					Key = HashCombine(Key, Gaps[New].Key);
 					if (Gaps[New].ClearHi < Ends)
 					{

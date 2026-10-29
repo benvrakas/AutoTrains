@@ -67,6 +67,16 @@ Player driven trains aren't controlled; the others treat them as obstacles.
 - **Station stay estimate (seconds)** (40): assumed stay at a fully load or unload stop until one there has been measured.
 - **Update interval (seconds)** (0.25): how often trains are planned and given track.
 - **Clear deadlocks by passing through (beta)** (on) and **Pass through a deadlock after (seconds)** (60): see above.
+- **Deadlock: count trains waiting longer than (seconds)** (20): how long a train waits before it counts when looking
+  for deadlocks. **Deadlock pass-through distance (m)** (300) and **time limit (seconds)** (120): a train passes
+  through until it has driven its length and this much further, or for at most this long.
+- **Planning retries** (3): how often a round is planned again with a failed train moved before the train in its way.
+- **Route search interval (seconds)** (5), **when late (seconds)** (15) and **while stuck (seconds)** (1): every
+  train looks for a faster route this often, at once when its planned arrival has slipped this much since its last
+  search, and this often while its plan finds no way.
+- **Track refresh (seconds)** (30): how often the whole track network is read again (edits usually within 2 s).
+- **Plan search limit (states)** (200000): most search states one plan may use.
+- **Slope lookahead (m)** (300): how far ahead the slope is averaged for braking.
 
 `/at traffic` and `/at reroute` switch for the session; changing the setting in the Mods menu applies again.
 

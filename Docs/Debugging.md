@@ -672,3 +672,17 @@ train, then a row per train every 0.2 s:
   stretch. The deadlock detector missed this one (Crystal Oscilator's blocker was a train 337 m ahead). Not done: 29
   CROSSING check warnings in 11 min, mostly pairs following each other at speed (Copper Sheet / Circuit Board Gather
   over crossings 29-41), likely followers the check doesn't exclude.
+- 1.3.6 (1.3.5 log, user: "still getting deadlocks that aren't registering as deadlocks"): from 17:22 (log time) to
+  the end, 13 trains waited 25-40 min and no DEADLOCK was logged. Root: Rubber SNK [conc] overran crossing 22 while
+  braking from 100 km/h without having been granted it ("-60 m to stop"), and stood there for good: 10.5 m of
+  authority, full brakes, `waits for ? before crossing 22, 0 m ahead: its plan has no slot there yet` (the 0 m is
+  clamped; the zone was behind it). GrantFromPlan checked every crossing zone on the front's track, also zones the
+  body had passed; the plan leaves those out (ClearAt <= 0), so a zone it never held had no slot and was refused
+  forever. Train stayed behind it, Reinforced Plates waited for Train (on crossing 22), and the rest queued behind.
+  Not seen as a deadlock: Rubber had no BlockedBy, so its WaitingSeconds stayed 0 and no chain closed.
+  Fix: GrantFromPlan and RefreshClaimedJoints skip zones the whole body has passed (Begin + To + Length <= 0, the
+  plan's own rule), so a train also stops holding a crossing it has cleared while its front is still on that track
+  (some of the CROSSING "was granted" warnings may be this). WaitingSeconds now counts any held-up standstill, and
+  LogDeadlocks reports `STUCK:` (log + faults.log) for a train waiting longer than the deadlock threshold with no
+  train to wait for, naming the trains whose wait chain ends at it; they all get the long-wait icon and the root
+  looks for another way at once.

@@ -715,7 +715,11 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 			float From = 0.f;
 			float To = 0.f;
 			GetZoneAlong(Zone, Step.Track, Step.Exit, From, To);
-			Zones.Add({Begin + From, Zone.Crossing});
+			// Its whole body past the zone already: nothing to grant, as in the plan.
+			if (Begin + To + State.Length > 0.f)
+			{
+				Zones.Add({Begin + From, Zone.Crossing});
+			}
 		}
 		Zones.Sort([](const TPair<float, int32>& A, const TPair<float, int32>& B) { return A.Key < B.Key; });
 		for (const TPair<float, int32>& Zone : Zones)

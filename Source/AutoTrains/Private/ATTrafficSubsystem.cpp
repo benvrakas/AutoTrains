@@ -455,8 +455,8 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 			UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s: %s"), *TrainName(State->Train.Get()), *State->BlockedReason);
 		}
 
-		// Waiting for the train it names, even while it rolls slowly up to its stop.
-		State->WaitingSeconds = State->BlockedBy.IsValid() && State->Speed < PlannerWaitSpeed ? State->WaitingSeconds + DeltaSeconds : 0.f;
+		// Held up, even while it rolls slowly up to its stop; with or without a train to wait for.
+		State->WaitingSeconds = !State->BlockedReason.IsEmpty() && State->Speed < PlannerWaitSpeed ? State->WaitingSeconds + DeltaSeconds : 0.f;
 	}
 	LogDeadlocks();
 }
@@ -668,17 +668,23 @@ void AATTrafficSubsystem::RefreshClaimedJoints(FATTrafficTrain& State) const
 			State.OccupiedJoints.Add(Joint);
 		}
 	}
-	// Crossing zones on its held tracks; on the last one, only those before where its grant ends.
+	// Crossing zones on its held tracks that its body hasn't passed yet; on the last one, only those before where its
+	// grant ends.
 	State.ClaimedCrossings.Reset();
 	for (int32 Index = 0; Index < State.Route.Num() && HoldsTrack(State, State.Route[Index].Track); ++Index)
 	{
 		const FATRouteStep& Step = State.Route[Index];
 		const bool bLast = Index + 1 == State.Route.Num() || !HoldsTrack(State, State.Route[Index + 1].Track);
+		const float Begin = Step.EndDistance - Step.Track->GetLength() - State.FrontAhead;
 		for (const FATZone& Zone : GetZones(Step.Track))
 		{
 			float From = 0.f;
 			float To = 0.f;
 			GetZoneAlong(Zone, Step.Track, Step.Exit, From, To);
+			if (Begin + To + State.Length <= 0.f)
+			{
+				continue;
+			}
 			if (!bLast || State.AuthorityCut < 0.f || Step.Track->GetLength() - From > State.AuthorityCut)
 			{
 				State.ClaimedCrossings.Add(Zone.Crossing);
@@ -1191,6 +1197,57 @@ void AATTrafficSubsystem::LogDeadlocks()
 			}
 		}
 	}
+	// A train long held up with no train to wait for: nothing ahead will let it go, so it and every train whose chain of
+	// waits ends at it are stuck. Logged when it first shows up; it looks for another way at once.
+	auto IsWaiting = [this](const FATTrafficTrain* State) { return State && State->bManaged && State->WaitingSeconds >= mSettings.DeadlockWaitSeconds; };
+	TSet<const FATTrafficTrain*> InStall;
+	for (TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Pair : mTrains)
+	{
+		FATTrafficTrain& Root = Pair.Value;
+		if (!IsWaiting(&Root) || Root.BlockedBy.IsValid() || InCycle.Contains(&Root))
+		{
+			continue;
+		}
+		TArray<FString> Behind;
+		InStall.Add(&Root);
+		for (const TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Other : mTrains)
+		{
+			const FATTrafficTrain* Current = &Other.Value;
+			for (int32 Steps = 0; Current != &Root && IsWaiting(Current) && Steps < 64; ++Steps)
+			{
+				Current = mTrains.Find(Current->BlockedBy);
+			}
+			if (Current == &Root && &Other.Value != &Root)
+			{
+				Behind.Add(TrainName(Other.Value.Train.Get()));
+				InStall.Add(&Other.Value);
+			}
+		}
+		const FString Signature = TEXT("stuck|") + TrainName(Root.Train.Get());
+		FDeadlockSeen* Seen = mDeadlocks.Find(Signature);
+		const bool bNew = !Seen;
+		if (bNew)
+		{
+			Seen = &mDeadlocks.Add(Signature, {Now, Now});
+		}
+		Seen->Last = Now;
+		if (!bNew)
+		{
+			continue;
+		}
+		Behind.Sort();
+		const FString Fault = FString::Printf(TEXT("%s %s has waited %.0f s with no train to wait for: %s; %d waiting behind it%s%s\n"),
+			*FDateTime::Now().ToString(TEXT("%Y-%m-%d %H:%M:%S")), *TrainName(Root.Train.Get()), Root.WaitingSeconds, *Root.BlockedReason, Behind.Num(),
+			Behind.Num() > 0 ? TEXT(": ") : TEXT(""), *FString::Join(Behind, TEXT(", ")));
+		UE_LOG(LogAutoTrains, Warning, TEXT("traffic: STUCK: %s"), *Fault.TrimEnd());
+		const FString Path = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("AutoTrains") / TEXT("faults.log"));
+		if (!FFileHelper::SaveStringToFile(Fault, *Path, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM, &IFileManager::Get(), FILEWRITE_Append))
+		{
+			UE_LOG(LogAutoTrains, Error, TEXT("Could not write the fault to %s"), *Path);
+		}
+		Root.RerouteCooldown = 0.f;
+		Root.RerouteTimer = 0.f;
+	}
 	for (auto It = mDeadlocks.CreateIterator(); It; ++It)
 	{
 		if (Now - It.Value().Last > DeadlockForgetSeconds)
@@ -1200,7 +1257,7 @@ void AATTrafficSubsystem::LogDeadlocks()
 	}
 	for (TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Pair : mTrains)
 	{
-		Pair.Value.bDeadlocked = InCycle.Contains(&Pair.Value);
+		Pair.Value.bDeadlocked = InCycle.Contains(&Pair.Value) || InStall.Contains(&Pair.Value);
 	}
 }
 

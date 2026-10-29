@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.6
+
+- **Fixed: a train stopping for good just past a crossing**, which could hold up the whole network. A train that
+  rolled over a crossing while braking was then refused that crossing, which was already behind it. Trains also stop
+  holding a crossing as soon as they have cleared it, rather than when they leave that piece of track.
+- **Stuck trains show up in the log.** A train held up for longer than the deadlock threshold with no train to wait
+  for is logged as STUCK (also in faults.log), with the trains waiting behind it, and shows the game's long-wait
+  warning like a deadlocked train.
+
 ## 1.3.5
 
 - **Fixed: trains queued for a crossing holding each other up.** A train waiting behind another on the way to a

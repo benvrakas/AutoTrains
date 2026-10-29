@@ -645,4 +645,10 @@ train, then a row per train every 0.2 s:
   deadlocks ghosted through after 60 s (05:56, 06:09). In the second, Heavy Oil [Coke Steel] stood 7 m behind Coated
   Plates RSC Train but still held its grant to its goal (9 claims, locked "enters in 0 s, clear in 20 s"), so Train
   waited for it on track 2145430117, while Coated Plates waited 80 s for Train at switch 180; the numbers stayed the
-  same for minutes. A standing follower keeps holds it can't reach before its leader moves.
+  same for minutes. Real cause (telemetry): Coated Plates RSC Train (700 t, 2000 kN traction) was stalled on a climb on
+  track 2147329636 from about 05:54 to the end of the session, at full throttle and rolling back and forth to where the
+  slope's pull (up to 2223 kN) equals its traction (front about 51 m in). It had come up at about 70 km/h; its authority
+  then dropped from 188 m to 34 m (blocked by Steel Pipe Xtra Steel), the throttle was cut on the grade, and when the
+  track came back it was too slow to climb on. The planner kept planning it as able to drive ("may drive 351 m, target
+  133 km/h"), so trains behind and around it waited on its plan for up to 2534 s, and the deadlock detector (wait
+  cycles) never saw it; ghosting through at 05:57 and 06:12 left it on the hill.

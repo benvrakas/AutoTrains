@@ -715,3 +715,12 @@ train, then a row per train every 0.2 s:
   past a track end also stands on the next track's zones within its overhang (same next-track rule as Occupied, no
   OverhangTolerance). The other 16 were the update right after a conflict model rebuild (crossings renumbered, 0
   claims); LogCrossingEntries is skipped on that update.
+- 4ba0e65 session (2.4 h): 1 CROSSING ENTRY (a rebuild outside UpdateTraffic's own), 0 deadlocks, 1 STUCK (Rubber, 23 s
+  at a departure after a 2-state search failure with no cause recorded). CHECK FAILED x2 at 22:37:03: Circuit Board
+  Gather held crossing 22 (394 m ahead, plan enters in 48 s, empty BlockedReason) while Train 2 held it 77 m ahead
+  (locked, 3 s). GrantFromPlan's zone loop skips zones past PlanWaitAt unchecked, relying on the plan-wait cut that
+  follows; but the `End >= Need` break came first, so on the step holding the wait the whole track was claimed and
+  RefreshClaimedJoints (no AuthorityCut) added those zones. Same cause behind the worst "over its braking curve" lines
+  (AI Limiter 113 km/h allowed 0, MF Resource 99 allowed 0): no cut, so the train ran at speed up to the wait, where
+  PlanWaitAt = 0 and the "where it stands" branch left it only the tracks it stood on. Now the plan-wait cut is checked
+  before the Need break.

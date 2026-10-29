@@ -14,6 +14,10 @@
 - **Fixed: a train's rear cars not always keeping a crossing to themselves.** A car reaching past the end of the
   track it was on didn't count as standing on a crossing just beyond that end, so a long train's rear could briefly
   leave a crossing it was still driving over free for another train.
+- **Fixed: trains braking hard at full speed where their plan had them wait.** A train with room enough to stop on
+  the track where its plan waited was given that whole track, and the crossings on it past the wait, which nobody had
+  checked. It then drove up to the wait at full speed and had to brake hard, or held a crossing another train had too.
+  The grant now ends at the wait.
 
 ## 1.3.5
 

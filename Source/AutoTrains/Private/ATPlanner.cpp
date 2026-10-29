@@ -749,11 +749,8 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 		{
 			break;
 		}
-		if (Step.EndDistance - State.FrontAhead >= Need && !bHardClimb)
-		{
-			break;
-		}
-		// No further than where its plan waits: that's a place it can stand without blocking anyone.
+		// No further than where its plan waits: that's a place it can stand without blocking anyone. Before the check for
+		// enough room, so the zones past the wait, left unchecked above, aren't held.
 		if (bPlanWaits && Step.EndDistance - State.FrontAhead - GetStopMargin(Step.Exit) >= State.PlanWaitAt - 100.f)
 		{
 			State.AuthorityCut = End - State.PlanWaitAt;
@@ -762,6 +759,10 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 				*ResourceName(Step.Track, INDEX_NONE), *SecondsText(State.PlanDepart - Now));
 			State.BlockedKey = NameOf(State.PlanWaitFor.Get()) + TEXT("|plan|") + ResourceName(Step.Track, INDEX_NONE);
 			bBlocked = true;
+			break;
+		}
+		if (Step.EndDistance - State.FrontAhead >= Need && !bHardClimb)
+		{
 			break;
 		}
 	}

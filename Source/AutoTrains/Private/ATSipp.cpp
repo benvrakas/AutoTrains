@@ -207,7 +207,13 @@ namespace
 	{
 	public:
 		FPlanner(const FATSippCycle& InCycle, const FATSippTable& InTable, int32 InSlot)
-			: Cycle(InCycle), Graph(*InCycle.Graph), Table(InTable), Train(InCycle.Trains[InSlot]), Slot(InSlot), Headway(InCycle.Headway)
+			: FPlanner(InCycle, InTable, InSlot, InCycle.Trains[InSlot], InCycle.Now, false)
+		{
+		}
+
+		// Plans InTrain for slot InSlot from InNow on; bInFixedOnly: around only the bookings the others can't give way on.
+		FPlanner(const FATSippCycle& InCycle, const FATSippTable& InTable, int32 InSlot, const FATSippTrain& InTrain, double InNow, bool bInFixedOnly)
+			: Cycle(InCycle), Graph(*InCycle.Graph), Table(InTable), Train(InTrain), Slot(InSlot), Headway(InCycle.Headway), Now(InNow), bFixedOnly(bInFixedOnly)
 		{
 			Accel = FMath::Max(Train.Accel, 1.f);
 			Brake = FMath::Max(Train.Brake, 1.f);
@@ -254,8 +260,8 @@ namespace
 			FState Start;
 			Start.bStopped = Train.bStanding;
 			Start.Speed = Train.bStanding ? 0.f : Train.Speed;
-			Start.Arrive = Cycle.Now;
-			Start.Leave = Cycle.Now;
+			Start.Arrive = Now;
+			Start.Leave = Now;
 			States.Add(Start);
 			FurthestStopped = Train.bStanding ? 0 : INDEX_NONE;
 			FurthestAny = 0;
@@ -264,7 +270,7 @@ namespace
 				return INDEX_NONE;
 			}
 			TArray<FQueued> Queue;
-			Queue.HeapPush({Cycle.Now, 0});
+			Queue.HeapPush({Now, 0});
 			while (Queue.Num() > 0)
 			{
 				FQueued Item;
@@ -337,11 +343,15 @@ namespace
 
 		bool InScope(const FATSippBooking& Booking, bool bFirst) const
 		{
-			if (bFirst || Booking.Kind != EATSippKind::Moving || Booking.bHeld || Booking.bCommitted)
+			if (bFirst || Booking.Kind == EATSippKind::Standing || Booking.bHeld || Booking.bCommitted)
 			{
 				return true;
 			}
-			return Train.bRanked && !PlansAfter(Booking.Owner);
+			if (bFixedOnly)
+			{
+				return false;
+			}
+			return Booking.Kind != EATSippKind::Moving || (Train.bRanked && !PlansAfter(Booking.Owner));
 		}
 
 		bool PlansAfter(int32 Owner) const
@@ -480,7 +490,7 @@ namespace
 					return State.Arrive;
 				}
 			}
-			return Cycle.Now;
+			return Now;
 		}
 
 		// Calls Func for every resource the train has entered by state Index and whose tail-clear point is past MinPos.
@@ -914,12 +924,7 @@ namespace
 			{
 				StepEnd.Add(Step == 0 ? FMath::Max(Train.FirstEnd, MinMove) : StepEnd.Last() + Graph.Length[Graph.TrackOf[Out.Route[Step]]]);
 			}
-			for (const FATSippPass& Tail : Train.Tail)
-			{
-				FATSippPass Pass = Tail;
-				Pass.bLocked = true;
-				Out.Passes.Add(Pass);
-			}
+			Out.Passes.Append(Train.Tail);
 			for (int32 Step = 0; Step < Out.Route.Num(); ++Step)
 			{
 				const int32 Node = Out.Route[Step];
@@ -956,7 +961,7 @@ namespace
 					Pass.bLocked = Train.Locked.Contains(Pass.Resource);
 					Pass.bHeld = !Pass.bLocked && Train.Held.Contains(Pass.Resource);
 				}
-				Pass.Enter = Pass.EnterAt <= 0.f ? Cycle.Now : TimeAt(Pass.EnterAt);
+				Pass.Enter = Pass.EnterAt <= 0.f ? Now : TimeAt(Pass.EnterAt);
 				Pass.Clear = TimeAt(Pass.ClearAt);
 			}
 			// Waits: where the plan stands longer than a moment, and for good at the end of a plan that can't reach the goal.
@@ -979,7 +984,7 @@ namespace
 					Until = ATSippNever;
 					For = Here.BlockedBy;
 				}
-				if (Until > Cycle.Now && Out.WaitStep == INDEX_NONE)
+				if (Until > Now && Out.WaitStep == INDEX_NONE)
 				{
 					Out.WaitStep = Here.Step;
 					Out.WaitUntil = Until;
@@ -1059,7 +1064,7 @@ namespace
 			for (const float At : Places)
 			{
 				Reach = At;
-				const double Arrive = At <= 0.f ? Cycle.Now : TimeAtState(Final, At - 1.f);
+				const double Arrive = At <= 0.f ? Now : TimeAtState(Final, At - 1.f);
 				if (IsNever(Arrive) || !HoldsUp(At, Arrive))
 				{
 					break;
@@ -1111,6 +1116,8 @@ namespace
 		const FATSippTrain& Train;
 		const int32 Slot;
 		const double Headway;
+		const double Now;
+		const bool bFixedOnly;
 		float Accel = 1.f;
 		float Brake = 1.f;
 		float Top = 1.f;
@@ -1133,6 +1140,208 @@ namespace
 		int32 RejectedTail = 0;
 		int32 RejectedStay = 0;
 	};
+
+	// The shortest way on from connection Start to the end of a track of Targets, as the connections after Start, and its
+	// length [cm]; empty if there is none.
+	TArray<int32> ShortestWay(const FATSippGraph& Graph, int32 Start, const TArray<int32>& Targets, float& OutLength)
+	{
+		OutLength = 0.f;
+		TArray<float> Distance;
+		Distance.Init(MAX_flt, Graph.TrackOf.Num());
+		TArray<int32> Parent;
+		Parent.Init(INDEX_NONE, Graph.TrackOf.Num());
+		TArray<TPair<float, int32>> Queue;
+		auto Less = [](const TPair<float, int32>& A, const TPair<float, int32>& B) { return A.Key < B.Key; };
+		Distance[Start] = 0.f;
+		Queue.HeapPush({0.f, Start}, Less);
+		while (Queue.Num() > 0)
+		{
+			TPair<float, int32> Item;
+			Queue.HeapPop(Item, Less);
+			const int32 Node = Item.Value;
+			if (Item.Key > Distance[Node])
+			{
+				continue;
+			}
+			if (Node != Start && Targets.Contains(Graph.TrackOf[Node]))
+			{
+				TArray<int32> Way;
+				for (int32 At = Node; At != Start; At = Parent[At])
+				{
+					Way.Add(At);
+				}
+				Algo::Reverse(Way);
+				OutLength = Item.Key;
+				return Way;
+			}
+			if (Graph.OneWay[Node])
+			{
+				continue;
+			}
+			for (const int32 Entry : Graph.Attached[Node])
+			{
+				const int32 Next = Graph.OppositeOf.IsValidIndex(Entry) ? Graph.OppositeOf[Entry] : INDEX_NONE;
+				if (Next == INDEX_NONE)
+				{
+					continue;
+				}
+				const float Reached = Item.Key + Graph.Length[Graph.TrackOf[Next]];
+				if (Reached < Distance[Next])
+				{
+					Distance[Next] = Reached;
+					Parent[Next] = Node;
+					Queue.HeapPush({Reached, Next}, Less);
+				}
+			}
+		}
+		return TArray<int32>();
+	}
+
+	// The next leg of Train once Result has it stay at its goal: standing where its body is then, it leaves for its next
+	// stop the shortest way, on through the goal's track end or, if it can, back the way it came (bOutReversed). Returns
+	// false if there is no way.
+	bool MakeNextLeg(const FATSippGraph& Graph, const FATSippTrain& Train, const FATSippResult& Result, FATSippTrain& Out, bool& bOutReversed)
+	{
+		bOutReversed = false;
+		if (Train.NextTracks.Num() == 0 || Result.bFailed || Result.Route.Num() == 0 || IsNever(Result.Arrival) || IsNever(Train.GoalDwell)
+			|| IsNever(Train.NextDwell))
+		{
+			return false;
+		}
+		// The tracks under the body at the goal: the connection it leaves each through, and where the front is at either
+		// end of it. [cm from where the front is now]
+		struct FSegment
+		{
+			int32 Exit;
+			float End;
+			float Start;
+		};
+		TArray<FSegment> Body;
+		auto AddSegment = [&](int32 Exit, float End)
+		{
+			Body.Add({Exit, End, End - Graph.Length[Graph.TrackOf[Exit]]});
+		};
+		for (const FATSippPass& Tail : Train.Tail)
+		{
+			if (Graph.TrackOf.IsValidIndex(Tail.Exit) && Graph.TrackOf[Tail.Exit] == Tail.Resource)
+			{
+				AddSegment(Tail.Exit, Tail.ClearAt - Train.Length);
+			}
+		}
+		float End = 0.f;
+		for (int32 Step = 0; Step < Result.Route.Num(); ++Step)
+		{
+			const int32 Node = Result.Route[Step];
+			End = Step == 0 ? FMath::Max(Train.FirstEnd, MinMove) : End + Graph.Length[Graph.TrackOf[Node]];
+			AddSegment(Node, End);
+		}
+		const float Goal = End;
+		const float Rear = Goal - Train.Length;
+		Body.RemoveAll([Rear](const FSegment& Segment) { return Segment.End < Rear; });
+		Body.Sort([](const FSegment& A, const FSegment& B) { return A.End < B.End; });
+		auto ZAt = [&](float At)
+		{
+			for (const FSegment& Segment : Body)
+			{
+				const int32 Other = Graph.OppositeOf[Segment.Exit];
+				if (Other != INDEX_NONE && At <= Segment.End && At >= Segment.Start && Segment.End > Segment.Start)
+				{
+					return FMath::Lerp(Graph.ZOf[Other], Graph.ZOf[Segment.Exit], (At - Segment.Start) / (Segment.End - Segment.Start));
+				}
+			}
+			return Graph.ZOf[Result.Route.Last()];
+		};
+
+		const int32 Last = Body.Num() - 1;
+		const bool bTurnable = !Body.ContainsByPredicate([&Graph](const FSegment& Segment) { return Graph.OppositeOf[Segment.Exit] == INDEX_NONE; });
+		float OnLength = 0.f;
+		const TArray<int32> On = ShortestWay(Graph, Result.Route.Last(), Train.NextTracks, OnLength);
+		const int32 RearAt = Body.IndexOfByPredicate([Rear](const FSegment& Segment) { return Segment.Start < Rear && Segment.End >= Rear; });
+		const int32 BackStart = Train.bCanReverse && bTurnable && RearAt != INDEX_NONE ? Graph.OppositeOf[Body[RearAt].Exit] : INDEX_NONE;
+		const float BackFirstEnd = RearAt != INDEX_NONE ? FMath::Max(Rear - Body[RearAt].Start, MinMove) : 0.f;
+		float BackLength = 0.f;
+		TArray<int32> Back;
+		if (BackStart != INDEX_NONE)
+		{
+			Back = ShortestWay(Graph, BackStart, Train.NextTracks, BackLength);
+			BackLength += BackFirstEnd;
+		}
+		bOutReversed = Back.Num() > 0 && (On.Num() == 0 || BackLength < OnLength);
+		if (!bOutReversed && On.Num() == 0)
+		{
+			return false;
+		}
+
+		Out = FATSippTrain();
+		Out.Turn = EATSippTurn::Plan;
+		Out.Kind = EATSippKind::Predicted;
+		Out.bRanked = false;
+		Out.Length = Train.Length;
+		Out.Cruise = Train.Cruise;
+		Out.Accel = Train.Accel;
+		Out.Brake = Train.Brake;
+		Out.bStanding = true;
+		Out.MinDepart = Result.Arrival + Train.GoalDwell;
+		Out.GoalDwell = Train.NextDwell;
+		Out.FrontZAt = 0.f;
+		Out.RearZAt = -Train.Length;
+		auto AddTail = [&](int32 Resource, int32 Exit, int32 Via, float ClearAt)
+		{
+			if (ClearAt > 0.f)
+			{
+				FATSippPass Pass;
+				Pass.Resource = Resource;
+				Pass.Exit = Exit;
+				Pass.Via = Via;
+				Pass.EnterAt = -1.f;
+				Pass.ClearAt = ClearAt;
+				Out.Tail.Add(Pass);
+			}
+		};
+		if (!bOutReversed)
+		{
+			// The front at the goal's track end, the body behind it as it stands.
+			Out.Route.Add(Result.Route.Last());
+			Out.Route.Append(On);
+			Out.FirstEnd = MinMove;
+			Out.FrontZ = ZAt(Goal);
+			Out.RearZ = ZAt(Rear);
+			for (int32 Index = 0; Index < Last; ++Index)
+			{
+				AddTail(Graph.TrackOf[Body[Index].Exit], Body[Index].Exit, INDEX_NONE, Body[Index].End - Rear);
+				const int32 Joint = Graph.JointOf[Body[Index].Exit];
+				if (Joint != INDEX_NONE)
+				{
+					AddTail(Graph.JointResource(Joint), Body[Index + 1].Exit, Body[Index].Exit, Body[Index].End - Rear + Graph.JointFoul[Joint]);
+				}
+			}
+			return true;
+		}
+		// Backwards: the front where the rear car is, on the track under it, and the rest of the body behind it.
+		Out.Route.Add(BackStart);
+		Out.Route.Append(Back);
+		Out.FirstEnd = BackFirstEnd;
+		Out.FrontZ = ZAt(Rear);
+		Out.RearZ = ZAt(Goal);
+		for (int32 Index = RearAt; Index <= Last; ++Index)
+		{
+			const int32 Exit = Graph.OppositeOf[Body[Index].Exit];
+			if (Index > RearAt)
+			{
+				AddTail(Graph.TrackOf[Exit], Exit, INDEX_NONE, Goal - Body[Index].Start);
+			}
+			if (Index < Last)
+			{
+				const int32 From = Graph.OppositeOf[Body[Index + 1].Exit];
+				const int32 Joint = Graph.JointOf[From] != INDEX_NONE ? Graph.JointOf[From] : Graph.JointOf[Body[Index].Exit];
+				if (Joint != INDEX_NONE)
+				{
+					AddTail(Graph.JointResource(Joint), Exit, From, Goal - Body[Index].End + Graph.JointFoul[Joint]);
+				}
+			}
+		}
+		return true;
+	}
 }
 
 void ATSipp::Launch(const TSharedRef<FATSippCycle, ESPMode::ThreadSafe>& Cycle)
@@ -1226,24 +1435,49 @@ void ATSipp::Run(FATSippCycle& Cycle)
 		}
 		Result.SearchStates = FoundStates[Slot];
 		Result.SearchMilliseconds = FoundMilliseconds[Slot];
-		for (const FATSippPass& Pass : Result.Passes)
+		auto Book = [&](const TArray<FATSippPass>& Passes, EATSippKind Kind)
 		{
-			if (IsNever(Pass.Enter))
+			for (const FATSippPass& Pass : Passes)
 			{
-				continue;
+				if (IsNever(Pass.Enter))
+				{
+					continue;
+				}
+				FATSippBooking Booking;
+				Booking.Owner = Slot;
+				Booking.Enter = Pass.Enter;
+				Booking.Clear = Pass.Clear;
+				Booking.Exit = Pass.Exit;
+				Booking.Via = Pass.Via;
+				Booking.Kind = Kind;
+				Booking.bLocked = Pass.bLocked;
+				Booking.bHeld = Pass.bHeld;
+				Booking.bCommitted = Pass.bCommitted;
+				Cycle.Table.Add(Pass.Resource, Booking);
 			}
-			FATSippBooking Booking;
-			Booking.Owner = Slot;
-			Booking.Enter = Pass.Enter;
-			Booking.Clear = Pass.Clear;
-			Booking.Exit = Pass.Exit;
-			Booking.Via = Pass.Via;
-			Booking.Kind = Train.Kind;
-			Booking.bLocked = Pass.bLocked;
-			Booking.bHeld = Pass.bHeld;
-			Booking.bCommitted = Pass.bCommitted;
-			Cycle.Table.Add(Pass.Resource, Booking);
+		};
+		// The next leg from the goal, booked as a departure every train keeps clear of, so none drives where this one has
+		// to pass after its stay (a push-pull train turning back on single track). Planned around the others' departures
+		// first, else around only what they can't give way on; they plan around it at their next turn.
+		FATSippTrain Leg;
+		bool bReversed = false;
+		if (Train.Kind == EATSippKind::Moving && MakeNextLeg(*Cycle.Graph, Train, Result, Leg, bReversed))
+		{
+			FATSippResult Next;
+			FPlanner(Cycle, Cycle.Table, Slot, Leg, Result.Arrival, false).Plan(Leg.Route, true, Next);
+			if (Next.bFailed)
+			{
+				FPlanner(Cycle, Cycle.Table, Slot, Leg, Result.Arrival, true).Plan(Leg.Route, true, Next);
+			}
+			if (!Next.bFailed)
+			{
+				Result.bNextLeg = true;
+				Result.bNextReversed = bReversed;
+				Result.NextArrival = Next.Arrival;
+				Book(Next.Passes, EATSippKind::Predicted);
+			}
 		}
+		Book(Result.Passes, Train.Kind);
 	};
 
 	// The turns in order; a self-driving train whose plan fails on the booking of one planned before it, which counts

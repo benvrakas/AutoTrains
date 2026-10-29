@@ -193,6 +193,8 @@ struct FATTrafficTrain
 	FString PlanFailure;
 	FString PlanCommitted;
 	FString PlanNote;
+	// How its next leg from the goal is booked (empty: it has none to book), for the log.
+	FString PlanNextLeg;
 	// Docking: whether the train was docked at the previous update, whether it was seen undocked since traffic control
 	// started (so a dock's start is known), when the current dock started (world seconds), and the station.
 	bool bWasDocked = false;
@@ -452,6 +454,8 @@ private:
 	// Fills a cycle train from State's route: motion, the resources it holds, can't stop short of or has behind it, and
 	// which trains go first or come after it on its line.
 	void FillSippTrain(const FATTrafficTrain& State, const FATSippGraph& Graph, const TMap<const AFGTrain*, int32>& SlotOf, FATSippTrain& Out) const;
+	// Fills a cycle train's next leg from its goal: the next stop's station track and stay, and whether it can reverse.
+	void FillNextLeg(const FATTrafficTrain& State, const FATSippGraph& Graph, FATSippTrain& Out) const;
 	// Keeps a self-driving train's plan from a cycle for its grants, and takes its new route if the cycle rerouted it.
 	void ApplyPlan(FATTrafficTrain& State, const FATSippCycle& Cycle, int32 Slot);
 	void ApplyReroute(FATTrafficTrain& State, const FATSippCycle& Cycle, int32 Slot);
@@ -522,6 +526,7 @@ private:
 	int32 mPlanCommitted = 0;
 	int32 mPlanReroutes = 0;
 	int32 mPlanPredictions = 0;
+	int32 mPlanNextLegs = 0;
 	int32 mPlanUpdates = 0;
 	int32 mCycles = 0;
 	int32 mPlanReorders = 0;

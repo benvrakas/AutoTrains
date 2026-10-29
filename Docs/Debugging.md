@@ -571,3 +571,16 @@ train, then a row per train every 0.2 s:
   deadlock detector (no edge), never waiting by WaitingSeconds (needs BlockedBy), never moved up (needs BlockedBy) -
   and eleven trains queued behind them. FGap now records the booking that sets ClearHi (HiBy, bHiByRank) and ClearLo
   (LoBy); a tail window missed or a goal stay that doesn't fit notes that train, so failures name who is in the way.
+- Bug report (player, telemetry-20261029-000557.csv, Bug Reports/, not in git): two 32 m push-pull trains, 360 m
+  between two dead-end stations on single track with a passing place. One docked and turned back while the other,
+  already heading there, had entered the single track: the docked train's goal booking only covered its stay plus a
+  forward pull-out, so the approaching train planned in right after it. Both then waited for each other ("Train"
+  blocked by "Train"). Fix: a self-driving train with a timetable also books its next leg (ATSipp MakeNextLeg): from
+  where its body stands at the goal, Dijkstra by length to the next stop's station track, on through the goal's
+  track end or (bCanReverse: a locomotive faces the other way from the master) backwards from the rear car, whichever
+  is shorter; planned as a standing EATSippKind::Predicted train from leg 1's arrival (FPlanner with an explicit train
+  and time base), departing at arrival + GoalDwell, staying NextDwell at the next station. Booked as Predicted, so
+  every train keeps clear of it; planned around Predicted bookings first, else around only locked/held/committed/
+  Standing ones (bFixedOnly) so the others yield at their next turn. Not booked when the next stay is unknown. Log:
+  "<train>: next leg after its stay at <station> booked, leaving backwards/forwards" on change, and "N next legs
+  booked" in the planner summary.

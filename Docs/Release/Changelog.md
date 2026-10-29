@@ -2,6 +2,12 @@
 
 ## 1.3.2
 
+- **Fixed: push-pull trains on single track waiting for each other forever.** A train heading for a station now also
+  books its next leg after the stay: on to its next stop, the way it will leave (backwards for a push-pull train if
+  that is shorter). Other trains plan around that departure, so none drives onto the single track a train has to
+  turn back over; they wait at the passing place instead.
+- **Fixed: jams where a train waited without naming the train in its way**, which left the deadlock detection and the
+  planning order unable to free it.
 - **Fixed: sudden hard stops when a plan briefly failed.** A train whose plan found no way for a moment lost the track
   just ahead that it had already been given, and was stopped on the spot even at full speed. It now keeps track it
   holds; only a train standing there or holding it stops it.

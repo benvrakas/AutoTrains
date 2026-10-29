@@ -571,7 +571,7 @@ train, then a row per train every 0.2 s:
   deadlock detector (no edge), never waiting by WaitingSeconds (needs BlockedBy), never moved up (needs BlockedBy) -
   and eleven trains queued behind them. FGap now records the booking that sets ClearHi (HiBy, bHiByRank) and ClearLo
   (LoBy); a tail window missed or a goal stay that doesn't fit notes that train, so failures name who is in the way.
-- Bug report (player, telemetry-20261029-000557.csv, Bug Reports/, not in git): two 32 m push-pull trains, 360 m
+- Bug report (player, telemetry-20261029-000557.csv in D:\SFMod\Friends logs, not in git): two 32 m push-pull trains, 360 m
   between two dead-end stations on single track with a passing place. One docked and turned back while the other,
   already heading there, had entered the single track: the docked train's goal booking only covered its stay plus a
   forward pull-out, so the approaching train planned in right after it. Both then waited for each other ("Train"

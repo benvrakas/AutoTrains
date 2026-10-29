@@ -325,7 +325,8 @@ FString AATTrafficSubsystem::SetRerouteEnabled(bool bEnabled)
 void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 {
 	const double Now = FPlatformTime::Seconds();
-	if (Now - mConflictsBuiltAt > mSettings.TrackRefreshSeconds || (mConflictsStale && Now - mConflictsBuiltAt > ConflictRebuildMinSeconds))
+	const bool bRebuilt = Now - mConflictsBuiltAt > mSettings.TrackRefreshSeconds || (mConflictsStale && Now - mConflictsBuiltAt > ConflictRebuildMinSeconds);
+	if (bRebuilt)
 	{
 		RebuildConflicts();
 	}
@@ -348,7 +349,11 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 		FATTrafficTrain& State = mTrains.FindOrAdd(Train);
 		const TSet<int32> WasOnCrossings = State.OccupiedCrossings;
 		ReadTrain(State, Train);
-		LogCrossingEntries(State, WasOnCrossings, WorldNow);
+		// A rebuild numbers the crossings anew.
+		if (!bRebuilt)
+		{
+			LogCrossingEntries(State, WasOnCrossings, WorldNow);
+		}
 		TrackDocking(State, Train, WorldNow);
 		UpdateHillHelp(State, WorldNow);
 		ApplyLocomotivePower(Train, Train->IsSelfDrivingEnabled() ? GAccelerationScale * State.HillBoost : 1.f, Train->IsSelfDrivingEnabled() ? GTopSpeed * 0.036f : 0.f);
@@ -506,6 +511,8 @@ void AATTrafficSubsystem::ReadTrain(FATTrafficTrain& State, AFGTrain* Train) con
 	}
 
 	TArray<const UFGRailroadTrackConnectionComponent*> Overhangs;
+	// Track ends a vehicle reaches past, with how far it reaches. [cm]
+	TArray<TPair<const UFGRailroadTrackConnectionComponent*, float>> ZoneOverhangs;
 	for (AFGRailroadSubsystem::TTrainIterator It(Train->GetFirstVehicle()); It; ++It)
 	{
 		const AFGRailroadVehicle* Vehicle = *It;
@@ -533,6 +540,10 @@ void AATTrafficSubsystem::ReadTrain(FATTrafficTrain& State, AFGTrain* Train) con
 			if (ToEnd < HalfLength - OverhangTolerance)
 			{
 				Overhangs.Add(Connection);
+			}
+			if (ToEnd < HalfLength)
+			{
+				ZoneOverhangs.Add({Connection, HalfLength - ToEnd});
 			}
 			const int32 Joint = GetJoint(Connection);
 			if (Joint != INDEX_NONE && ToEnd < HalfLength + GetFoulDistance(Connection))
@@ -567,16 +578,41 @@ void AATTrafficSubsystem::ReadTrain(FATTrafficTrain& State, AFGTrain* Train) con
 	// A vehicle reaching past a track end overhangs onto the track it moves on to there: the only one attached, else (a
 	// switch) the one the train's route or another of its vehicles is on; the switch's fouling zone covers the rest.
 	const TSet<AFGBuildableRailroadTrack*> VehicleTracks = State.Occupied;
+	const auto MovesOnTo = [&State, &VehicleTracks](const TArray<UFGRailroadTrackConnectionComponent*>& Attached, AFGBuildableRailroadTrack* Track)
+	{
+		return Track && (Attached.Num() == 1 || VehicleTracks.Contains(Track)
+			|| State.Route.ContainsByPredicate([Track](const FATRouteStep& Step) { return Step.Track == Track; }));
+	};
 	for (const UFGRailroadTrackConnectionComponent* Connection : Overhangs)
 	{
 		const TArray<UFGRailroadTrackConnectionComponent*> Attached = Connection->GetConnections();
 		for (const UFGRailroadTrackConnectionComponent* Other : Attached)
 		{
 			AFGBuildableRailroadTrack* Track = Other ? Other->GetTrack() : nullptr;
-			if (Track && (Attached.Num() == 1 || VehicleTracks.Contains(Track)
-				|| State.Route.ContainsByPredicate([Track](const FATRouteStep& Step) { return Step.Track == Track; })))
+			if (MovesOnTo(Attached, Track))
 			{
 				State.Occupied.Add(Track);
+			}
+		}
+	}
+	// The overhanging part stands on that track's crossing zones near its end.
+	for (const TPair<const UFGRailroadTrackConnectionComponent*, float>& Overhang : ZoneOverhangs)
+	{
+		const TArray<UFGRailroadTrackConnectionComponent*> Attached = Overhang.Key->GetConnections();
+		for (const UFGRailroadTrackConnectionComponent* Other : Attached)
+		{
+			AFGBuildableRailroadTrack* Track = Other ? Other->GetTrack() : nullptr;
+			if (!MovesOnTo(Attached, Track))
+			{
+				continue;
+			}
+			const float End = Other->GetTrackPosition().Offset;
+			for (const FATZone& Zone : GetZones(Track))
+			{
+				if (Zone.From < End + Overhang.Value && Zone.To > End - Overhang.Value)
+				{
+					State.OccupiedCrossings.Add(Zone.Crossing);
+				}
 			}
 		}
 	}

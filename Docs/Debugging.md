@@ -706,3 +706,12 @@ train, then a row per train every 0.2 s:
   time, its claims and grant cut; then route order both ways, IsBehind both ways, FollowedTrains both ways, ranks, and
   the zone's bookings. Read them as: "was granted" with the granter's zone ahead and no IsBehind/follow = a grant
   that ignored the stander; a CROSSING ENTRY at speed with forced brake = an overrun; right after a rebuild = renumbering.
+- CROSSING ENTRY results (bb0db24 session, 47 min): no deadlocks, STUCK, CROSSING warnings or CHECK FAILED; longest
+  wait in telemetry 37 s. 660 CROSSING ENTRY lines: 644 from the body behind the MU master (no route step, no plan
+  slot; the route starts at the master, so only OccupiedCrossings covers those tracks) at full speed, repeating every
+  ~0.5 s per crossing, one per 16 m car. Cause: ReadTrain tested zones only on each vehicle's own track (its centre's),
+  and the zones were within a car half-length of a track end (0-2 m, 32-34 m on a 34 m track), so cover dropped each
+  time a car centre crossed the end: other trains could be granted the crossing in those gaps. Now a vehicle reaching
+  past a track end also stands on the next track's zones within its overhang (same next-track rule as Occupied, no
+  OverhangTolerance). The other 16 were the update right after a conflict model rebuild (crossings renumbered, 0
+  claims); LogCrossingEntries is skipped on that update.

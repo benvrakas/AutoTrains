@@ -11,6 +11,9 @@
 - **Fixed: a train waiting for the train behind it at a crossing.** Where a crossing lay just ahead of a train on the
   track it was on, the train following it could be given the crossing first, and both then stood still until the
   deadlock was passed through. The train in front now always gets it first.
+- **Fixed: a train's rear cars not always keeping a crossing to themselves.** A car reaching past the end of the
+  track it was on didn't count as standing on a crossing just beyond that end, so a long train's rear could briefly
+  leave a crossing it was still driving over free for another train.
 
 ## 1.3.5
 

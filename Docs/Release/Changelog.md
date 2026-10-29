@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.4
+
+- **Crossings book only the crossing itself.** Where two tracks cross, only the stretch where they come within the
+  track clearance counts, not both whole track pieces. Trains on a double roundabout's outer ring and trains crossing
+  over to the inner ring can now use the junction at the same time, and only meet in time at the crossing point.
+- **Trains wait right before a crossing** instead of before the whole junction: a train can stop partway along a
+  track, just short of the crossing it has to wait for.
+
 ## 1.3.3
 
 - **Fixed: push-pull trains at dead-end stations meeting head-on on single track.** A train stopping at a station

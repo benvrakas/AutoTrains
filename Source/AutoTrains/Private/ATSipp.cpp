@@ -280,7 +280,7 @@ namespace
 					}
 				}
 				Note(Item.State);
-				if (State.Step >= 0 && IsGoal(State.Step, State.Node))
+				if (State.Step >= 0 && IsGoal(State.Step, State.Node) && State.Pos >= State.NodePos - MinMove)
 				{
 					if (State.bStopped && StayFits(Item.State))
 					{
@@ -309,8 +309,8 @@ namespace
 			return INDEX_NONE;
 		}
 
-		// Keeps the furthest stop reached, the furthest with the body clear of every switch, and the furthest state of any
-		// kind, for a plan that can't reach the goal.
+		// Keeps the furthest stop reached, the furthest with the body clear of every switch and crossing, and the furthest
+		// state of any kind, for a plan that can't reach the goal.
 		void Note(int32 Index)
 		{
 			const FState& State = States[Index];
@@ -334,6 +334,14 @@ namespace
 			}
 		}
 
+		// Where crossing zone Zone on the track left through Exit lies, from the track's start the way it is driven. [cm]
+		void ZoneSpan(int32 Exit, const FATSippZone& Zone, float& OutFrom, float& OutTo) const
+		{
+			const float Length = Graph.Length[Graph.TrackOf[Exit]];
+			OutFrom = Graph.AtEnd[Exit] ? Zone.From : Length - Zone.To;
+			OutTo = Graph.AtEnd[Exit] ? Zone.To : Length - Zone.From;
+		}
+
 		bool IsGoal(int32 Step, int32 Node) const
 		{
 			return bFree ? Step > Train.Commit && Node == Goal : bGoalAtEnd && Step == Route->Num() - 1;
@@ -342,7 +350,7 @@ namespace
 		uint64 KeyOf(const FState& State) const
 		{
 			const int32 Where = bFree ? State.Node : State.Step;
-			const uint32 Band = State.bStopped ? 0u : 1u + static_cast<uint32>(FMath::Min(State.Speed / Top * SpeedBands, SpeedBands));
+			const uint32 Band = State.bStopped ? 0x80000000u ^ GetTypeHash(FMath::RoundToInt(State.Pos)) : 1u + static_cast<uint32>(FMath::Min(State.Speed / Top * SpeedBands, SpeedBands));
 			return (static_cast<uint64>(static_cast<uint32>(Where)) << 32) | HashCombine(State.Key, Band);
 		}
 
@@ -367,25 +375,8 @@ namespace
 			return Resources && Resources->Contains(Resource);
 		}
 
-		// The resources Resource conflicts with: a track's crossing tracks (itself first), or the joint itself.
-		template <typename TFunc>
-		void ForEachConflict(int32 Resource, TFunc&& Func) const
-		{
-			if (Resource < Graph.Length.Num())
-			{
-				for (const int32 Conflict : Graph.Conflicts[Resource])
-				{
-					Func(Conflict);
-				}
-			}
-			else
-			{
-				Func(Resource);
-			}
-		}
-
 		// Whether the train may enter Resource (leaving its track through Exit, coming from Via) at Enter: no booking in
-		// its scope there or on a conflicting resource is in the way, and a train the same way is a headway ahead or
+		// its scope there is in the way, and a train the same way is a headway ahead or
 		// behind at both ends. Sets the gap it then has to clear the resource in, else the earliest later entry that might
 		// work, the train in the way and whether its booking counts only because that train plans first.
 		bool GapAt(int32 Resource, int32 Exit, int32 Via, double Enter, FGap& Out, double& OutRetry, int32& OutBy, bool& bOutByRank) const
@@ -397,76 +388,73 @@ namespace
 			double After = -ATSippNever;
 			bool bClash = false;
 			const bool bHeld = Train.Held.Contains(Resource);
-			ForEachConflict(Resource, [&](int32 Checked)
+			for (const FATSippBooking& Booking : Table.ByResource[Resource])
 			{
-				for (const FATSippBooking& Booking : Table.ByResource[Checked])
+				if (Booking.Owner == Slot || IsBehind(Booking.Owner, Resource))
 				{
-					if (Booking.Owner == Slot || IsBehind(Booking.Owner, Checked))
+					continue;
+				}
+				const bool bFirst = Booking.bLocked || Train.First.Contains(Booking.Owner);
+				// Held from its last grant: kept unless a train that goes first needs it.
+				if ((bHeld && !bFirst) || !InScope(Booking, bFirst))
+				{
+					continue;
+				}
+				const bool bOpen = IsNever(Booking.Clear);
+				const bool bByRank = !bFirst && Booking.Kind == EATSippKind::Moving && !Booking.bHeld && !Booking.bCommitted;
+				auto LowerHi = [&](double Hi)
+				{
+					if (Hi < Out.ClearHi)
 					{
-						continue;
+						Out.ClearHi = Hi;
+						Out.HiBy = Booking.Owner;
+						Out.bHiByRank = bByRank;
 					}
-					const bool bFirst = Booking.bLocked || Train.First.Contains(Booking.Owner);
-					// Held from its last grant: kept unless a train that goes first needs it.
-					if ((bHeld && !bFirst) || !InScope(Booking, bFirst))
+				};
+				if (Exit != INDEX_NONE && Booking.Exit == Exit && Booking.Via == Via)
+				{
+					// The same way: behind it, or ahead of it at both ends unless it goes first.
+					if (Enter >= Booking.Enter + Headway)
 					{
-						continue;
+						After = FMath::Max(After, Booking.Enter + Headway);
+						const double Lo = bOpen ? ATSippNever : Booking.Clear + Headway;
+						if (Lo > Out.ClearLo)
+						{
+							Out.ClearLo = Lo;
+							Out.LoBy = Booking.Owner;
+						}
 					}
-					const bool bOpen = IsNever(Booking.Clear);
-					const bool bByRank = !bFirst && Booking.Kind == EATSippKind::Moving && !Booking.bHeld && !Booking.bCommitted;
-					auto LowerHi = [&](double Hi)
+					else if (!bFirst && Enter <= Booking.Enter - Headway)
 					{
-						if (Hi < Out.ClearHi)
-						{
-							Out.ClearHi = Hi;
-							Out.HiBy = Booking.Owner;
-							Out.bHiByRank = bByRank;
-						}
-					};
-					if (Checked == Resource && Exit != INDEX_NONE && Booking.Exit == Exit && Booking.Via == Via)
-					{
-						// The same way: behind it, or ahead of it at both ends unless it goes first.
-						if (Enter >= Booking.Enter + Headway)
-						{
-							After = FMath::Max(After, Booking.Enter + Headway);
-							const double Lo = bOpen ? ATSippNever : Booking.Clear + Headway;
-							if (Lo > Out.ClearLo)
-							{
-								Out.ClearLo = Lo;
-								Out.LoBy = Booking.Owner;
-							}
-						}
-						else if (!bFirst && Enter <= Booking.Enter - Headway)
-						{
-							LowerHi(bOpen ? ATSippNever : Booking.Clear - Headway);
-						}
-						else
-						{
-							bClash = true;
-							OutRetry = FMath::Max(OutRetry, Booking.Enter + Headway);
-							OutBy = Booking.Owner;
-							bOutByRank = bByRank;
-						}
-						continue;
-					}
-					const double Lo = bFirst ? -ATSippNever : Booking.Enter - Headway;
-					const double Hi = bOpen ? ATSippNever : Booking.Clear + Headway;
-					if (Enter >= Hi)
-					{
-						After = FMath::Max(After, Hi);
-					}
-					else if (Enter < Lo)
-					{
-						LowerHi(Lo);
+						LowerHi(bOpen ? ATSippNever : Booking.Clear - Headway);
 					}
 					else
 					{
 						bClash = true;
-						OutRetry = FMath::Max(OutRetry, Hi);
+						OutRetry = FMath::Max(OutRetry, Booking.Enter + Headway);
 						OutBy = Booking.Owner;
 						bOutByRank = bByRank;
 					}
+					continue;
 				}
-			});
+				const double Lo = bFirst ? -ATSippNever : Booking.Enter - Headway;
+				const double Hi = bOpen ? ATSippNever : Booking.Clear + Headway;
+				if (Enter >= Hi)
+				{
+					After = FMath::Max(After, Hi);
+				}
+				else if (Enter < Lo)
+				{
+					LowerHi(Lo);
+				}
+				else
+				{
+					bClash = true;
+					OutRetry = FMath::Max(OutRetry, Hi);
+					OutBy = Booking.Owner;
+					bOutByRank = bByRank;
+				}
+			}
 			if (bClash)
 			{
 				return false;
@@ -556,7 +544,7 @@ namespace
 				const FState& State = States[Link];
 				for (int32 Open = State.OpenFirst; Open < State.OpenFirst + State.NumOpen; ++Open)
 				{
-					if (Opens[Open].Resource >= Graph.Length.Num() && Opens[Open].StartAt < States[Index].Pos)
+					if (Graph.IsJoint(Opens[Open].Resource) && Opens[Open].StartAt < States[Index].Pos)
 					{
 						At = FMath::Max(At, Opens[Open].StartAt);
 					}
@@ -638,6 +626,28 @@ namespace
 				if (StopAt - State.Pos >= MinMove && (StopAt <= ForcedReach || SpeedSquared <= 2.f * RunBrake * (StopAt - State.Pos) + 1.f))
 				{
 					Move(Index, Run, NodePos, StopAt, 0.f, true, RunAccel, RunBrake);
+				}
+				// Short of a crossing zone on the run (not on the goal's track), holding nothing past it.
+				float LinkEnd = State.Step >= 0 ? State.NodePos : 0.f;
+				for (int32 Link = 0; Link < Run.Num(); ++Link)
+				{
+					const int32 LinkTrack = Graph.TrackOf[Run[Link]];
+					LinkEnd = State.Step < 0 && Link == 0 ? FMath::Max(Train.FirstEnd, State.Pos + MinMove) : LinkEnd + Graph.Length[LinkTrack];
+					if (IsGoal(State.Step + Link + 1, Run[Link]))
+					{
+						break;
+					}
+					for (const FATSippZone& Zone : Graph.ZonesOf[LinkTrack])
+					{
+						float From = 0.f;
+						float To = 0.f;
+						ZoneSpan(Run[Link], Zone, From, To);
+						const float ZoneStop = LinkEnd - Graph.Length[LinkTrack] + From - Graph.StopDistance;
+						if (ZoneStop - State.Pos >= MinMove && ZoneStop < StopAt && (ZoneStop <= ForcedReach || SpeedSquared <= 2.f * RunBrake * (ZoneStop - State.Pos) + 1.f))
+						{
+							Move(Index, FRun(Run.GetData(), Link + 1), LinkEnd, ZoneStop, 0.f, true, RunAccel, RunBrake);
+						}
+					}
 				}
 				const float Pass = NodePos - State.Pos;
 				if (bGoalNode || Pass < MinMove)
@@ -791,6 +801,26 @@ namespace
 					News.Add({Graph.JointResource(Joint), Run[0], State.Node, State.NodePos - Graph.FoulOf[State.Node], State.NodePos + Train.Length + Graph.JointFoul[Joint]});
 				}
 			}
+			// The crossing zones on the track left through Exit (starting at Start) that the front reaches on this move.
+			auto AddZones = [&](int32 Exit, float Start)
+			{
+				for (const FATSippZone& Zone : Graph.ZonesOf[Graph.TrackOf[Exit]])
+				{
+					float From = 0.f;
+					float Until = 0.f;
+					ZoneSpan(Exit, Zone, From, Until);
+					const float EnterAt = Start + From;
+					const float ClearAt = Start + Until + Train.Length;
+					if (ClearAt > State.Pos && EnterAt <= To && (EnterAt > State.Pos || State.Step < 0) && !Train.Locked.Contains(Zone.Resource))
+					{
+						News.Add({Zone.Resource, Exit, INDEX_NONE, EnterAt, ClearAt});
+					}
+				}
+			};
+			if (State.Step >= 0)
+			{
+				AddZones(State.Node, State.NodePos - Graph.Length[Graph.TrackOf[State.Node]]);
+			}
 			float TrackStart = State.Step >= 0 ? State.NodePos : 0.f;
 			for (int32 Link = 0; Link < Run.Num(); ++Link)
 			{
@@ -800,6 +830,7 @@ namespace
 				{
 					News.Add({Track, Run[Link], INDEX_NONE, TrackStart, TrackEnd + Train.Length});
 				}
+				AddZones(Run[Link], TrackEnd - Graph.Length[Track]);
 				TrackStart = TrackEnd;
 			}
 			const bool bCanWait = State.bStopped;
@@ -1004,6 +1035,23 @@ namespace
 				Pass.ClearAt = StepEnd[Step] + Train.Length;
 				Pass.Step = Step;
 				Out.Passes.Add(Pass);
+				for (const FATSippZone& Zone : Graph.ZonesOf[Graph.TrackOf[Node]])
+				{
+					float ZoneFrom = 0.f;
+					float ZoneTo = 0.f;
+					ZoneSpan(Node, Zone, ZoneFrom, ZoneTo);
+					const float Start = StepEnd[Step] - Graph.Length[Graph.TrackOf[Node]];
+					FATSippPass Crossing;
+					Crossing.Resource = Zone.Resource;
+					Crossing.Exit = Node;
+					Crossing.EnterAt = Start + ZoneFrom > 0.f ? Start + ZoneFrom : -1.f;
+					Crossing.ClearAt = Start + ZoneTo + Train.Length;
+					Crossing.Step = Step;
+					if (Crossing.ClearAt > 0.f)
+					{
+						Out.Passes.Add(Crossing);
+					}
+				}
 			}
 			for (FATSippPass& Pass : Out.Passes)
 			{
@@ -1023,7 +1071,7 @@ namespace
 					const bool bTrack = Pass.Resource < Graph.Length.Num();
 					if (Pass.Step == INDEX_NONE)
 					{
-						return Pass.ClearAt - Train.Length - (bTrack ? Graph.Length[Pass.Resource] : Graph.JointFoul[Pass.Resource - Graph.Length.Num()]);
+						return Pass.ClearAt - Train.Length - (bTrack ? Graph.Length[Pass.Resource] : Graph.IsJoint(Pass.Resource) ? Graph.JointFoul[Pass.Resource - Graph.Length.Num()] : 0.f);
 					}
 					return bTrack && Pass.Step == 0 ? StepEnd[0] - Graph.Length[Pass.Resource] : Pass.EnterAt;
 				};
@@ -1031,7 +1079,7 @@ namespace
 				for (const FATSippPass& Pass : Out.Passes)
 				{
 					const float Start = StartOf(Pass);
-					if (Pass.Resource >= Graph.Length.Num() && Start < Last.Pos)
+					if (Graph.IsJoint(Pass.Resource) && Start < Last.Pos)
 					{
 						SwitchAt = FMath::Max(SwitchAt, Start);
 					}
@@ -1070,6 +1118,7 @@ namespace
 					Out.WaitStep = Here.Step;
 					Out.WaitUntil = Until;
 					Out.WaitFor = For;
+					Out.WaitShort = Here.NodePos - Here.Pos;
 				}
 			}
 			Out.Arrival = bReached ? Last.Arrive : ATSippNever;
@@ -1103,7 +1152,7 @@ namespace
 			{
 				const FState& State = States[Chain[Link]];
 				const bool bGoal = Link == Chain.Num() - 1 && !Out.bFailed;
-				const float StopAt = State.NodePos - (bGoal ? 0.f : Graph.StopMarginOf[State.Node]);
+				const float StopAt = State.bStopped ? State.Pos : State.NodePos - (bGoal ? 0.f : Graph.StopMarginOf[State.Node]);
 				if (StopAt >= From)
 				{
 					Places.Add(StopAt);
@@ -1118,22 +1167,19 @@ namespace
 						continue;
 					}
 					bool bHolds = false;
-					ForEachConflict(Pass.Resource, [&](int32 Checked)
+					for (const FATSippBooking& Booking : Table.ByResource[Pass.Resource])
 					{
-						for (const FATSippBooking& Booking : Table.ByResource[Checked])
+						// Trains not driven plan nothing, ones planned after this one keep clear of it, and ones the same
+						// way queue behind it.
+						if (bHolds || Booking.Owner == Slot || Booking.Kind == EATSippKind::Standing || Booking.Clear + Headway <= Arrive
+							|| (Booking.Kind == EATSippKind::Moving && PlansAfter(Booking.Owner))
+							|| (Pass.Exit != INDEX_NONE && Booking.Exit == Pass.Exit && Booking.Via == Pass.Via)
+							|| IsBehind(Booking.Owner, Pass.Resource))
 						{
-							// Trains not driven plan nothing, ones planned after this one keep clear of it, and ones the same
-							// way queue behind it.
-							if (bHolds || Booking.Owner == Slot || Booking.Kind == EATSippKind::Standing || Booking.Clear + Headway <= Arrive
-								|| (Booking.Kind == EATSippKind::Moving && PlansAfter(Booking.Owner))
-								|| (Checked == Pass.Resource && Pass.Exit != INDEX_NONE && Booking.Exit == Pass.Exit && Booking.Via == Pass.Via)
-								|| IsBehind(Booking.Owner, Checked))
-							{
-								continue;
-							}
-							bHolds = true;
+							continue;
 						}
-					});
+						bHolds = true;
+					}
 					if (bHolds)
 					{
 						return true;
@@ -1166,24 +1212,21 @@ namespace
 				{
 					continue;
 				}
-				ForEachConflict(Pass.Resource, [&](int32 Checked)
+				for (const FATSippBooking& Booking : Table.ByResource[Pass.Resource])
 				{
-					for (const FATSippBooking& Booking : Table.ByResource[Checked])
+					if (Out.CommittedWith != INDEX_NONE || Booking.Owner == Slot || IsBehind(Booking.Owner, Pass.Resource)
+						|| !(Booking.bLocked || Train.First.Contains(Booking.Owner)))
 					{
-						if (Out.CommittedWith != INDEX_NONE || Booking.Owner == Slot || IsBehind(Booking.Owner, Checked)
-							|| !(Booking.bLocked || Train.First.Contains(Booking.Owner)))
-						{
-							continue;
-						}
-						const bool bSameWay = Checked == Pass.Resource && Pass.Exit != INDEX_NONE && Booking.Exit == Pass.Exit && Booking.Via == Pass.Via;
-						const bool bClash = bSameWay ? !(Pass.Enter >= Booking.Enter && Pass.Clear >= Booking.Clear) : Pass.Enter < Booking.Clear;
-						if (bClash)
-						{
-							Out.CommittedWith = Booking.Owner;
-							Out.CommittedAt = Checked;
-						}
+						continue;
 					}
-				});
+					const bool bSameWay = Pass.Exit != INDEX_NONE && Booking.Exit == Pass.Exit && Booking.Via == Pass.Via;
+					const bool bClash = bSameWay ? !(Pass.Enter >= Booking.Enter && Pass.Clear >= Booking.Clear) : Pass.Enter < Booking.Clear;
+					if (bClash)
+					{
+						Out.CommittedWith = Booking.Owner;
+						Out.CommittedAt = Pass.Resource;
+					}
+				}
 				if (Out.CommittedWith != INDEX_NONE)
 				{
 					return;

@@ -29,7 +29,7 @@ struct FATSettings
 	// How far a train stops short of the end of its granted track; before a switch, its fouling zone plus this. [m]
 	float StopDistanceMetres = 10.f;
 	// How close the centre lines of two tracks may come before trains on them would touch: a switch's branches foul it
-	// until they are this far apart, and tracks closer than this anywhere cross. [m]
+	// until they are this far apart, and crossing tracks conflict only where they come this close. [m]
 	float SwitchClearanceMetres = 3.f;
 	// Share of its planned braking a train's normal stops use. [%]
 	float NormalBrakingPercent = 85.f;

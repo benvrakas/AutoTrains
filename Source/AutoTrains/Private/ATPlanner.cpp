@@ -58,9 +58,9 @@ namespace
 		return Identifier ? Identifier->GetStationName().ToString() : TEXT("?");
 	}
 
-	FString ResourceName(const AFGBuildableRailroadTrack* Track, int32 Joint)
+	FString ResourceName(const AFGBuildableRailroadTrack* Track, int32 Joint, int32 Crossing = INDEX_NONE)
 	{
-		return Joint != INDEX_NONE ? FString::Printf(TEXT("switch %d"), Joint)
+		return Crossing != INDEX_NONE ? FString::Printf(TEXT("crossing %d"), Crossing) : Joint != INDEX_NONE ? FString::Printf(TEXT("switch %d"), Joint)
 			: GetNameSafe(Track).Replace(TEXT("Build_RailroadTrack_C_"), TEXT("track "));
 	}
 
@@ -75,6 +75,7 @@ void AATTrafficSubsystem::CollectPasses(const FATTrafficTrain& State, TArray<FPa
 	Out.Reset();
 	TSet<const AFGBuildableRailroadTrack*> OnRoute;
 	TSet<int32> JointsOnRoute;
+	TSet<int32> CrossingsOnRoute;
 	for (int32 Index = 0; Index < State.Route.Num(); ++Index)
 	{
 		const FATRouteStep& Step = State.Route[Index];
@@ -110,6 +111,24 @@ void AATTrafficSubsystem::CollectPasses(const FATTrafficTrain& State, TArray<FPa
 		Pass.ClearAt = End + State.Length;
 		Out.Add(Pass);
 		OnRoute.Add(Step.Track);
+		for (const FATZone& Zone : GetZones(Step.Track))
+		{
+			float From = 0.f;
+			float To = 0.f;
+			GetZoneAlong(Zone, Step.Track, Step.Exit, From, To);
+			FPass Crossing;
+			Crossing.Key.Crossing = Zone.Crossing;
+			Crossing.Exit = Step.Exit;
+			Crossing.RouteIndex = Index;
+			// The front in the zone already, though no vehicle counts as on it yet: entering now.
+			Crossing.EnterAt = Begin + From > 0.f || State.OccupiedCrossings.Contains(Zone.Crossing) ? Begin + From : 0.f;
+			Crossing.ClearAt = Begin + To + State.Length;
+			if (Crossing.ClearAt > 0.f)
+			{
+				Out.Add(Crossing);
+				CrossingsOnRoute.Add(Zone.Crossing);
+			}
+		}
 	}
 	// The way the tail runs over the tracks and switches behind the route, walking back from the route's first track:
 	// the connection it leaves each track through, and for each switch the connections it enters and leaves it by.
@@ -175,6 +194,18 @@ void AATTrafficSubsystem::CollectPasses(const FATTrafficTrain& State, TArray<FPa
 		Pass.EnterAt = -1.f;
 		const float Clear = GetTailClearDistance(State, nullptr, Joint);
 		Pass.ClearAt = Clear >= 0.f ? Clear : State.Length + GetJointFoulDistance(Joint);
+		Out.Add(Pass);
+	}
+	for (const int32 Crossing : State.OccupiedCrossings)
+	{
+		if (CrossingsOnRoute.Contains(Crossing))
+		{
+			continue;
+		}
+		FPass Pass;
+		Pass.Key.Crossing = Crossing;
+		Pass.EnterAt = -1.f;
+		Pass.ClearAt = State.Length;
 		Out.Add(Pass);
 	}
 	Out.StableSort([](const FPass& A, const FPass& B) { return A.EnterAt < B.EnterAt; });
@@ -443,30 +474,11 @@ bool AATTrafficSubsystem::CanEnter(FATTrafficTrain& Self, const FResourceKey& Ke
 	// A train ahead of this one on its route the same way is followed through the same track or switch the same way; the
 	// follow limit keeps the distance.
 	auto IsFollowed = [this, &Self](const FATTrafficTrain* Other) { return Other && Other->bManaged && GetRouteOrder(Self, *Other) > 0; };
-	TArray<FResourceKey, TInlineAllocator<4>> Keys;
-	if (Key.Joint != INDEX_NONE)
-	{
-		Keys.Add(Key);
-	}
-	else
-	{
-		for (const AFGBuildableRailroadTrack* Conflict : GetConflicts(Key.Track))
-		{
-			FResourceKey Crossing;
-			Crossing.Track = Conflict;
-			Keys.Add(Crossing);
-		}
-	}
 	// Held from its last grant and locked (it may not stop short of it at service braking) or without a slot in its
 	// plan: the train keeps it whatever was booked since; only a train standing there or holding it stops it.
 	const bool bKeeps = bHeldBefore && (bLocked || bUnplanned);
-	for (const FResourceKey& Checked : Keys)
+	if (const TArray<FBooking>* Bookings = bKeeps ? nullptr : mBookings.Find(Key))
 	{
-		const TArray<FBooking>* Bookings = bKeeps ? nullptr : mBookings.Find(Checked);
-		if (!Bookings)
-		{
-			continue;
-		}
 		for (const FBooking& Booking : *Bookings)
 		{
 			if (Booking.Owner == SelfTrain)
@@ -478,7 +490,7 @@ bool AATTrafficSubsystem::CanEnter(FATTrafficTrain& Self, const FResourceKey& Ke
 			FATTrafficTrain* const* Other = mStateOf.Find(Booking.Owner);
 			const int32 Ahead = Other ? FrontIndexOn(Self, **Other) : INDEX_NONE;
 			const bool bAheadHere = Ahead != INDEX_NONE && Ahead <= Index;
-			if (!bAheadHere && Other && IsBehind(**Other, Self, Checked))
+			if (!bAheadHere && Other && IsBehind(**Other, Self, Key))
 			{
 				continue;
 			}
@@ -488,13 +500,13 @@ bool AATTrafficSubsystem::CanEnter(FATTrafficTrain& Self, const FResourceKey& Ke
 			{
 				continue;
 			}
-			if (Checked == Key && Exit && Booking.Exit == Exit && Booking.Via == Via && Other && IsFollowed(*Other))
+			if (Exit && Booking.Exit == Exit && Booking.Via == Via && Other && IsFollowed(*Other))
 			{
 				Self.FollowedTrains.Add((*Other)->Train);
 				continue;
 			}
 			OutBlocker = Other ? *Other : nullptr;
-			OutWhy = FString::Printf(TEXT("booked first on %s (%s, enters in %s, clear in %s)"), *ResourceName(Checked.Track, Checked.Joint),
+			OutWhy = FString::Printf(TEXT("booked first on %s (%s, enters in %s, clear in %s)"), *ResourceName(Key.Track, Key.Joint, Key.Crossing),
 				Booking.bLocked ? TEXT("locked") : Booking.bHeld ? TEXT("held") : Booking.bCommitted ? TEXT("committed") : TEXT("planned"), *SecondsText(Booking.Enter - Now), *SecondsText(Booking.Clear - Now));
 			return false;
 		}
@@ -508,43 +520,21 @@ bool AATTrafficSubsystem::CanEnter(FATTrafficTrain& Self, const FResourceKey& Ke
 		{
 			continue;
 		}
-		bool bHolds = false;
-		const AFGBuildableRailroadTrack* On = nullptr;
-		if (Key.Joint != INDEX_NONE)
-		{
-			bHolds = HoldsJoint(Other, Key.Joint);
-		}
-		else
-		{
-			for (const FResourceKey& Checked : Keys)
-			{
-				if (!bHolds && HoldsTrack(Other, Checked.Track))
-				{
-					bHolds = true;
-					On = Checked.Track;
-				}
-			}
-		}
-		if (!bHolds)
-		{
-			continue;
-		}
+		const bool bHolds = Key.Joint != INDEX_NONE ? HoldsJoint(Other, Key.Joint) : Key.Crossing != INDEX_NONE ? HoldsCrossing(Other, Key.Crossing) : HoldsTrack(Other, Key.Track);
 		// Holding it behind this train on the same line: it has to pass this one first.
-		FResourceKey HeldKey;
-		HeldKey.Track = Key.Joint != INDEX_NONE ? nullptr : On;
-		HeldKey.Joint = Key.Joint;
-		if (IsBehind(Other, Self, HeldKey))
+		if (!bHolds || IsBehind(Other, Self, Key))
 		{
 			continue;
 		}
-		if ((Key.Joint != INDEX_NONE || On == Key.Track) && IsFollowed(&Other))
+		if (IsFollowed(&Other))
 		{
 			Self.FollowedTrains.Add(Other.Train);
 			continue;
 		}
-		const bool bStands = Key.Joint != INDEX_NONE ? Other.OccupiedJoints.Contains(Key.Joint) : Other.Occupied.Contains(const_cast<AFGBuildableRailroadTrack*>(On));
+		const bool bStands = Key.Joint != INDEX_NONE ? Other.OccupiedJoints.Contains(Key.Joint)
+			: Key.Crossing != INDEX_NONE ? Other.OccupiedCrossings.Contains(Key.Crossing) : Other.Occupied.Contains(const_cast<AFGBuildableRailroadTrack*>(Key.Track));
 		OutBlocker = &Other;
-		OutWhy = FString::Printf(TEXT("%s %s"), bStands ? TEXT("stands on") : TEXT("holds"), *ResourceName(On, Key.Joint));
+		OutWhy = FString::Printf(TEXT("%s %s"), bStands ? TEXT("stands on") : TEXT("holds"), *ResourceName(Key.Track, Key.Joint, Key.Crossing));
 		return false;
 	}
 	return true;
@@ -559,16 +549,19 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 		HeldTracks.Add(Claim.Get());
 	}
 	const TSet<int32> HeldJoints = State.ClaimedJoints;
+	const TSet<int32> HeldCrossings = State.ClaimedCrossings;
 	State.Claims.Reset();
 	State.FollowedTrains.Reset();
 	State.BlockedBy = nullptr;
 	State.BlockedReason.Reset();
 	State.BlockedKey.Reset();
+	State.AuthorityCut = -1.f;
 	// Enough to stop from the speed it is heading for, so it can speed up.
 	const float Heading = FMath::Max(State.Speed, GetRouteSpeed(State).Cruise);
 	const float Need = GetStoppingDistance(State, Heading) + State.Length + mSettings.LookaheadMetres * 100.f;
 	auto TrackEnter = [&State](const AFGBuildableRailroadTrack* Track) { const double* Enter = State.PlanTrackEnter.Find(Track); return Enter ? *Enter : OpenTime; };
 	auto JointEnter = [&State](int32 Joint) { const double* Enter = State.PlanJointEnter.Find(Joint); return Enter ? *Enter : OpenTime; };
+	auto CrossingEnter = [&State](int32 Crossing) { const double* Enter = State.PlanCrossingEnter.Find(Crossing); return Enter ? *Enter : OpenTime; };
 	// Where the plan's first wait stands the front now.
 	State.PlanWaitAt = -1.f;
 	if (State.PlanDepart >= 0.0 && State.bPlanWaitHere)
@@ -581,7 +574,7 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 		{
 			if (Step.Exit == State.PlanWaitExit.Get())
 			{
-				State.PlanWaitAt = FMath::Max(Step.EndDistance - State.FrontAhead - GetStopMargin(Step.Exit), 0.f);
+				State.PlanWaitAt = FMath::Max(Step.EndDistance - State.FrontAhead - State.PlanWaitShort, 0.f);
 				break;
 			}
 		}
@@ -647,6 +640,7 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 		{
 			State.BlockedAtTrack = Where.StartsWith(TEXT("the switch")) ? nullptr : Step.Track;
 			State.BlockedAtJoint = Where.StartsWith(TEXT("the switch")) ? Joint : INDEX_NONE;
+			State.BlockedAtCrossing = INDEX_NONE;
 			State.BlockedBy = Blocker ? Blocker->Train : nullptr;
 			State.BlockedReason = FString::Printf(TEXT("waits for %s before %s, %.0f m ahead: %s"), *NameOf(Blocker ? Blocker->Train.Get() : nullptr), *Where,
 				FMath::Max(Begin, 0.f) / 100.f, *Why);
@@ -655,6 +649,44 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 			break;
 		}
 		State.Claims.Add(Step.Track);
+		// Its crossing zones in turn, up to where its plan waits; the grant ends short of the first one it can't have.
+		const float End = Step.EndDistance - State.FrontAhead;
+		TArray<TPair<float, int32>, TInlineAllocator<4>> Zones;
+		for (const FATZone& Zone : GetZones(Step.Track))
+		{
+			float From = 0.f;
+			float To = 0.f;
+			GetZoneAlong(Zone, Step.Track, Step.Exit, From, To);
+			Zones.Add({Begin + From, Zone.Crossing});
+		}
+		Zones.Sort([](const TPair<float, int32>& A, const TPair<float, int32>& B) { return A.Key < B.Key; });
+		for (const TPair<float, int32>& Zone : Zones)
+		{
+			if ((bPlanWaits && Zone.Key > State.PlanWaitAt) || State.OccupiedCrossings.Contains(Zone.Value))
+			{
+				continue;
+			}
+			FResourceKey Key;
+			Key.Crossing = Zone.Value;
+			if (!CanEnter(State, Key, Index, CrossingEnter(Zone.Value), State.PlanCrossingLocked.Contains(Zone.Value), HeldCrossings.Contains(Zone.Value), nullptr, Step.Exit, Now, Blocker, Why))
+			{
+				Where = ResourceName(nullptr, INDEX_NONE, Zone.Value);
+				State.AuthorityCut = End - Zone.Key + GetStopDistance();
+				State.BlockedAtTrack = nullptr;
+				State.BlockedAtJoint = INDEX_NONE;
+				State.BlockedAtCrossing = Zone.Value;
+				State.BlockedBy = Blocker ? Blocker->Train : nullptr;
+				State.BlockedReason = FString::Printf(TEXT("waits for %s before %s, %.0f m ahead: %s"), *NameOf(Blocker ? Blocker->Train.Get() : nullptr), *Where,
+					FMath::Max(Zone.Key, 0.f) / 100.f, *Why);
+				State.BlockedKey = NameOf(Blocker ? Blocker->Train.Get() : nullptr) + TEXT("|") + Where;
+				bBlocked = true;
+				break;
+			}
+		}
+		if (bBlocked)
+		{
+			break;
+		}
 		if (Step.EndDistance - State.FrontAhead >= Need)
 		{
 			break;
@@ -662,6 +694,7 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 		// No further than where its plan waits: that's a place it can stand without blocking anyone.
 		if (bPlanWaits && Step.EndDistance - State.FrontAhead - GetStopMargin(Step.Exit) >= State.PlanWaitAt - 100.f)
 		{
+			State.AuthorityCut = End - State.PlanWaitAt;
 			State.BlockedBy = State.PlanWaitFor;
 			State.BlockedReason = FString::Printf(TEXT("waits for %s at the end of %s: its plan moves off in %s"), *NameOf(State.PlanWaitFor.Get()),
 				*ResourceName(Step.Track, INDEX_NONE), *SecondsText(State.PlanDepart - Now));
@@ -739,6 +772,10 @@ void AATTrafficSubsystem::FillSippTrain(const FATTrafficTrain& State, const FATS
 {
 	auto ResourceOf = [&Graph](const FResourceKey& Key)
 	{
+		if (Key.Crossing != INDEX_NONE)
+		{
+			return Key.Crossing < Graph.NumCrossings ? Graph.CrossingResource(Key.Crossing) : INDEX_NONE;
+		}
 		if (Key.Joint != INDEX_NONE)
 		{
 			return Graph.JointFoul.IsValidIndex(Key.Joint) ? Graph.JointResource(Key.Joint) : INDEX_NONE;
@@ -795,7 +832,8 @@ void AATTrafficSubsystem::FillSippTrain(const FATTrafficTrain& State, const FATS
 		{
 			continue;
 		}
-		const bool bHolds = Pass.RouteIndex != INDEX_NONE && Pass.RouteIndex <= HeldIndex;
+		const bool bHolds = Pass.RouteIndex != INDEX_NONE && Pass.RouteIndex <= HeldIndex
+			&& (Pass.Key.Crossing == INDEX_NONE || State.ClaimedCrossings.Contains(Pass.Key.Crossing));
 		if (Pass.RouteIndex == INDEX_NONE || Pass.EnterAt <= 0.f || Pass.EnterAt <= Committed || (bHolds && Pass.EnterAt <= LockedWithin))
 		{
 			Out.Locked.Add(Resource);
@@ -931,6 +969,10 @@ void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds, bool bW
 	}
 	auto ResourceOf = [&Graph](const FResourceKey& Key)
 	{
+		if (Key.Crossing != INDEX_NONE)
+		{
+			return Key.Crossing < Graph.NumCrossings ? Graph.CrossingResource(Key.Crossing) : INDEX_NONE;
+		}
 		if (Key.Joint != INDEX_NONE)
 		{
 			return Graph.JointFoul.IsValidIndex(Key.Joint) ? Graph.JointResource(Key.Joint) : INDEX_NONE;
@@ -1014,6 +1056,12 @@ void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds, bool bW
 			Key.Joint = Joint;
 			Out.Standing.Add(ResourceOf(Key));
 		}
+		for (const int32 Crossing : State.OccupiedCrossings)
+		{
+			FResourceKey Key;
+			Key.Crossing = Crossing;
+			Out.Standing.Add(ResourceOf(Key));
+		}
 		Out.Standing.Remove(INDEX_NONE);
 	}
 	// The bookings as they are: what trains later in the order keep from earlier ones until their turn.
@@ -1076,9 +1124,13 @@ void AATTrafficSubsystem::ApplyPlanCycle()
 		{
 			Key.Track = Graph.Tracks[Resource];
 		}
-		else
+		else if (Graph.IsJoint(Resource))
 		{
 			Key.Joint = Resource - Graph.Length.Num();
+		}
+		else
+		{
+			Key.Crossing = Resource - Graph.CrossingResource(0);
 		}
 		for (const FATSippBooking& Booking : Cycle->Table.ByResource[Resource])
 		{
@@ -1149,7 +1201,8 @@ void AATTrafficSubsystem::ApplyPlan(FATTrafficTrain& State, const FATSippCycle& 
 	auto TrainOf = [&Cycle](int32 Index) -> AFGTrain* { return Cycle.Owners.IsValidIndex(Index) ? Cycle.Owners[Index].Get() : nullptr; };
 	auto Name = [&Graph](int32 Resource)
 	{
-		return !Graph.Length.IsValidIndex(Resource) ? FString::Printf(TEXT("switch %d"), Resource - Graph.Length.Num()) : ResourceName(Graph.Tracks[Resource], INDEX_NONE);
+		return Graph.Length.IsValidIndex(Resource) ? ResourceName(Graph.Tracks[Resource], INDEX_NONE)
+			: Graph.IsJoint(Resource) ? ResourceName(nullptr, Resource - Graph.Length.Num()) : ResourceName(nullptr, INDEX_NONE, Resource - Graph.CrossingResource(0));
 	};
 	if (Result.bRerouted)
 	{
@@ -1161,6 +1214,8 @@ void AATTrafficSubsystem::ApplyPlan(FATTrafficTrain& State, const FATSippCycle& 
 	State.PlanJointEnter.Reset();
 	State.PlanTrackLocked.Reset();
 	State.PlanJointLocked.Reset();
+	State.PlanCrossingEnter.Reset();
+	State.PlanCrossingLocked.Reset();
 	for (const FATSippPass& Pass : Result.Passes)
 	{
 		if (Pass.Step == INDEX_NONE || IsOpen(Pass.Enter))
@@ -1173,6 +1228,15 @@ void AATTrafficSubsystem::ApplyPlan(FATTrafficTrain& State, const FATSippCycle& 
 			if (Pass.bLocked)
 			{
 				State.PlanTrackLocked.Add(Graph.Tracks[Pass.Resource]);
+			}
+		}
+		else if (!Graph.IsJoint(Pass.Resource))
+		{
+			const int32 Crossing = Pass.Resource - Graph.CrossingResource(0);
+			State.PlanCrossingEnter.Add(Crossing, Pass.Enter);
+			if (Pass.bLocked)
+			{
+				State.PlanCrossingLocked.Add(Crossing);
 			}
 		}
 		else
@@ -1188,6 +1252,7 @@ void AATTrafficSubsystem::ApplyPlan(FATTrafficTrain& State, const FATSippCycle& 
 	const bool bWaits = Result.WaitStep != INDEX_NONE;
 	State.bPlanWaitHere = bWaits && Result.WaitStep < 0;
 	State.PlanWaitExit = bWaits && Result.Route.IsValidIndex(Result.WaitStep) ? Graph.Connections[Result.Route[Result.WaitStep]] : TWeakObjectPtr<UFGRailroadTrackConnectionComponent>();
+	State.PlanWaitShort = Result.WaitShort;
 	State.PlanDepart = bWaits ? Result.WaitUntil : -1.0;
 	State.PlanWaitFor = TrainOf(Result.WaitFor);
 	State.PlanArrival = Result.bFailed ? OpenTime : Result.Arrival;
@@ -1375,7 +1440,8 @@ void AATTrafficSubsystem::UpdatePlannedTraffic(float DeltaSeconds)
 		GrantFromPlan(*State, Now);
 	}
 
-	// Check: no two trains hold conflicting resources, apart from following the same way or passing through a deadlock.
+	// Check: no two trains hold the same track or crossing zone, apart from following the same way or passing through a
+	// deadlock.
 	for (const FATTrafficTrain* Checked : Driving)
 	{
 		const FATTrafficTrain& State = *Checked;
@@ -1383,78 +1449,67 @@ void AATTrafficSubsystem::UpdatePlannedTraffic(float DeltaSeconds)
 		{
 			continue;
 		}
-		for (const TWeakObjectPtr<AFGBuildableRailroadTrack>& Claim : State.Claims)
+		for (const TPair<const AFGTrain*, FATTrafficTrain*>& Pair : mStateOf)
 		{
-			const AFGBuildableRailroadTrack* Track = Claim.Get();
-			if (!Track || State.Occupied.Contains(const_cast<AFGBuildableRailroadTrack*>(Track)))
+			const FATTrafficTrain& Other = *Pair.Value;
+			if (&Other == &State || Other.GhostUntil >= 0.0 || State.FollowedTrains.Contains(Other.Train) || Other.FollowedTrains.Contains(State.Train))
 			{
 				continue;
 			}
-			for (const AFGBuildableRailroadTrack* Conflict : GetConflicts(Track))
+			TArray<FResourceKey, TInlineAllocator<4>> Shared;
+			for (const TWeakObjectPtr<AFGBuildableRailroadTrack>& Claim : State.Claims)
 			{
-				for (const TPair<const AFGTrain*, FATTrafficTrain*>& Pair : mStateOf)
+				const AFGBuildableRailroadTrack* Track = Claim.Get();
+				FResourceKey Key;
+				Key.Track = Track;
+				// One behind the other on the same line: the one behind can't get there first.
+				if (Track && !State.Occupied.Contains(const_cast<AFGBuildableRailroadTrack*>(Track)) && HoldsTrack(Other, Track) && !IsBehind(Other, State, Key) && !IsBehind(State, Other, Key))
 				{
-					const FATTrafficTrain& Other = *Pair.Value;
-					if (&Other == &State || Other.GhostUntil >= 0.0 || !HoldsTrack(Other, Conflict) || (Conflict == Track && (State.FollowedTrains.Contains(Other.Train) || Other.FollowedTrains.Contains(State.Train))))
-					{
-						continue;
-					}
-					// One behind the other on the same line: the one behind can't get there first.
-					FResourceKey ClaimKey;
-					ClaimKey.Track = Track;
-					FResourceKey HeldKey;
-					HeldKey.Track = Conflict;
-					if (IsBehind(Other, State, HeldKey) || IsBehind(State, Other, ClaimKey))
-					{
-						continue;
-					}
-					const FString Pair2 = NameOf(State.Train.Get()) + TEXT("|") + NameOf(Other.Train.Get());
-					if (Pair2 != mLastDoubleHold)
-					{
-						mLastDoubleHold = Pair2;
-						UE_LOG(LogAutoTrains, Warning, TEXT("planner: CHECK FAILED: %s was granted %s while %s holds %s"), *NameOf(State.Train.Get()), *ResourceName(Track, INDEX_NONE),
-							*NameOf(Other.Train.Get()), *ResourceName(Conflict, INDEX_NONE));
-					}
+					Shared.Add(Key);
 				}
+			}
+			for (const int32 Crossing : State.ClaimedCrossings)
+			{
+				FResourceKey Key;
+				Key.Crossing = Crossing;
+				if (!State.OccupiedCrossings.Contains(Crossing) && HoldsCrossing(Other, Crossing))
+				{
+					Shared.Add(Key);
+				}
+			}
+			const FString Pair2 = NameOf(State.Train.Get()) + TEXT("|") + NameOf(Other.Train.Get());
+			if (Shared.Num() > 0 && Pair2 != mLastDoubleHold)
+			{
+				mLastDoubleHold = Pair2;
+				UE_LOG(LogAutoTrains, Warning, TEXT("planner: CHECK FAILED: %s was granted %s while %s holds it"), *NameOf(State.Train.Get()),
+					*ResourceName(Shared[0].Track, INDEX_NONE, Shared[0].Crossing), *NameOf(Other.Train.Get()));
 			}
 		}
 	}
 
-	// Check: no train stands on a track crossing one another train holds; logged with both trains' state, once a pair.
+	// Check: no train stands on a crossing zone another train holds; logged with both trains' state, once a pair.
 	for (const TPair<const AFGTrain*, FATTrafficTrain*>& Checked : mStateOf)
 	{
 		const FATTrafficTrain& State = *Checked.Value;
-		for (const AFGBuildableRailroadTrack* Track : State.Occupied)
+		for (const int32 Crossing : State.OccupiedCrossings)
 		{
-			for (const AFGBuildableRailroadTrack* Conflict : GetConflicts(Track))
+			for (const TPair<const AFGTrain*, FATTrafficTrain*>& Pair : mStateOf)
 			{
-				if (Conflict == Track)
+				const FATTrafficTrain& Other = *Pair.Value;
+				if (&Other == &State || !HoldsCrossing(Other, Crossing) || State.FollowedTrains.Contains(Other.Train) || Other.FollowedTrains.Contains(State.Train))
 				{
 					continue;
 				}
-				for (const TPair<const AFGTrain*, FATTrafficTrain*>& Pair : mStateOf)
+				const FString Key = NameOf(State.Train.Get()) + TEXT("|") + NameOf(Other.Train.Get()) + TEXT("|") + ResourceName(nullptr, INDEX_NONE, Crossing);
+				if (mLoggedCrossings.Contains(Key))
 				{
-					const FATTrafficTrain& Other = *Pair.Value;
-					if (&Other == &State || !HoldsTrack(Other, Conflict))
-					{
-						continue;
-					}
-					const FString Key = NameOf(State.Train.Get()) + TEXT("|") + NameOf(Other.Train.Get()) + TEXT("|") + ResourceName(Track, INDEX_NONE);
-					if (mLoggedCrossings.Contains(Key))
-					{
-						continue;
-					}
-					mLoggedCrossings.Add(Key);
-					const AFGTrain* OtherTrain = Other.Train.Get();
-					const float OtherAt = OtherTrain ? GetDistanceToTrackStart(OtherTrain, Other, Conflict) : -1.f;
-					UE_LOG(LogAutoTrains, Warning, TEXT("planner: CROSSING: %s (%s, %.0f km/h, granted it: %s, may drive %.0f m%s%s) stands on %s, which crosses %s held by %s (%s, %.0f km/h, %s, it %s)"),
-						*NameOf(State.Train.Get()), State.bManaged ? TEXT("driving") : TEXT("not driven"), State.Speed * 0.036f,
-						State.Claims.ContainsByPredicate([Track](const TWeakObjectPtr<AFGBuildableRailroadTrack>& Claim) { return Claim.Get() == Track; }) ? TEXT("yes") : TEXT("no"),
-						GetAuthorityDistance(State.Train.Get()) / 100.f, State.BlockedReason.IsEmpty() ? TEXT("") : TEXT(", "), *State.BlockedReason,
-						*ResourceName(Track, INDEX_NONE), *ResourceName(Conflict, INDEX_NONE), *NameOf(OtherTrain), Other.bManaged ? TEXT("driving") : TEXT("not driven"),
-						Other.Speed * 0.036f, Other.Occupied.Contains(const_cast<AFGBuildableRailroadTrack*>(Conflict)) ? TEXT("stands on it") : TEXT("granted it"),
-						OtherAt > -1e8f ? *FString::Printf(TEXT("%.0f m ahead"), OtherAt / 100.f) : TEXT("off its path"));
+					continue;
 				}
+				mLoggedCrossings.Add(Key);
+				UE_LOG(LogAutoTrains, Warning, TEXT("planner: CROSSING: %s (%s, %.0f km/h, may drive %.0f m%s%s) stands on %s, which %s (%s, %.0f km/h) %s"),
+					*NameOf(State.Train.Get()), State.bManaged ? TEXT("driving") : TEXT("not driven"), State.Speed * 0.036f, GetAuthorityDistance(State.Train.Get()) / 100.f,
+					State.BlockedReason.IsEmpty() ? TEXT("") : TEXT(", "), *State.BlockedReason, *ResourceName(nullptr, INDEX_NONE, Crossing), *NameOf(Other.Train.Get()),
+					Other.bManaged ? TEXT("driving") : TEXT("not driven"), Other.Speed * 0.036f, Other.OccupiedCrossings.Contains(Crossing) ? TEXT("stands on too") : TEXT("was granted"));
 			}
 		}
 	}
@@ -1534,34 +1589,22 @@ void AATTrafficSubsystem::LogWaitDump(const FATTrafficTrain& State, double Now) 
 		return FString::Printf(TEXT("%s (%s, rank %d, %.0f km/h, waited %.0f s, %d claims%s%s%s)"), *NameOf(Train), Other->bManaged ? TEXT("driving") : TEXT("not driven"),
 			Other->PlanRank, Other->Speed * 0.036f, Other->WaitingSeconds, Other->Claims.Num(), *Drive, Other->BlockedReason.IsEmpty() ? TEXT("") : TEXT(", "), *Other->BlockedReason);
 	};
-	const bool bJoint = State.BlockedAtJoint != INDEX_NONE;
-	const double* Enter = bJoint ? State.PlanJointEnter.Find(State.BlockedAtJoint) : State.PlanTrackEnter.Find(State.BlockedAtTrack);
-	const bool bLocked = bJoint ? State.PlanJointLocked.Contains(State.BlockedAtJoint) : State.PlanTrackLocked.Contains(State.BlockedAtTrack);
-	FString Lines = FString::Printf(TEXT("planner: WAIT %s: %s; %s; its booking there %s%s"), *Describe(&State), *State.PlanNote, *ResourceName(State.BlockedAtTrack, State.BlockedAtJoint),
+	FResourceKey Key;
+	Key.Joint = State.BlockedAtJoint;
+	Key.Crossing = State.BlockedAtCrossing;
+	Key.Track = Key.Joint == INDEX_NONE && Key.Crossing == INDEX_NONE ? State.BlockedAtTrack : nullptr;
+	const double* Enter = Key.Joint != INDEX_NONE ? State.PlanJointEnter.Find(Key.Joint)
+		: Key.Crossing != INDEX_NONE ? State.PlanCrossingEnter.Find(Key.Crossing) : State.PlanTrackEnter.Find(Key.Track);
+	const bool bLocked = Key.Joint != INDEX_NONE ? State.PlanJointLocked.Contains(Key.Joint)
+		: Key.Crossing != INDEX_NONE ? State.PlanCrossingLocked.Contains(Key.Crossing) : State.PlanTrackLocked.Contains(Key.Track);
+	FString Lines = FString::Printf(TEXT("planner: WAIT %s: %s; %s; its booking there %s%s"), *Describe(&State), *State.PlanNote, *ResourceName(Key.Track, Key.Joint, Key.Crossing),
 		Enter ? *FString::Printf(TEXT("enters in %s"), *SecondsText(*Enter - Now)) : TEXT("missing"), bLocked ? TEXT(", locked") : TEXT(""));
-	TArray<FResourceKey, TInlineAllocator<4>> Keys;
-	if (bJoint)
+	if (const TArray<FBooking>* Bookings = mBookings.Find(Key))
 	{
-		FResourceKey Key;
-		Key.Joint = State.BlockedAtJoint;
-		Keys.Add(Key);
-	}
-	else if (State.BlockedAtTrack)
-	{
-		for (const AFGBuildableRailroadTrack* Conflict : GetConflicts(State.BlockedAtTrack))
-		{
-			FResourceKey Key;
-			Key.Track = Conflict;
-			Keys.Add(Key);
-		}
-	}
-	for (const FResourceKey& Key : Keys)
-	{
-		const TArray<FBooking>* Bookings = mBookings.Find(Key);
-		for (const FBooking& Booking : Bookings ? *Bookings : TArray<FBooking>())
+		for (const FBooking& Booking : *Bookings)
 		{
 			FATTrafficTrain* const* Other = mStateOf.Find(Booking.Owner);
-			Lines += FString::Printf(TEXT("\n    %s: %s %s-%s s%s%s%s, kind %d; %s"), *ResourceName(Key.Track, Key.Joint), *NameOf(Booking.Owner), *SecondsText(Booking.Enter - Now),
+			Lines += FString::Printf(TEXT("\n    %s: %s %s-%s s%s%s%s, kind %d; %s"), *ResourceName(Key.Track, Key.Joint, Key.Crossing), *NameOf(Booking.Owner), *SecondsText(Booking.Enter - Now),
 				*SecondsText(Booking.Clear - Now), Booking.bLocked ? TEXT(" locked") : TEXT(""), Booking.bHeld ? TEXT(" held") : TEXT(""),
 				Booking.bCommitted ? TEXT(" committed") : TEXT(""), static_cast<int32>(Booking.Kind),
 				Other ? *Describe(*Other) : TEXT("gone"));

@@ -25,6 +25,15 @@ constexpr float ATBrakeBandWidth = 250.f;
 constexpr int32 ATBrakeBands = 32;
 
 // Where one vehicle of a train stands.
+// A crossing zone on a track: the crossing and the stretch of the track it covers, from the end of the track's
+// connection 0. [cm]
+struct FATZone
+{
+	int32 Crossing = INDEX_NONE;
+	float From = 0.f;
+	float To = 0.f;
+};
+
 struct FATVehicleSpot
 {
 	AFGBuildableRailroadTrack* Track = nullptr;
@@ -80,12 +89,17 @@ struct FATTrafficTrain
 	TArray<FATRouteStep> Route;
 	TSet<AFGBuildableRailroadTrack*> Occupied;
 	TArray<FATVehicleSpot> Vehicles;
-	// Switch joints with a vehicle of this train within their fouling zone.
+	// Switch joints with a vehicle of this train within their fouling zone, and crossing zones with one on them.
 	TSet<int32> OccupiedJoints;
+	TSet<int32> OccupiedCrossings;
 	// Tracks ahead granted to this train, in route order; kept between updates until the train is past them.
 	TArray<TWeakObjectPtr<AFGBuildableRailroadTrack>> Claims;
-	// Switch joints the train's held tracks pass through.
+	// Switch joints the train's held tracks pass through, and crossing zones on them up to where its grant ends.
 	TSet<int32> ClaimedJoints;
+	TSet<int32> ClaimedCrossings;
+	// Where its grant ends on its last held track, as a distance before that track's end; -1 at the track's own stop
+	// margin. [cm]
+	float AuthorityCut = -1.f;
 	// Trains holding track this train has claimed too: it follows them and keeps its distance from them.
 	TArray<TWeakObjectPtr<AFGTrain>> FollowLeaders;
 	// World time each current follow leader became one, for the log. [s]
@@ -175,10 +189,13 @@ struct FATTrafficTrain
 	TMap<int32, double> PlanJointEnter;
 	TSet<const AFGBuildableRailroadTrack*> PlanTrackLocked;
 	TSet<int32> PlanJointLocked;
-	// The plan's first wait still ahead: at the end of the track left through PlanWaitExit, or where the train stands
-	// (bPlanWaitHere); when it moves off (world seconds, -1 for none), and the train it waits for. PlanWaitAt: how far
-	// ahead of the front that is, as of the last grant [cm].
+	TMap<int32, double> PlanCrossingEnter;
+	TSet<int32> PlanCrossingLocked;
+	// The plan's first wait still ahead: PlanWaitShort short of the end of the track left through PlanWaitExit, or
+	// where the train stands (bPlanWaitHere); when it moves off (world seconds, -1 for none), and the train it waits
+	// for. PlanWaitAt: how far ahead of the front that is, as of the last grant [cm].
 	TWeakObjectPtr<UFGRailroadTrackConnectionComponent> PlanWaitExit;
+	float PlanWaitShort = 0.f;
 	bool bPlanWaitHere = false;
 	float PlanWaitAt = -1.f;
 	double PlanDepart = -1.0;
@@ -220,6 +237,7 @@ struct FATTrafficTrain
 	// The track or switch the train waits at.
 	const AFGBuildableRailroadTrack* BlockedAtTrack = nullptr;
 	int32 BlockedAtJoint = INDEX_NONE;
+	int32 BlockedAtCrossing = INDEX_NONE;
 };
 
 // Server only. Train traffic without signals, planned in space and time (ATPlanner.cpp): every train books the tracks
@@ -318,8 +336,10 @@ private:
 	// negative number if Track isn't on it. [cm]
 	float GetDistanceToTrackStart(const AFGTrain* Train, const FATTrafficTrain& State, const AFGBuildableRailroadTrack* Track) const;
 
-	// Returns Track first, then every track crossing it.
-	const TArray<AFGBuildableRailroadTrack*>& GetConflicts(const AFGBuildableRailroadTrack* Track) const;
+	// The crossing zones on Track.
+	const TArray<FATZone>& GetZones(const AFGBuildableRailroadTrack* Track) const;
+	// Where Zone lies along Track driven towards Exit, from the track's start that way. [cm]
+	static void GetZoneAlong(const FATZone& Zone, const AFGBuildableRailroadTrack* Track, const UFGRailroadTrackConnectionComponent* Exit, float& OutFrom, float& OutTo);
 
 	// Returns the switch joint Connection belongs to, or INDEX_NONE.
 	int32 GetJoint(const UFGRailroadTrackConnectionComponent* Connection) const;
@@ -339,6 +359,7 @@ private:
 
 	bool HoldsTrack(const FATTrafficTrain& State, const AFGBuildableRailroadTrack* Track) const;
 	static bool HoldsJoint(const FATTrafficTrain& State, int32 Joint);
+	static bool HoldsCrossing(const FATTrafficTrain& State, int32 Crossing);
 
 	// How a train is timed along a route: cruising speed and length [cm/s] [cm], and the acceleration and service
 	// braking it plans with [cm/s^2].
@@ -387,8 +408,9 @@ private:
 	{
 		const AFGBuildableRailroadTrack* Track = nullptr;
 		int32 Joint = INDEX_NONE;
-		bool operator==(const FResourceKey& Other) const { return Track == Other.Track && Joint == Other.Joint; }
-		friend uint32 GetTypeHash(const FResourceKey& Key) { return HashCombine(::GetTypeHash(Key.Track), ::GetTypeHash(Key.Joint)); }
+		int32 Crossing = INDEX_NONE;
+		bool operator==(const FResourceKey& Other) const { return Track == Other.Track && Joint == Other.Joint && Crossing == Other.Crossing; }
+		friend uint32 GetTypeHash(const FResourceKey& Key) { return HashCombine(HashCombine(::GetTypeHash(Key.Track), ::GetTypeHash(Key.Joint)), ::GetTypeHash(Key.Crossing)); }
 	};
 	enum class EBookingKind : uint8
 	{
@@ -557,7 +579,9 @@ private:
 	FATSettings mSettings;
 	TMap<TWeakObjectPtr<AFGTrain>, FATTrafficTrain> mTrains;
 
-	TMap<const AFGBuildableRailroadTrack*, TArray<AFGBuildableRailroadTrack*>> mConflicts;
+	// Crossing zones by track, and how many crossings there are.
+	TMap<const AFGBuildableRailroadTrack*, TArray<FATZone>> mZonesOf;
+	int32 mCrossingCount = 0;
 	TMap<const UFGRailroadTrackConnectionComponent*, int32> mJointOf;
 	TMap<const UFGRailroadTrackConnectionComponent*, float> mFoulOf;
 	TMap<int32, float> mJointFoul;

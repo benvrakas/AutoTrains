@@ -625,3 +625,14 @@ train, then a row per train every 0.2 s:
   train is committed only to what it holds, and a moving one to what it can't stop short of with the stop margin of
   the switch before the step. A docked-departure route search tried before this (2964257) never ran and is
   reverted.
+- 1.3.4 crossing zones (user's report: on a junction a train going straight waited before the whole junction, not
+  just before the curve crossing its track; question: can trains use both rings of a double roundabout at once). Before,
+  crossing tracks conflicted as whole pieces (mConflicts) and stops were only at track ends. Now each crossing is a zone
+  resource (tracks + joints + crossing): on each track, the stretch whose centre line comes within the clearance of the
+  other's (sampled every 2 m, padded a step), FATZone / FATSippZone, mZonesOf / Graph.ZonesOf. Tracks conflict only with
+  themselves. Planner: a move books the zones the front reaches by its end (the rest on the next move); Expand offers a
+  stop StopDistance short of each zone on the run (not on the goal's track); stopped states are told apart by
+  position; Build adds zone passes; WaitShort gives where a wait stands short of its track end. Grants: zones in turn
+  per claimed track; a zone it can't have ends the grant AuthorityCut before the track end (StopMargin takes it);
+  ClaimedCrossings = zones on held tracks before the cut; OccupiedCrossings from vehicle spans; follow limits stop
+  before a zone a leader holds; checks and the wait dump name "crossing N". Untested in game.

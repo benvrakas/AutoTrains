@@ -462,6 +462,7 @@ void AATTrafficSubsystem::ReadTrain(FATTrafficTrain& State, AFGTrain* Train) con
 	State.Occupied.Reset();
 	State.Vehicles.Reset();
 	State.OccupiedJoints.Reset();
+	State.OccupiedCrossings.Reset();
 	State.FrontAhead = 0.f;
 	State.Grade = 0.f;
 	State.GradeAhead = 0.f;
@@ -526,6 +527,13 @@ void AATTrafficSubsystem::ReadTrain(FATTrafficTrain& State, AFGTrain* Train) con
 			if (Joint != INDEX_NONE && ToEnd < HalfLength + GetFoulDistance(Connection))
 			{
 				State.OccupiedJoints.Add(Joint);
+			}
+		}
+		for (const FATZone& Zone : GetZones(Track))
+		{
+			if (Position.Offset - HalfLength < Zone.To && Position.Offset + HalfLength > Zone.From)
+			{
+				State.OccupiedCrossings.Add(Zone.Crossing);
 			}
 		}
 		// ATC distances are from the MU master; find how far the train's front is ahead of it. Only tracks within the
@@ -598,6 +606,8 @@ void AATTrafficSubsystem::ReadTrain(FATTrafficTrain& State, AFGTrain* Train) con
 	{
 		State.Claims.Reset();
 		State.ClaimedJoints.Reset();
+		State.ClaimedCrossings.Reset();
+		State.AuthorityCut = -1.f;
 		State.FollowLeaders.Reset();
 		State.FollowedTrains.Reset();
 		State.AuthorityTrack = nullptr;
@@ -650,6 +660,23 @@ void AATTrafficSubsystem::RefreshClaimedJoints(FATTrafficTrain& State) const
 			State.OccupiedJoints.Add(Joint);
 		}
 	}
+	// Crossing zones on its held tracks; on the last one, only those before where its grant ends.
+	State.ClaimedCrossings.Reset();
+	for (int32 Index = 0; Index < State.Route.Num() && HoldsTrack(State, State.Route[Index].Track); ++Index)
+	{
+		const FATRouteStep& Step = State.Route[Index];
+		const bool bLast = Index + 1 == State.Route.Num() || !HoldsTrack(State, State.Route[Index + 1].Track);
+		for (const FATZone& Zone : GetZones(Step.Track))
+		{
+			float From = 0.f;
+			float To = 0.f;
+			GetZoneAlong(Zone, Step.Track, Step.Exit, From, To);
+			if (!bLast || State.AuthorityCut < 0.f || Step.Track->GetLength() - From > State.AuthorityCut)
+			{
+				State.ClaimedCrossings.Add(Zone.Crossing);
+			}
+		}
+	}
 }
 
 void AATTrafficSubsystem::UpdateAuthority(FATTrafficTrain& State) const
@@ -670,7 +697,7 @@ void AATTrafficSubsystem::UpdateAuthority(FATTrafficTrain& State) const
 		State.AuthorityPath = State.RoutePath;
 		State.AuthoritySegment = State.RouteFirstSegment + Last;
 		State.bAuthorityToGoal = Last == State.Route.Num() - 1;
-		State.StopMargin = GetStopMargin(State.Route[Last].Exit);
+		State.StopMargin = FMath::Max(GetStopMargin(State.Route[Last].Exit), State.AuthorityCut);
 	}
 	RefreshClaimedJoints(State);
 }
@@ -809,19 +836,9 @@ void AATTrafficSubsystem::UpdateFollowLeaders(FATTrafficTrain& State) const
 		const bool bShares = State.Claims.ContainsByPredicate([this, &Other](const TWeakObjectPtr<AFGBuildableRailroadTrack>& Claim)
 		{
 			const AFGBuildableRailroadTrack* Track = Claim.Get();
-			if (!Track)
-			{
-				return false;
-			}
-			for (const AFGBuildableRailroadTrack* Conflict : GetConflicts(Track))
-			{
-				if (HoldsTrack(Other, Conflict))
-				{
-					return true;
-				}
-			}
-			return false;
-		}) || State.ClaimedJoints.Array().ContainsByPredicate([&Other](int32 Joint) { return HoldsJoint(Other, Joint); });
+			return Track && HoldsTrack(Other, Track);
+		}) || State.ClaimedJoints.Array().ContainsByPredicate([&Other](int32 Joint) { return HoldsJoint(Other, Joint); })
+			|| State.ClaimedCrossings.Array().ContainsByPredicate([&Other](int32 Crossing) { return HoldsCrossing(Other, Crossing); });
 		if (bShares)
 		{
 			State.FollowLeaders.Add(Other.Train);
@@ -961,15 +978,20 @@ float AATTrafficSubsystem::GetFollowLimit(const AFGTrain* Train, const FATTraffi
 			const UFGRailroadTrackConnectionComponent* JointEntry = Index > 0 ? State.Route[Index - 1].Exit : nullptr;
 			const int32 Joint = GetJoint(JointEntry);
 			const bool bHeldJoint = Joint != INDEX_NONE && HoldsJoint(*Leader, Joint);
-			const AFGBuildableRailroadTrack* Held = nullptr;
-			for (const AFGBuildableRailroadTrack* Conflict : GetConflicts(Step.Track))
+			const bool bHeldTrack = HoldsTrack(*Leader, Step.Track);
+			// The first crossing zone along the track that the leader holds, from the track's start. [cm]
+			float ZoneAt = -1.f;
+			for (const FATZone& Zone : GetZones(Step.Track))
 			{
-				if (!Held && HoldsTrack(*Leader, Conflict))
+				float From = 0.f;
+				float To = 0.f;
+				GetZoneAlong(Zone, Step.Track, Step.Exit, From, To);
+				if (HoldsCrossing(*Leader, Zone.Crossing) && (ZoneAt < 0.f || From < ZoneAt))
 				{
-					Held = Conflict;
+					ZoneAt = From;
 				}
 			}
-			if (!bHeldJoint && !Held)
+			if (!bHeldJoint && !bHeldTrack && ZoneAt < 0.f)
 			{
 				continue;
 			}
@@ -981,6 +1003,10 @@ float AATTrafficSubsystem::GetFollowLimit(const AFGTrain* Train, const FATTraffi
 			if (bHeldJoint)
 			{
 				Start -= GetFoulDistance(JointEntry);
+			}
+			else if (!bHeldTrack)
+			{
+				Start += ZoneAt;
 			}
 			// A leader merging the same way moves on ahead; one crossing leaves the conflict only once it has passed.
 			const bool bSameWay = Leader->Route.ContainsByPredicate([&Step](const FATRouteStep& LeaderStep)
@@ -1196,7 +1222,8 @@ void AATTrafficSubsystem::RebuildConflicts()
 {
 	const float Clearance = GetClearance();
 	const double Begin = FPlatformTime::Seconds();
-	mConflicts.Reset();
+	mZonesOf.Reset();
+	mCrossingCount = 0;
 	mJointOf.Reset();
 	mFoulOf.Reset();
 	mJointFoul.Reset();
@@ -1333,15 +1360,6 @@ void AATTrafficSubsystem::RebuildConflicts()
 	}
 
 	// Crossings: the game's overlapping tracks, both ways, except branches of the same switch, which the joint covers.
-	auto Entry = [this](AFGBuildableRailroadTrack* Track) -> TArray<AFGBuildableRailroadTrack*>&
-	{
-		TArray<AFGBuildableRailroadTrack*>& Conflicts = mConflicts.FindOrAdd(Track);
-		if (Conflicts.Num() == 0)
-		{
-			Conflicts.Add(Track);
-		}
-		return Conflicts;
-	};
 	auto SharesJoint = [this](const AFGBuildableRailroadTrack* A, const AFGBuildableRailroadTrack* B)
 	{
 		for (int32 EndA = 0; EndA < 2; ++EndA)
@@ -1362,40 +1380,47 @@ void AATTrafficSubsystem::RebuildConflicts()
 		return false;
 	};
 	// The game counts tracks whose outlines overlap; they cross only where their centre lines come within the clearance.
-	auto Closest = [](const AFGBuildableRailroadTrack* A, const AFGBuildableRailroadTrack* B)
+	// Each crossing is a zone on either track: the stretch of it whose centre line comes that close to the other's.
+	auto Sample = [](const AFGBuildableRailroadTrack* Track, TArray<TPair<float, FVector>>& Out)
 	{
-		auto Sample = [](const AFGBuildableRailroadTrack* Track, TArray<FVector>& Out)
+		const float Length = Track->GetLength();
+		for (float Along = 0.f;; Along = FMath::Min(Along + JointFoulStep, Length))
 		{
-			const float Length = Track->GetLength();
-			for (float Along = 0.f;; Along = FMath::Min(Along + JointFoulStep, Length))
+			FVector Location, Direction;
+			Track->GetWorldLocationAndDirectionAtDistance(Along, Location, Direction);
+			Out.Add({Along, Location});
+			if (Along >= Length)
 			{
-				FVector Location, Direction;
-				Track->GetWorldLocationAndDirectionAtDistance(Along, Location, Direction);
-				Out.Add(Location);
-				if (Along >= Length)
-				{
-					break;
-				}
-			}
-		};
-		TArray<FVector> PointsA, PointsB;
-		Sample(A, PointsA);
-		Sample(B, PointsB);
-		float Best = MAX_flt;
-		for (const FVector& PointA : PointsA)
-		{
-			for (const FVector& PointB : PointsB)
-			{
-				Best = FMath::Min(Best, FVector::DistSquared(PointA, PointB));
+				break;
 			}
 		}
-		return FMath::Sqrt(Best);
+	};
+	auto Stretch = [Clearance](const TArray<TPair<float, FVector>>& Of, const TArray<TPair<float, FVector>>& Other, float& OutFrom, float& OutTo)
+	{
+		OutFrom = MAX_flt;
+		OutTo = -MAX_flt;
+		float Closest = MAX_flt;
+		for (const TPair<float, FVector>& Point : Of)
+		{
+			float Nearest = MAX_flt;
+			for (const TPair<float, FVector>& OtherPoint : Other)
+			{
+				Nearest = FMath::Min(Nearest, FVector::DistSquared(Point.Value, OtherPoint.Value));
+			}
+			Nearest = FMath::Sqrt(Nearest);
+			Closest = FMath::Min(Closest, Nearest);
+			if (Nearest < Clearance)
+			{
+				OutFrom = FMath::Min(OutFrom, Point.Key);
+				OutTo = FMath::Max(OutTo, Point.Key);
+			}
+		}
+		return Closest;
 	};
 	TSet<TPair<const AFGBuildableRailroadTrack*, const AFGBuildableRailroadTrack*>> Checked;
 	int32 Clear = 0;
 	for (AFGBuildableRailroadTrack* Track : Tracks)
 	{
-		Entry(Track);
 		for (AFGBuildableRailroadTrack* Overlapping : Track->GetOverlappingTracks())
 		{
 			if (!Overlapping || Overlapping == Track || SharesJoint(Track, Overlapping)
@@ -1404,7 +1429,11 @@ void AATTrafficSubsystem::RebuildConflicts()
 				continue;
 			}
 			Checked.Add(TPair<const AFGBuildableRailroadTrack*, const AFGBuildableRailroadTrack*>(Track, Overlapping));
-			const float Distance = Closest(Track, Overlapping);
+			TArray<TPair<float, FVector>> PointsA, PointsB;
+			Sample(Track, PointsA);
+			Sample(Overlapping, PointsB);
+			float FromA = 0.f, ToA = 0.f, FromB = 0.f, ToB = 0.f;
+			const float Distance = Stretch(PointsA, PointsB, FromA, ToA);
 			if (Distance >= Clearance)
 			{
 				++Clear;
@@ -1417,20 +1446,18 @@ void AATTrafficSubsystem::RebuildConflicts()
 				}
 				continue;
 			}
-			Entry(Track).AddUnique(Overlapping);
-			Entry(Overlapping).AddUnique(Track);
+			Stretch(PointsB, PointsA, FromB, ToB);
+			const int32 Crossing = mCrossingCount++;
+			// A sample step either side, as the stretch is only known to that.
+			mZonesOf.FindOrAdd(Track).Add({Crossing, FMath::Max(FromA - JointFoulStep, 0.f), FMath::Min(ToA + JointFoulStep, Track->GetLength())});
+			mZonesOf.FindOrAdd(Overlapping).Add({Crossing, FMath::Max(FromB - JointFoulStep, 0.f), FMath::Min(ToB + JointFoulStep, Overlapping->GetLength())});
 		}
-	}
-	int32 Crossings = 0;
-	for (const TPair<const AFGBuildableRailroadTrack*, TArray<AFGBuildableRailroadTrack*>>& Pair : mConflicts)
-	{
-		Crossings += Pair.Value.Num() > 1 ? 1 : 0;
 	}
 	BuildSearchGraph(Tracks, JointCount);
 	mConflictsBuiltAt = FPlatformTime::Seconds();
 	mConflictsStale = false;
-	UE_LOG(LogAutoTrains, Log, TEXT("traffic: conflict model rebuilt: %d tracks, %d switch joints (longest fouling zone %.0f m), %d crossing tracks, %d overlapping pairs that don't cross, %.1f ms"),
-		Tracks.Num(), JointCount, LongestFoul / 100.f, Crossings, Clear, (mConflictsBuiltAt - Begin) * 1000.0);
+	UE_LOG(LogAutoTrains, Log, TEXT("traffic: conflict model rebuilt: %d tracks, %d switch joints (longest fouling zone %.0f m), %d crossings, %d overlapping pairs that don't cross, %.1f ms"),
+		Tracks.Num(), JointCount, LongestFoul / 100.f, mCrossingCount, Clear, (mConflictsBuiltAt - Begin) * 1000.0);
 }
 
 void AATTrafficSubsystem::BuildSearchGraph(const TArray<AFGBuildableRailroadTrack*>& Tracks, int32 JointCount)
@@ -1459,6 +1486,7 @@ void AATTrafficSubsystem::BuildSearchGraph(const TArray<AFGBuildableRailroadTrac
 	Graph->ZOf.Init(0.f, Count);
 	Graph->StopMarginOf.Init(0.f, Count);
 	Graph->JointFoul.Init(GetClearance(), JointCount);
+	Graph->AtEnd.Init(false, Count);
 	Graph->OneWay.Init(false, Count);
 	Graph->Attached.SetNum(Count);
 	for (int32 Index = 0; Index < Count; ++Index)
@@ -1470,6 +1498,7 @@ void AATTrafficSubsystem::BuildSearchGraph(const TArray<AFGBuildableRailroadTrac
 		Graph->JointOf[Index] = Joint;
 		Graph->FoulOf[Index] = GetFoulDistance(Connection);
 		Graph->ZOf[Index] = Connection->GetComponentLocation().Z;
+		Graph->AtEnd[Index] = Connection->GetTrackPosition().Offset > Graph->Length[Graph->TrackOf[Index]] * 0.5f;
 		Graph->StopMarginOf[Index] = GetStopMargin(Connection);
 		if (Graph->JointFoul.IsValidIndex(Joint))
 		{
@@ -1491,15 +1520,14 @@ void AATTrafficSubsystem::BuildSearchGraph(const TArray<AFGBuildableRailroadTrac
 	{
 		Platform.Add(Track && Track->GetIsOwnedByPlatform());
 	}
-	Graph->Conflicts.SetNum(Graph->Length.Num());
+	Graph->NumCrossings = mCrossingCount;
+	Graph->StopDistance = GetStopDistance();
+	Graph->ZonesOf.SetNum(Graph->Length.Num());
 	for (const TPair<const AFGBuildableRailroadTrack*, int32>& Pair : Graph->TrackIndex)
 	{
-		for (const AFGBuildableRailroadTrack* Conflict : GetConflicts(Pair.Key))
+		for (const FATZone& Zone : GetZones(Pair.Key))
 		{
-			if (const int32* ConflictIndex = Graph->TrackIndex.Find(Conflict))
-			{
-				Graph->Conflicts[Pair.Value].Add(*ConflictIndex);
-			}
+			Graph->ZonesOf[Pair.Value].Add({Graph->CrossingResource(Zone.Crossing), Zone.From, Zone.To});
 		}
 	}
 	// Nothing is decided where the only way on is a plain track: no switch, no one-way signal, no platform, no crossing.
@@ -1512,26 +1540,12 @@ void AATTrafficSubsystem::BuildSearchGraph(const TArray<AFGBuildableRailroadTrac
 		}
 		const int32 Entry = Graph->Attached[Index][0];
 		const int32 NextTrack = Graph->TrackOf[Entry];
-		if (Graph->OppositeOf[Entry] != INDEX_NONE && Graph->JointOf[Entry] == INDEX_NONE && !Platform[NextTrack] && Graph->Conflicts[NextTrack].Num() <= 1)
+		if (Graph->OppositeOf[Entry] != INDEX_NONE && Graph->JointOf[Entry] == INDEX_NONE && !Platform[NextTrack] && Graph->ZonesOf[NextTrack].Num() == 0)
 		{
 			Graph->Through[Index] = Graph->OppositeOf[Entry];
 		}
 	}
 	mSearchGraph = Graph;
-}
-
-const TArray<AFGBuildableRailroadTrack*>& AATTrafficSubsystem::GetConflicts(const AFGBuildableRailroadTrack* Track) const
-{
-	if (const TArray<AFGBuildableRailroadTrack*>* Conflicts = mConflicts.Find(Track))
-	{
-		return *Conflicts;
-	}
-	// A track built since the last rebuild; treat it as conflicting with itself only until the model catches up.
-	mConflictsStale = true;
-	static TArray<AFGBuildableRailroadTrack*> Single;
-	Single.Reset();
-	Single.Add(const_cast<AFGBuildableRailroadTrack*>(Track));
-	return Single;
 }
 
 float AATTrafficSubsystem::GetFoulDistance(const UFGRailroadTrackConnectionComponent* Connection) const
@@ -1566,6 +1580,26 @@ bool AATTrafficSubsystem::HoldsTrack(const FATTrafficTrain& State, const AFGBuil
 bool AATTrafficSubsystem::HoldsJoint(const FATTrafficTrain& State, int32 Joint)
 {
 	return State.OccupiedJoints.Contains(Joint) || State.ClaimedJoints.Contains(Joint);
+}
+
+bool AATTrafficSubsystem::HoldsCrossing(const FATTrafficTrain& State, int32 Crossing)
+{
+	return State.OccupiedCrossings.Contains(Crossing) || State.ClaimedCrossings.Contains(Crossing);
+}
+
+const TArray<FATZone>& AATTrafficSubsystem::GetZones(const AFGBuildableRailroadTrack* Track) const
+{
+	static const TArray<FATZone> None;
+	const TArray<FATZone>* Zones = mZonesOf.Find(Track);
+	return Zones ? *Zones : None;
+}
+
+void AATTrafficSubsystem::GetZoneAlong(const FATZone& Zone, const AFGBuildableRailroadTrack* Track, const UFGRailroadTrackConnectionComponent* Exit, float& OutFrom, float& OutTo)
+{
+	const float Length = Track->GetLength();
+	const bool bAtEnd = Exit && Exit->GetTrackPosition().Offset > Length * 0.5f;
+	OutFrom = bAtEnd ? Zone.From : Length - Zone.To;
+	OutTo = bAtEnd ? Zone.To : Length - Zone.From;
 }
 
 void AATTrafficSubsystem::RefreshBrakePlan(FATTrafficTrain& State) const

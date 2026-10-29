@@ -10,7 +10,7 @@ same time. Build junctions, roundabouts, crossings and single track however you 
 The planner is built on **safe interval path planning (SIPP)**, a method from robotics for moving many vehicles through
 a shared map without collisions. The idea is small enough to follow in four steps.
 
-**1. Every piece of track has a timeline.** Each track and each switch has its own booking calendar. Free time is
+**1. Every piece of track has a timeline.** Each track, each switch and each crossing has its own booking calendar. Free time is
 open; time when a train will be on it is booked. A train is on a track from the moment its front enters until its tail
 has left, so a long train books a place for longer than a short one.
 
@@ -147,7 +147,7 @@ replanning.
 | **Reroute: keep a new route for (seconds)** | 60 | After taking another route, a train doesn't change again for this long. |
 | **Lookahead (m)** | 100 | Track a train is given past its braking distance. More lets trains run faster towards traffic; less keeps track free for others. |
 | **Stop distance (m)** | 10 | How far a waiting train stops short of track it hasn't been given (before a switch, the switch's fouling zone plus this). |
-| **Track clearance (m)** | 3 | How close the centre lines of two tracks may come before trains on them count as in each other's way. A switch's branches block each other only until they are this far apart, and tracks this close anywhere count as crossing. Smaller lets trains slip past each other closer to switches (they may clip); larger keeps them further apart. |
+| **Track clearance (m)** | 3 | How close the centre lines of two tracks may come before trains on them count as in each other's way. A switch's branches block each other only until they are this far apart, and where two tracks cross only the stretch where they come this close counts, so a train can wait right before a crossing. Smaller lets trains slip past each other closer to switches (they may clip); larger keeps them further apart. |
 | **Normal braking (%)** | 85 | How hard trains brake for normal stops, as a share of the braking they plan with. |
 | **Station stay estimate (seconds)** | 40 | How long a train is expected to stay at a stop set to fully load or unload, until it has been seen there; after that its own last stay there counts. Stops that load or unload once take the freight platforms' fixed time, or the stop's set duration when there's no cargo to move. |
 | **Clear deadlocks by passing through (beta)** | On | Trains stuck waiting for each other in a circle drive on through each other after the set time; each case is written to FactoryGame/Saved/AutoTrains/faults.log. |

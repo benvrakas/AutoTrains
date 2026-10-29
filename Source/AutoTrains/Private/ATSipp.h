@@ -10,9 +10,18 @@ class UFGRailroadTrackConnectionComponent;
 // An open-ended time: a stay nobody knows the end of, or a resource held for good. [world s]
 constexpr double ATSippNever = 1e12;
 
+// A crossing zone on a track: its resource and the stretch of the track it covers, from the end of the track's
+// connection 0. [cm]
+struct FATSippZone
+{
+	int32 Resource = INDEX_NONE;
+	float From = 0.f;
+	float To = 0.f;
+};
+
 // The track network as plain data, so planning runs off the game thread without touching a UObject. Built on the game
-// thread with the conflict model; never changed after. A resource is a track (0 .. tracks - 1) or a switch joint's
-// fouling zone (tracks + joint).
+// thread with the conflict model; never changed after. A resource is a track (0 .. tracks - 1), a switch joint's
+// fouling zone (tracks + joint) or a crossing zone (tracks + joints + crossing).
 struct FATSippGraph
 {
 	// Per connection (a track end; as a search node: the front at that end, about to leave the track through it): its
@@ -29,11 +38,16 @@ struct FATSippGraph
 	// Per connection: the next one when nothing is decided there (one track attached, no switch joint, no one-way
 	// signal, neither track a platform, the next one without crossings), else INDEX_NONE.
 	TArray<int32> Through;
-	// Per connection: its height. [cm]
+	// Per connection: its height [cm], and whether a train leaving its track through it runs from the end of the
+	// track's connection 0.
 	TArray<float> ZOf;
-	// Per track: its length [cm] and the tracks it conflicts with, itself first.
+	TArray<bool> AtEnd;
+	// Per track: its length [cm] and its crossing zones.
 	TArray<float> Length;
-	TArray<TArray<int32>> Conflicts;
+	TArray<TArray<FATSippZone>> ZonesOf;
+	// Number of crossing zones, and how far a waiting train stops short of one. [cm]
+	int32 NumCrossings = 0;
+	float StopDistance = 1000.f;
 	// Per joint: the longest fouling zone of its tracks, and the longest of all. [cm]
 	TArray<float> JointFoul;
 	float MaxJointFoul = 0.f;
@@ -43,8 +57,10 @@ struct FATSippGraph
 	TMap<const UFGRailroadTrackConnectionComponent*, int32> ConnectionIndex;
 	TMap<const AFGBuildableRailroadTrack*, int32> TrackIndex;
 
-	int32 NumResources() const { return Length.Num() + JointFoul.Num(); }
+	int32 NumResources() const { return Length.Num() + JointFoul.Num() + NumCrossings; }
 	int32 JointResource(int32 Joint) const { return Length.Num() + Joint; }
+	int32 CrossingResource(int32 Crossing) const { return Length.Num() + JointFoul.Num() + Crossing; }
+	bool IsJoint(int32 Resource) const { return Resource >= Length.Num() && Resource < Length.Num() + JointFoul.Num(); }
 };
 
 enum class EATSippKind : uint8
@@ -174,6 +190,8 @@ struct FATSippResult
 	int32 WaitStep = INDEX_NONE;
 	double WaitUntil = 0.0;
 	int32 WaitFor = INDEX_NONE;
+	// How far short of that step's track end the front stands for the wait. [cm]
+	float WaitShort = 0.f;
 	// Failed: no way to the goal; it stands for good at the end of route step StandStep (-1 where it is now), held up by
 	// BlockedBy's booking on BlockedAt (INDEX_NONE if unknown).
 	bool bFailed = false;

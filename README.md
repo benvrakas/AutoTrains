@@ -15,7 +15,7 @@ their timetables.
 ![Icon](Docs/Images/icon-512.png)
 
 - Mod page text and changelog: [Docs/Release](Docs/Release)
-- How the traffic works, a test checklist and every `/at` command: [Docs/Testing.md](Docs/Testing.md)
+- How the traffic works, every setting and every `/at` command: [Docs/Release/FullDescription.md](Docs/Release/FullDescription.md)
 - Logs, telemetry and fix history: [Docs/Debugging.md](Docs/Debugging.md)
 - Icon: `python Tools/make_icon.py`
 - Build: place the folder in the SML starter project's `Mods` folder and package it with Alpakit (Windows, Windows

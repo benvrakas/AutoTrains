@@ -206,13 +206,6 @@ struct FATTrafficTrain
 	// out (world seconds).
 	TArray<FATRouteStep> PredictedRoute;
 	float PredictedFrontAhead = 0.f;
-	// Whether the last plan of the predicted departure failed, and whether a route search replaced its route.
-	bool bPredictFailed = false;
-	bool bPredictRerouted = false;
-	// After leaving: the route searched for its departure, to set as its path once the game's path starts the same way,
-	// until DepartRouteUntil (world s).
-	TArray<TWeakObjectPtr<UFGRailroadTrackConnectionComponent>> DepartRoute;
-	double DepartRouteUntil = -1.0;
 	TWeakObjectPtr<AFGBuildableRailroadStation> PredictedStation;
 	int32 PredictedStop = INDEX_NONE;
 	double PredictedAt = -1e9;
@@ -477,10 +470,6 @@ private:
 	void RemoveBookings(const AFGTrain* Owner);
 	// Works out State's next leg from the station it is docked at, from its timetable and the game's pathfinder.
 	void PredictDeparture(FATTrafficTrain& State, double Now);
-	// Takes a docked train's departure route from a cycle that rerouted it.
-	void ApplyDepartureReroute(FATTrafficTrain& State, const FATSippCycle& Cycle, int32 Slot);
-	// Sets a train that just left to the route searched for its departure, once the game's path starts the same way.
-	void ApplyDepartRoute(FATTrafficTrain& State, AFGTrain* Train, double Now);
 	// Notes docking and departure; a dock seen from its start teaches the dwell.
 	void TrackDocking(FATTrafficTrain& State, AFGTrain* Train, double Now);
 	// Expected stay of Train at Station under the stop's Rules (null if unknown), with Transfer as in DockTransfer: a load

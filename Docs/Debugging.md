@@ -618,11 +618,10 @@ train, then a row per train every 0.2 s:
   the route up to Commit anyway); a failed plan stands at the furthest stop with no switch joint under the body
   (FurthestClear) before the furthest stop of any kind. Not done: a docked train's departure still uses the game's
   shortest path (the arriving train is expected to reroute around it).
-- 1.3.3 second push-pull test: still deadlocked. Both trains docked at once; each departure was planned on the game's
-  shortest path (the straight), failed, and booked its station for good, so the other's plan failed too ("no way to
-  its goal"), every cycle, with no reroute (docked trains never searched). Changes: a docked train's predicted
-  departure searches the network (Commit 0, at most every SearchFailedSeconds while it fails); a rerouted departure
-  is stored (ApplyDepartureReroute) and set as the path once the game's path after undocking starts on it
-  (ApplyDepartRoute, within 10 s). Docked plan turns now get ranks too: a docked train ignores unlocked bookings of
-  slots planned after it, and their locked stands count only until their earliest departure plus the time to pull
-  their length and that resource clear (FPlanner::ClearOf); MarkCommitted's HoldsUp skips those as well.
+- 1.3.3 second push-pull test: still deadlocked, with the leaving train undocked and standing in its station (Moving),
+  0 reroutes. Cause: GetRouteCommit counted a route step as committed unless the train could stop the far end's stop
+  margin before its start, even standing; the leaving train stood 8 m before the switch, so the branch after it (and
+  any switch's branch within zone + stop distance) was fixed and the route search couldn't change it. Now a standing
+  train is committed only to what it holds, and a moving one to what it can't stop short of with the stop margin of
+  the switch before the step. A docked-departure route search tried before this (2964257) never ran and is
+  reverted.

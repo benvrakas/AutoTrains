@@ -153,6 +153,15 @@ replanning.
 | **Clear deadlocks by passing through (beta)** | On | Trains stuck waiting for each other in a circle drive on through each other after the set time; each case is written to FactoryGame/Saved/AutoTrains/faults.log. |
 | **Pass through a deadlock after (seconds)** | 60 | How long a deadlock lasts before its trains pass through each other. |
 | **Planning retries** | 3 | When a train finds no way because a train planned before it is in the way, it is planned before that train and the round is planned again, up to this many times. 0 keeps the planning order as it is. |
+| **Route search interval (seconds)** | 5 | How often each train looks for a faster route. Shorter finds better routes sooner; longer costs less planning time on big networks. |
+| **Route search when late (seconds)** | 15 | A train looks for another route at once when its planned arrival has got this much later since its last search. |
+| **Route search while stuck (seconds)** | 1 | How often a train whose plan finds no way looks for another route. |
+| **Track refresh (seconds)** | 30 | How often the whole track network is read again. Track built or removed is usually picked up within 2 seconds anyway. |
+| **Deadlock: count trains waiting longer than (seconds)** | 20 | How long a train has to wait before it counts when looking for deadlocks. |
+| **Deadlock pass-through distance (m)** | 300 | A train passing through a deadlock does so until it has driven its own length and this much further. |
+| **Deadlock pass-through time limit (seconds)** | 120 | A train passes through a deadlock for at most this long. |
+| **Plan search limit (states)** | 200000 | Most steps one train's plan may search. Lower uses less CPU and memory on huge networks; long or busy routes may then find no way more often. |
+| **Slope lookahead (m)** | 300 | How far ahead of a train the slope is averaged for its braking. |
 | **Update interval (seconds)** | 0.25 | How often trains are planned and given track. Shorter reacts faster but costs more on big networks. |
 
 </details>

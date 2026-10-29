@@ -664,3 +664,11 @@ train, then a row per train every 0.2 s:
   15 km/h that wants to go faster, with the pull under its body over 90% of FullTraction, gets traction x1.3 the pull
   (at most the setting, default 4), raised but never lowered, until the pull is under 80% of FullTraction; traction
   isn't learned while it lasts. Logs "stalls on a N % climb" / "is over the climb". Untested in game.
+- 1.3.5 (1.3.4 log, user: "Nitric Acid RSC is causing a holdup for no reason"): Nitric Acid RSC waited 8 min 11 m
+  before crossing 93 because Crystal Oscilator RSC, two trains behind it on the same line (behind Rubber SNK [conc]),
+  held crossing 93 (granted with 18 claims, 337 m). IsBehind looked a crossing key up by Key.Track (null), so the
+  "holder behind me on the same line" exception never applied to crossings; FillSippTrain's Behind sets left crossings
+  out too. Now routes keep CrossingIndexOf (IndexRoute), IsBehind uses it, and Behind adds the crossings on the shared
+  stretch. The deadlock detector missed this one (Crystal Oscilator's blocker was a train 337 m ahead). Not done: 29
+  CROSSING check warnings in 11 min, mostly pairs following each other at speed (Copper Sheet / Circuit Board Gather
+  over crossings 29-41), likely followers the check doesn't exclude.

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.5
+
+- **Fixed: trains queued for a crossing holding each other up.** A train waiting behind another on the way to a
+  crossing could be given the crossing first, and the train in front then waited for it for good. Crossings now
+  follow the same rule as track and switches: a train behind on the same line only gets a crossing after the one in
+  front of it.
+
 ## 1.3.4
 
 - **Crossings book only the crossing itself.** Where two tracks cross, only the stretch where they come within the

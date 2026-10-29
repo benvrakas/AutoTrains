@@ -971,6 +971,12 @@ void AATTrafficSubsystem::FillSippTrain(const FATTrafficTrain& State, const FATS
 			{
 				Keys.Add(ResourceOf(JointKey));
 			}
+			for (const FATZone& Zone : GetZones(State.Route[Step].Track))
+			{
+				FResourceKey CrossingKey;
+				CrossingKey.Crossing = Zone.Crossing;
+				Keys.Add(ResourceOf(CrossingKey));
+			}
 		}
 	}
 }
@@ -1699,9 +1705,14 @@ void AATTrafficSubsystem::IndexRoute(FATTrafficTrain& State) const
 {
 	State.RouteIndexOf.Reset();
 	State.JointIndexOf.Reset();
+	State.CrossingIndexOf.Reset();
 	for (int32 Index = 0; Index < State.Route.Num(); ++Index)
 	{
 		State.RouteIndexOf.FindOrAdd(State.Route[Index].Track, Index);
+		for (const FATZone& Zone : GetZones(State.Route[Index].Track))
+		{
+			State.CrossingIndexOf.FindOrAdd(Zone.Crossing, Index);
+		}
 		const int32 Joint = Index > 0 ? GetJoint(State.Route[Index - 1].Exit) : INDEX_NONE;
 		if (Joint != INDEX_NONE)
 		{
@@ -1796,8 +1807,12 @@ bool AATTrafficSubsystem::IsBehind(const FATTrafficTrain& Other, const FATTraffi
 	{
 		return false;
 	}
-	const int32* OtherKeyAt = Key.Joint != INDEX_NONE ? Other.JointIndexOf.Find(Key.Joint) : Other.RouteIndexOf.Find(Key.Track);
-	const int32* SelfKeyAt = Key.Joint != INDEX_NONE ? Self.JointIndexOf.Find(Key.Joint) : Self.RouteIndexOf.Find(Key.Track);
+	auto KeyAt = [&Key](const FATTrafficTrain& Of)
+	{
+		return Key.Joint != INDEX_NONE ? Of.JointIndexOf.Find(Key.Joint) : Key.Crossing != INDEX_NONE ? Of.CrossingIndexOf.Find(Key.Crossing) : Of.RouteIndexOf.Find(Key.Track);
+	};
+	const int32* OtherKeyAt = KeyAt(Other);
+	const int32* SelfKeyAt = KeyAt(Self);
 	if (!OtherKeyAt || !SelfKeyAt || *OtherKeyAt <= SelfAt || *OtherKeyAt - SelfAt != *SelfKeyAt)
 	{
 		return false;

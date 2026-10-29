@@ -233,9 +233,11 @@ struct FATTrafficTrain
 	TWeakObjectPtr<AFGBuildableRailroadStation> PredictedStation;
 	int32 PredictedStop = INDEX_NONE;
 	double PredictedAt = -1e9;
-	// The route step of each track on the route (first time) and of each switch, by track and by joint.
+	// The route step of each track on the route (first time), of each switch and of each crossing zone, by track, by
+	// joint and by crossing.
 	TMap<const AFGBuildableRailroadTrack*, int32> RouteIndexOf;
 	TMap<int32, int32> JointIndexOf;
+	TMap<int32, int32> CrossingIndexOf;
 	// In a cycle of trains waiting for each other.
 	bool bDeadlocked = false;
 	// Passing through a deadlock: until when at most (world seconds, -1 if not) and how far it still drives so. [cm]

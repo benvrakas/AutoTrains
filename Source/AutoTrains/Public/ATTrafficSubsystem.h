@@ -494,14 +494,16 @@ private:
 	void PredictDeparture(FATTrafficTrain& State, double Now);
 	// Notes docking and departure; a dock seen from its start teaches the dwell.
 	void TrackDocking(FATTrafficTrain& State, AFGTrain* Train, double Now);
-	// Expected stay of Train at Station under the stop's Rules (null if unknown), with Transfer as in DockTransfer: a load
-	// or unload once is the freight platforms' transfer if there is cargo to move (as at the train's last stay there
-	// while not known), else the stop's duration; a full load or unload, or unknown rules, as long as the train's last
-	// such stay there, else the default. [s]
+	// Expected stay of Train at Station under the stop's Rules (null if unknown), with Transfer as in DockTransfer: at a
+	// station without freight platforms, the train's last stay there, else none; a load or unload once is the freight
+	// platforms' transfer if there is cargo to move (as at the train's last stay there while not known), else the stop's
+	// duration; a full load or unload, or unknown rules, as long as the train's last such stay there, else the default. [s]
 	float GetExpectedStay(const AFGTrain* Train, const AFGBuildableRailroadStation* Station, const FTrainDockingRuleSet* Rules, int32 Transfer) const;
 	// The stay of a load or unload once that moves cargo: as measured, else the platforms' transfer time plus the
 	// docking itself, else the default. [s]
 	float GetTransferStay() const;
+	// Whether a freight or fluid platform is in the platform chain on either side of Station, up to the next station.
+	bool HasCargoPlatforms(const AFGBuildableRailroadStation* Station) const;
 	// The docking rules of the stop at Index of Train's timetable if it is at Station, else null.
 	static const FTrainDockingRuleSet* GetStopRules(const AFGTrain* Train, int32 Index, const AFGBuildableRailroadStation* Station, FTrainDockingRuleSet& Storage);
 	// How far State's front is ahead of the start of Route, from its vehicles. [cm]
@@ -530,8 +532,11 @@ private:
 	bool mPlannedOnce = false;
 	// The traffic state of each train by its pointer, for the current update.
 	TMap<const AFGTrain*, FATTrafficTrain*> mStateOf;
-	// Last full load or unload stay of each train at each station [s], and whether its last stay there moved cargo.
+	// Last full load or unload stay, or stay at a station without freight platforms, of each train at each station [s],
+	// and whether its last stay there moved cargo.
 	TMap<TPair<FObjectKey, FObjectKey>, float> mDwell;
+	// Stations without freight platforms already logged.
+	mutable TSet<FObjectKey> mNoCargoLogged;
 	TMap<TPair<FObjectKey, FObjectKey>, bool> mLastTransfer;
 	// Stay of a load or unload once that moves cargo, as measured, and the freight platforms' transfer time (-1 until
 	// known). [s]

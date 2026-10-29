@@ -636,3 +636,13 @@ train, then a row per train every 0.2 s:
   per claimed track; a zone it can't have ends the grant AuthorityCut before the track end (StopMargin takes it);
   ClaimedCrossings = zones on held tracks before the cut; OccupiedCrossings from vehicle spans; follow limits stop
   before a zone a leader holds; checks and the wait dump name "crossing N". Untested in game.
+- 1.3.4 platformless stations (user: a push-pull train's dock was nearly instant; game log of 1.3.3, 2.5 h): the two
+  push-pull trains never logged "docked at" or "left", so their docks ended within one update (0.25 s) and TrackDocking
+  never saw them; GetExpectedStay still gave the unknown-transfer stay (15-29 s) as GoalDwell, and both trains failed
+  "no way to its goal" on nearly every leg, then rerouted 3 -> 7 tracks. Now HasCargoPlatforms walks the station's
+  platform chain on both sides (up to the next station, 64 platforms) for an AFGBuildableTrainPlatformCargo; without
+  one the stay is the train's last seen stay there (mDwell), else 0. Same log, not addressed yet: two 3-train
+  deadlocks ghosted through after 60 s (05:56, 06:09). In the second, Heavy Oil [Coke Steel] stood 7 m behind Coated
+  Plates RSC Train but still held its grant to its goal (9 claims, locked "enters in 0 s, clear in 20 s"), so Train
+  waited for it on track 2145430117, while Coated Plates waited 80 s for Train at switch 180; the numbers stayed the
+  same for minutes. A standing follower keeps holds it can't reach before its leader moves.

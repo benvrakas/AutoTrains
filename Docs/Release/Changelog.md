@@ -7,6 +7,10 @@
   over to the inner ring can now use the junction at the same time, and only meet in time at the crossing point.
 - **Trains wait right before a crossing** instead of before the whole junction: a train can stop partway along a
   track, just short of the crossing it has to wait for.
+- **Fixed: trains planned a long stay at stations without freight platforms.** The game lets a train leave such a
+  station almost at once, but the planner expected the usual 15-30 s and kept the track booked for it, so other
+  trains (push-pull pairs in particular) waited for a train that had already left. Stations without freight or fluid
+  platforms now count as no stay, or as long as the train was last seen staying there.
 
 ## 1.3.3
 

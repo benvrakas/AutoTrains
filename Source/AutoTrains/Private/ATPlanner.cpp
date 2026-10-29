@@ -10,6 +10,7 @@
 #include "FGRailroadTimeTable.h"
 #include "FGRailroadTrackConnectionComponent.h"
 #include "FGTrain.h"
+#include "FGTrainPlatformConnection.h"
 #include "FGTrainStationIdentifier.h"
 #include "HAL/PlatformTime.h"
 #include "RailroadNavigation.h"
@@ -38,6 +39,8 @@ namespace
 	// measurement moves the transfer stay by. [s]
 	constexpr float DockingSeconds = 2.f;
 	constexpr float TransferStayRate = 0.2f;
+	// Most platforms walked on one side of a station.
+	constexpr int32 MaxPlatformChain = 64;
 	// An update slower than this is logged, at most once per SlowLogSeconds. [s]
 	constexpr double SlowUpdateSeconds = 0.02;
 	constexpr double SlowLogSeconds = 10.0;
@@ -234,6 +237,16 @@ void AATTrafficSubsystem::RemoveBookings(const AFGTrain* Booker)
 float AATTrafficSubsystem::GetExpectedStay(const AFGTrain* Train, const AFGBuildableRailroadStation* Station, const FTrainDockingRuleSet* Rules, int32 Transfer) const
 {
 	const TPair<FObjectKey, FObjectKey> Key{FObjectKey(Train), FObjectKey(Station)};
+	if (Station && !HasCargoPlatforms(Station))
+	{
+		if (!mNoCargoLogged.Contains(FObjectKey(Station)))
+		{
+			mNoCargoLogged.Add(FObjectKey(Station));
+			UE_LOG(LogAutoTrains, Log, TEXT("planner: %s has no freight platforms; trains stay there only as long as seen, else not at all"), *StationName(Station));
+		}
+		const float* Own = mDwell.Find(Key);
+		return Own ? *Own : 0.f;
+	}
 	if (!Station || !Rules || Rules->DockingDefinition == ETrainDockingDefinition::TDD_FullyLoadUnload)
 	{
 		const float* Own = Station ? mDwell.Find(Key) : nullptr;
@@ -248,6 +261,30 @@ float AATTrafficSubsystem::GetExpectedStay(const AFGTrain* Train, const AFGBuild
 float AATTrafficSubsystem::GetTransferStay() const
 {
 	return mTransferStay > 0.f ? mTransferStay : mPlatformSeconds > 0.f ? mPlatformSeconds + DockingSeconds : mSettings.DefaultStaySeconds;
+}
+
+bool AATTrafficSubsystem::HasCargoPlatforms(const AFGBuildableRailroadStation* Station) const
+{
+	AFGBuildableRailroadStation* Start = const_cast<AFGBuildableRailroadStation*>(Station);
+	for (UFGTrainPlatformConnection* Side : {Start->mPlatformConnection0.Get(), Start->mPlatformConnection1.Get()})
+	{
+		UFGTrainPlatformConnection* Connection = Side;
+		for (int32 Steps = 0; Connection && Steps < MaxPlatformChain; ++Steps)
+		{
+			UFGTrainPlatformConnection* Next = Connection->GetConnectedTo();
+			AFGBuildableTrainPlatform* Platform = Next ? Next->GetPlatformOwner() : nullptr;
+			if (!Platform || Platform->IsA<AFGBuildableRailroadStation>())
+			{
+				break;
+			}
+			if (Platform->IsA<AFGBuildableTrainPlatformCargo>())
+			{
+				return true;
+			}
+			Connection = Platform->GetConnectionInOppositeDirection(Next);
+		}
+	}
+	return false;
 }
 
 const FTrainDockingRuleSet* AATTrafficSubsystem::GetStopRules(const AFGTrain* Train, int32 Index, const AFGBuildableRailroadStation* Station, FTrainDockingRuleSet& Storage)
@@ -288,7 +325,7 @@ void AATTrafficSubsystem::TrackDocking(FATTrafficTrain& State, AFGTrain* Train, 
 			const float Before = GetExpectedStay(Train, Station, &State.DockRules, State.DockTransfer);
 			const TPair<FObjectKey, FObjectKey> Key{FObjectKey(Train), FObjectKey(Station)};
 			const bool bFully = State.DockRules.DockingDefinition == ETrainDockingDefinition::TDD_FullyLoadUnload;
-			if (bFully)
+			if (bFully || !HasCargoPlatforms(Station))
 			{
 				mDwell.Add(Key, Dwell);
 			}

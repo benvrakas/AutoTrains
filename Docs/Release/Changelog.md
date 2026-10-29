@@ -10,6 +10,12 @@
 - **Fixed: trains crawling at walking pace before switches** (often right before a straight). A train held up ahead
   no longer creeps along to arrive just as its way clears; it drives to where its plan waits, stops, and leaves on
   time. Planning also takes half the time it did in 1.3.2.
+- **Trains slip past each other much closer to switches.** A switch's branches now only block each other until they
+  are 3 m apart (was 5.5 m, and at least 20 m along every track), and trains no longer stop at least 25 m before a
+  switch. New setting **Track clearance (m)** to set how close trains may pass.
+- **A train that is in another's way finds another route** even when it already has track granted to its goal, so
+  in a passing section it takes the free track instead of waiting on the one the other train needs.
+- **A train with no way on never stops on a switch:** it waits where it is clear of every switch instead.
 
 ## 1.3.2
 

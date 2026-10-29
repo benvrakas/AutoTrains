@@ -26,9 +26,11 @@ struct FATSettings
 	float RerouteHoldSeconds = 60.f;
 	// Track a train is granted past its braking distance and its length. [m]
 	float LookaheadMetres = 100.f;
-	// How far a train stops short of the end of its granted track; before a switch at least 25 m and its fouling zone
-	// plus this. [m]
+	// How far a train stops short of the end of its granted track; before a switch, its fouling zone plus this. [m]
 	float StopDistanceMetres = 10.f;
+	// How close the centre lines of two tracks may come before trains on them would touch: a switch's branches foul it
+	// until they are this far apart, and tracks closer than this anywhere cross. [m]
+	float SwitchClearanceMetres = 3.f;
 	// Share of its planned braking a train's normal stops use. [%]
 	float NormalBrakingPercent = 85.f;
 	// Stay assumed at a fully load or unload stop until one there has been measured. [s]

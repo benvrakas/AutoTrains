@@ -327,6 +327,8 @@ private:
 	// Fouling zone of the switch at Connection along its track, and the longest of a joint's tracks. [cm]
 	float GetFoulDistance(const UFGRailroadTrackConnectionComponent* Connection) const;
 	float GetJointFoulDistance(int32 Joint) const;
+	// The track clearance setting. [cm]
+	float GetClearance() const { return mSettings.SwitchClearanceMetres * 100.f; }
 
 	// Stop margin before a track end leaving through Exit. [cm]
 	float GetStopMargin(const UFGRailroadTrackConnectionComponent* Exit) const;

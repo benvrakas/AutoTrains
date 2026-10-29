@@ -730,7 +730,7 @@ bool AATTrafficSubsystem::IsSearchDue(FATTrafficTrain& State, float DeltaSeconds
 		State.RerouteTimer = FMath::Min(State.RerouteTimer, SearchFailedSeconds);
 	}
 	const bool bWorse = State.SearchedArrival >= 0.0 && !IsOpen(State.SearchedArrival) && State.PlanArrival - State.SearchedArrival > SearchWorseSeconds;
-	if ((State.RerouteTimer > 0.f && !bWorse) || State.RerouteCooldown > 0.f || State.bAuthorityToGoal || State.Route.Num() < 3)
+	if ((State.RerouteTimer > 0.f && !bWorse) || State.RerouteCooldown > 0.f || State.Route.Num() < 3)
 	{
 		return false;
 	}

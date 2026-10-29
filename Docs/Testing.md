@@ -22,7 +22,7 @@ With traffic control on (the default), every self-driving train ignores signals,
   holds and has locked whatever was booked since. It always keeps the speed at which it can stop before the end of its
   grants, planning with 80% of its rated braking until it has braked hard once, then 95% of what it actually managed
   (60% and 85% when not aggressive), per speed band and per tonne; over that curve it gets full brake, and the game's
-  own catch stops it dead at its stop point. Trains stop 25 m before a switch (or the switch's fouling zone plus 10 m)
+  own catch stops it dead at its stop point. Trains stop the switch's fouling zone plus 10 m before a switch
   and 10 m before other track ends. Held where its plan waits, a train rolls up to arrive as the slot opens.
 - Rerouting (`/at reroute on|off`, on by default): every 5 s, at once when its planned arrival got 15 s worse or its
   plan failed, a train searches the fastest route through the bookings, and takes it if faster by both reroute
@@ -59,8 +59,10 @@ Player driven trains aren't controlled; the others treat them as obstacles.
 - **Reroute: minimum time saved (seconds)** (30) and **minimum share saved (%)** (20): a new route must beat the
   current one by both. **Reroute: keep a new route for (seconds)** (60): no rerouting again for that long.
 - **Lookahead (m)** (100): track a train is given past its braking distance and its length.
-- **Stop distance (m)** (10): how far a waiting train stops short of track it hasn't been given; before a switch at
-  least 25 m and the switch's fouling zone plus this.
+- **Stop distance (m)** (10): how far a waiting train stops short of track it hasn't been given; before a switch the
+  switch's fouling zone plus this.
+- **Track clearance (m)** (3): branches of a switch foul it until their centre lines are this far apart (at least
+  this from the switch point), and tracks this close anywhere cross.
 - **Normal braking (%)** (85): share of the planned braking a normal stop uses (full brake is the backstop).
 - **Station stay estimate (seconds)** (40): assumed stay at a fully load or unload stop until one there has been measured.
 - **Update interval (seconds)** (0.25): how often trains are planned and given track.

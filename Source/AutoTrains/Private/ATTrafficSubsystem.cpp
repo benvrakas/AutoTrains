@@ -39,12 +39,8 @@ namespace
 	FString GPhaseNames;
 
 	constexpr float SettingsInterval = 1.f;
-	// Trains stop at least this far before a switch. [cm]
-	constexpr float SwitchStopMargin = 2500.f;
-	// Distance along each track from a switch point within which a vehicle fouls the switch, at least; branches leaving
-	// a switch the same way foul it until their centre lines are JointClearance apart, measured up to JointFoulMax. [cm]
-	constexpr float JointFoulDistance = 2000.f;
-	constexpr float JointClearance = 550.f;
+	// Branches leaving a switch the same way foul it until their centre lines are the track clearance setting apart,
+	// measured up to JointFoulMax; every track fouls it at least that clearance from the switch point. [cm]
 	constexpr float JointFoulMax = 15000.f;
 	constexpr float JointFoulStep = 200.f;
 	// A vehicle counts as on the next track only once it reaches this far past the end of its own; station tracks
@@ -267,6 +263,11 @@ void AATTrafficSubsystem::ApplySettings()
 	GPhaseThrough = bPhaseThrough;
 	GAggressive = Settings.bAggressive;
 	GSafetyMargin = Settings.SafetyMargin;
+	if (Settings.SwitchClearanceMetres != mSettings.SwitchClearanceMetres)
+	{
+		UE_LOG(LogAutoTrains, Log, TEXT("Settings: track clearance %.1f m; the conflict model is rebuilt"), Settings.SwitchClearanceMetres);
+		mConflictsStale = true;
+	}
 	mSettings = Settings;
 }
 
@@ -1201,6 +1202,7 @@ AATTrafficSubsystem::FRouteSpeed AATTrafficSubsystem::GetRouteSpeed(const FATTra
 
 void AATTrafficSubsystem::RebuildConflicts()
 {
+	const float Clearance = GetClearance();
 	const double Begin = FPlatformTime::Seconds();
 	mConflicts.Reset();
 	mJointOf.Reset();
@@ -1320,18 +1322,18 @@ void AATTrafficSubsystem::RebuildConflicts()
 					FVector OnA, OnB;
 					PointAt(Members[A], Distance, OnA);
 					PointAt(Members[B], Distance, OnB);
-					if (FVector::Dist(OnA, OnB) >= JointClearance)
+					if (FVector::Dist(OnA, OnB) >= Clearance)
 					{
-						Foul = Distance;
+						Foul = FMath::Max(Distance, Clearance);
 						break;
 					}
 				}
 				for (const UFGRailroadTrackConnectionComponent* Member : {Members[A], Members[B]})
 				{
-					float& Stored = mFoulOf.FindOrAdd(Member, JointFoulDistance);
+					float& Stored = mFoulOf.FindOrAdd(Member, Clearance);
 					Stored = FMath::Max(Stored, Foul);
 				}
-				float& JointFoul = mJointFoul.FindOrAdd(Pair.Key, JointFoulDistance);
+				float& JointFoul = mJointFoul.FindOrAdd(Pair.Key, Clearance);
 				JointFoul = FMath::Max(JointFoul, Foul);
 				LongestFoul = FMath::Max(LongestFoul, Foul);
 			}
@@ -1411,7 +1413,7 @@ void AATTrafficSubsystem::RebuildConflicts()
 			}
 			Checked.Add(TPair<const AFGBuildableRailroadTrack*, const AFGBuildableRailroadTrack*>(Track, Overlapping));
 			const float Distance = Closest(Track, Overlapping);
-			if (Distance >= JointClearance)
+			if (Distance >= Clearance)
 			{
 				++Clear;
 				const FString Pair = TrackName(Track) + TEXT("|") + TrackName(Overlapping);
@@ -1464,7 +1466,7 @@ void AATTrafficSubsystem::BuildSearchGraph(const TArray<AFGBuildableRailroadTrac
 	Graph->FoulOf.Init(0.f, Count);
 	Graph->ZOf.Init(0.f, Count);
 	Graph->StopMarginOf.Init(0.f, Count);
-	Graph->JointFoul.Init(JointFoulDistance, JointCount);
+	Graph->JointFoul.Init(GetClearance(), JointCount);
 	Graph->OneWay.Init(false, Count);
 	Graph->Attached.SetNum(Count);
 	for (int32 Index = 0; Index < Count; ++Index)
@@ -1543,13 +1545,13 @@ const TArray<AFGBuildableRailroadTrack*>& AATTrafficSubsystem::GetConflicts(cons
 float AATTrafficSubsystem::GetFoulDistance(const UFGRailroadTrackConnectionComponent* Connection) const
 {
 	const float* Foul = Connection ? mFoulOf.Find(Connection) : nullptr;
-	return Foul ? *Foul : JointFoulDistance;
+	return Foul ? *Foul : GetClearance();
 }
 
 float AATTrafficSubsystem::GetJointFoulDistance(int32 Joint) const
 {
 	const float* Foul = mJointFoul.Find(Joint);
-	return Foul ? *Foul : JointFoulDistance;
+	return Foul ? *Foul : GetClearance();
 }
 
 int32 AATTrafficSubsystem::GetJoint(const UFGRailroadTrackConnectionComponent* Connection) const
@@ -1560,7 +1562,7 @@ int32 AATTrafficSubsystem::GetJoint(const UFGRailroadTrackConnectionComponent* C
 
 float AATTrafficSubsystem::GetStopMargin(const UFGRailroadTrackConnectionComponent* Exit) const
 {
-	return GetJoint(Exit) != INDEX_NONE ? FMath::Max(SwitchStopMargin, GetFoulDistance(Exit) + GetStopDistance()) : GetStopDistance();
+	return GetJoint(Exit) != INDEX_NONE ? GetFoulDistance(Exit) + GetStopDistance() : GetStopDistance();
 }
 
 bool AATTrafficSubsystem::HoldsTrack(const FATTrafficTrain& State, const AFGBuildableRailroadTrack* Track) const

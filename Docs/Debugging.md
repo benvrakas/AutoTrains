@@ -607,3 +607,14 @@ train, then a row per train every 0.2 s:
   without a plan slot) and d1673d5 (forced braking counts achieved deceleration) to be re-checked on a 1.3.3 log:
   the 1.3.2 logs had 2560 forced brakes an hour (80 over 20 m/s^2) and 1635 "no slot" lines, mostly from the
   next-leg grant flips.
+- 1.3.3 first push-pull test (user's own two 32 m push-pull trains, two dead-end stations, a passing section of one
+  long straight and an S-curve bypass): crawling gone (7.7% of moving time under 12 km/h, cycles 45-95 ms), but the
+  pair deadlocked: Test 1's plan failed ("no way to its goal") and it stood for good at its furthest stop, front
+  locomotive 18 m from switch 254's point, inside that switch's zone (20 m minimum then), the switch Test 2 needed to
+  reach the bypass; 0 reroutes for either (IsSearchDue skipped trains whose authority reached the goal, true on a
+  360 m line). Changes: fouling zones from a Track clearance setting (default 3 m, was the fixed 5.5 m, with a 20 m
+  minimum along every track); the 25 m minimum stop margin before a switch removed (zone + stop distance); crossings
+  use the same clearance; bAuthorityToGoal no longer blocks route searches (a pre-planner rule; the planner freezes
+  the route up to Commit anyway); a failed plan stands at the furthest stop with no switch joint under the body
+  (FurthestClear) before the furthest stop of any kind. Not done: a docked train's departure still uses the game's
+  shortest path (the arriving train is expected to reroute around it).

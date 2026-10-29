@@ -222,7 +222,7 @@ namespace
 		void Plan(const TArray<int32>& InRoute, bool bLastIsGoal, FATSippResult& Out)
 		{
 			const int32 Final = Search(InRoute, false, bLastIsGoal);
-			const int32 Stand = Final != INDEX_NONE ? Final : FurthestStopped != INDEX_NONE ? FurthestStopped : FurthestAny;
+			const int32 Stand = Final != INDEX_NONE ? Final : FurthestClear != INDEX_NONE ? FurthestClear : FurthestStopped != INDEX_NONE ? FurthestStopped : FurthestAny;
 			Build(Stand, Final != INDEX_NONE, Out);
 			Out.States = States.Num();
 			Out.RejectedMotion = RejectedMotion;
@@ -260,6 +260,7 @@ namespace
 			Start.Leave = Cycle.Now;
 			States.Add(Start);
 			FurthestStopped = Train.bStanding ? 0 : INDEX_NONE;
+			FurthestClear = FurthestStopped;
 			FurthestAny = 0;
 			if (InRoute.Num() == 0)
 			{
@@ -310,7 +311,8 @@ namespace
 			return INDEX_NONE;
 		}
 
-		// Keeps the furthest stop reached (and the furthest state of any kind) for a plan that can't reach the goal.
+		// Keeps the furthest stop reached, the furthest with the body clear of every switch, and the furthest state of any
+		// kind, for a plan that can't reach the goal.
 		void Note(int32 Index)
 		{
 			const FState& State = States[Index];
@@ -318,6 +320,15 @@ namespace
 			if (State.bStopped && Better(FurthestStopped))
 			{
 				FurthestStopped = Index;
+			}
+			if (State.bStopped && Better(FurthestClear))
+			{
+				bool bOnSwitch = false;
+				ForEachOpen(Index, State.Pos, [&](const FOpenResource& Open) { bOnSwitch = bOnSwitch || Open.Resource >= Graph.Length.Num(); });
+				if (!bOnSwitch)
+				{
+					FurthestClear = Index;
+				}
 			}
 			if (Better(FurthestAny))
 			{
@@ -1203,6 +1214,7 @@ namespace
 		TMap<uint64, double> Best;
 		TSet<int32> ReachedTracks;
 		int32 FurthestStopped = INDEX_NONE;
+		int32 FurthestClear = INDEX_NONE;
 		int32 FurthestAny = 0;
 		// Moves left out because the train can't reach the speed, its tail can't keep to a window, or the stay at the
 		// goal doesn't fit, for the log.

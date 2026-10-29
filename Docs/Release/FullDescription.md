@@ -112,13 +112,17 @@ doesn't cost frame time.
   to leave. A train stopping at a dead-end station holds the track back to the last switch until it has backed out,
   so push-pull trains never meet head-on on single track. A stop set to load or unload once takes the freight platforms' fixed transfer time when there is cargo to
   move, and the stop's set duration when there isn't, so the departure is known as soon as the platforms start (or
-  don't). Only stops set to fully load or unload go by how long the train stayed there last time.
+  don't). Only stops set to fully load or unload go by how long the train stayed there last time. At a station
+  without freight platforms, where the game lets a train go at once, no stay is planned.
 - **Never stuck in a junction.** A train only drives into a stretch it can get through; it won't stop with its body
   across a crossing or switch someone else is booked on.
 - **Brakes it can trust.** Each train measures how hard it really brakes and accelerates at each speed, with the
   slope taken out, and plans with that. Stopping distances and stop points add the slope of the track ahead, so trains
   stop where planned downhill and aren't held back uphill. If a train still can't stop in time, the mod brakes it
   harder than its brakes could, the way block signals do.
+- **No stalls on steep ramps.** Trains are planned with what their locomotives can really climb: none is made to wait
+  on a climb it couldn't start on again, and one held up before such a climb waits at its foot until its way to the
+  top is clear. If a train stalls on one anyway, it gets extra traction until it is over the steep part.
 - **Deadlocks cleared.** Trains waiting for each other in a circle get the game's warning over them. With the beta
   setting on (the default), after a minute they pass through each other to clear the jam, and the case is written to
   a log you can send in.

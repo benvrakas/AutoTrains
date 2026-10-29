@@ -108,9 +108,9 @@ doesn't cost frame time.
 - **Fastest route.** The search covers the whole network, so a train that would wait a long time on its usual route
   takes another one, even a longer one, when that gets it there clearly sooner. Rerouting is conservative: a new route
   must save a set time and share of the trip (settings below), and it's kept for a while.
-- **Timetables known ahead.** A train's departure from its next station is booked ahead, before it even gets there:
-  on to its next stop, backwards for a push-pull train if that is shorter. So no train queues in the way another
-  needs to leave, or drives onto single track another has to turn back over. A stop set to load or unload once takes the freight platforms' fixed transfer time when there is cargo to
+- **Timetables known ahead.** A docked train's departure is booked ahead, so no train queues in the way another needs
+  to leave. A train stopping at a dead-end station holds the track back to the last switch until it has backed out,
+  so push-pull trains never meet head-on on single track. A stop set to load or unload once takes the freight platforms' fixed transfer time when there is cargo to
   move, and the stop's set duration when there isn't, so the departure is known as soon as the platforms start (or
   don't). Only stops set to fully load or unload go by how long the train stayed there last time.
 - **Never stuck in a junction.** A train only drives into a stretch it can get through; it won't stop with its body

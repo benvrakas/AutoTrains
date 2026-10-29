@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.3
+
+- **Fixed: push-pull trains at dead-end stations meeting head-on on single track.** A train stopping at a station
+  with no way on past it holds the track back to the last switch until it has backed out past that switch, so other
+  trains heading in wait at the passing place instead of driving onto the single track in front of it. This replaces
+  1.3.2's booking of every train's next leg, which didn't prevent it and made bookings flip back and forth every
+  planning round.
+- **Fixed: trains crawling at walking pace before switches** (often right before a straight). A train held up ahead
+  no longer creeps along to arrive just as its way clears; it drives to where its plan waits, stops, and leaves on
+  time. Planning also takes half the time it did in 1.3.2.
+
 ## 1.3.2
 
 - **Fixed: push-pull trains on single track waiting for each other forever.** A train heading for a station now also

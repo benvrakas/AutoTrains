@@ -53,7 +53,7 @@ enum class EATSippKind : uint8
 	Moving,
 	// A train this mod doesn't drive, where it stands.
 	Standing,
-	// A docked train's stay and its next leg, or a self-driving train's next leg from its goal.
+	// A docked train's stay and its next leg.
 	Predicted,
 };
 
@@ -158,11 +158,6 @@ struct FATSippTrain
 	int32 Commit = 0;
 	float MinGainSeconds = 0.f;
 	float MinGainPercent = 0.f;
-	// Its next leg once it has stayed at the goal: the tracks of its next stop's station (none: not booked), its stay
-	// there (world s, ATSippNever if unknown), and whether it can drive off backwards (a locomotive faces that way).
-	TArray<int32> NextTracks;
-	double NextDwell = ATSippNever;
-	bool bCanReverse = false;
 };
 
 // A train's plan from a cycle.
@@ -201,10 +196,6 @@ struct FATSippResult
 	int32 RejectedMotion = 0;
 	int32 RejectedTail = 0;
 	int32 RejectedStay = 0;
-	// Its next leg from the goal: whether it is booked, whether it leaves backwards, and its arrival at the next station.
-	bool bNextLeg = false;
-	bool bNextReversed = false;
-	double NextArrival = ATSippNever;
 };
 
 // One planning cycle: every train in turn (Order, slot order unless a failure moved a train up) removes its own

@@ -606,7 +606,6 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 		}
 		UpdateAuthority(State);
 		UpdateFollowLeaders(State);
-		State.ClearSeconds = -1.f;
 		return;
 	}
 	// The plan waits somewhere ahead and doesn't move off right away.
@@ -695,8 +694,6 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 			}
 		}
 	}
-	// Held where the plan waits: roll up to arrive as it moves off.
-	State.ClearSeconds = bBlocked && State.PlanDepart > Now && !IsOpen(State.PlanDepart) ? State.PlanDepart - Now : -1.f;
 }
 
 int32 AATTrafficSubsystem::GetRouteCommit(const FATTrafficTrain& State) const
@@ -819,7 +816,6 @@ void AATTrafficSubsystem::FillSippTrain(const FATTrafficTrain& State, const FATS
 			Tail.Via = NodeOf(Pass.Via);
 			Tail.EnterAt = -1.f;
 			Tail.ClearAt = Pass.ClearAt;
-			Tail.bLocked = true;
 			Out.Tail.Add(Tail);
 		}
 	}
@@ -860,44 +856,6 @@ void AATTrafficSubsystem::FillSippTrain(const FATTrafficTrain& State, const FATS
 				Keys.Add(ResourceOf(JointKey));
 			}
 		}
-	}
-}
-
-void AATTrafficSubsystem::FillNextLeg(const FATTrafficTrain& State, const FATSippGraph& Graph, FATSippTrain& Out) const
-{
-	AFGTrain* Train = State.Train.Get();
-	const AFGRailroadTimeTable* TimeTable = Train ? Train->GetTimeTable() : nullptr;
-	TArray<FTimeTableStop> Stops;
-	if (TimeTable)
-	{
-		TimeTable->GetStops(Stops);
-	}
-	// The next stop after the goal at another station.
-	const int32 Current = FMath::Clamp(TimeTable ? TimeTable->GetCurrentStop() : 0, 0, FMath::Max(Stops.Num() - 1, 0));
-	for (int32 Offset = 1; Offset < Stops.Num(); ++Offset)
-	{
-		const int32 Index = (Current + Offset) % Stops.Num();
-		AFGBuildableRailroadStation* Station = Stops[Index].Station ? Stops[Index].Station->GetStation() : nullptr;
-		if (!Station || Station == State.GoalStation.Get())
-		{
-			continue;
-		}
-		const int32* Track = Graph.TrackIndex.Find(Station->GetTrackPosition().Track.Get());
-		if (!Track)
-		{
-			return;
-		}
-		Out.NextTracks.Add(*Track);
-		FTrainDockingRuleSet Rules;
-		Out.NextDwell = GetExpectedStay(Train, Station, GetStopRules(Train, Index, Station, Rules), -1);
-		break;
-	}
-	// A locomotive facing the other way from the lead one can drive it off backwards.
-	const AFGLocomotive* Master = Train ? Train->GetMultipleUnitMaster() : nullptr;
-	for (AFGRailroadSubsystem::TTrainIterator It(Master ? Train->GetFirstVehicle() : nullptr); It; ++It)
-	{
-		const AFGLocomotive* Locomotive = Cast<AFGLocomotive>(*It);
-		Out.bCanReverse = Out.bCanReverse || (Locomotive && Locomotive->IsOrientationReversed() != Master->IsOrientationReversed());
 	}
 }
 
@@ -1005,7 +963,6 @@ void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds, bool bW
 			FTrainDockingRuleSet Rules;
 			const AFGRailroadTimeTable* TimeTable = Train ? Train->GetTimeTable() : nullptr;
 			Out.GoalDwell = GetExpectedStay(Train, State.GoalStation.Get(), GetStopRules(Train, TimeTable ? TimeTable->GetCurrentStop() : INDEX_NONE, State.GoalStation.Get(), Rules), -1);
-			FillNextLeg(State, Graph, Out);
 			Out.Commit = GetRouteCommit(State);
 			Out.bSearch = IsSearchDue(State, DeltaSeconds) && Out.Commit < Out.Route.Num() - 2;
 			Out.MinGainSeconds = mSettings.RerouteMinGainSeconds;
@@ -1270,22 +1227,6 @@ void AATTrafficSubsystem::ApplyPlan(FATTrafficTrain& State, const FATSippCycle& 
 				*Name(Result.CommittedAt), *NameOf(TrainOf(Result.CommittedWith)));
 		}
 		State.PlanCommitted = Committed;
-	}
-	FString NextLeg;
-	if (Cycle.Trains[Slot].NextTracks.Num() > 0 && !Result.bFailed)
-	{
-		NextLeg = !Result.bNextLeg ? FString(TEXT("not booked: no way fits"))
-			: Result.bNextReversed ? FString(TEXT("booked, leaving backwards")) : FString(TEXT("booked, leaving forwards"));
-	}
-	mPlanNextLegs += Result.bNextLeg ? 1 : 0;
-	if (NextLeg != State.PlanNextLeg)
-	{
-		if (!NextLeg.IsEmpty())
-		{
-			UE_LOG(LogAutoTrains, Log, TEXT("planner: %s: next leg after its stay at %s %s%s"), *NameOf(Train), *StationName(State.GoalStation.Get()), *NextLeg,
-				Result.bNextLeg ? *FString::Printf(TEXT(", at the next station in %s"), *SecondsText(Result.NextArrival - Now)) : TEXT(""));
-		}
-		State.PlanNextLeg = NextLeg;
 	}
 	State.PlanNote = FString::Printf(TEXT("at its goal in %s"), *SecondsText(State.PlanArrival - Now));
 	if (bWaits)
@@ -1563,10 +1504,10 @@ void AATTrafficSubsystem::UpdatePlannedTraffic(float DeltaSeconds)
 		{
 			Bookings += Pair.Value.Num();
 		}
-		UE_LOG(LogAutoTrains, Log, TEXT("planner: last %.0f s: %d trains (%d driving), %d bookings now, %.2f ms per update; %d cycles, %.1f ms each on a worker, %d updates waited for one, %d trains moved up after a failed plan; %d plans, %d with a wait, %d failed, %d committed conflicts, %d reroutes, %d departures predicted, %d next legs booked"),
+		UE_LOG(LogAutoTrains, Log, TEXT("planner: last %.0f s: %d trains (%d driving), %d bookings now, %.2f ms per update; %d cycles, %.1f ms each on a worker, %d updates waited for one, %d trains moved up after a failed plan; %d plans, %d with a wait, %d failed, %d committed conflicts, %d reroutes, %d departures predicted"),
 			PlanSummarySeconds, mStateOf.Num(), Driving.Num(), Bookings, mPlanUpdates > 0 ? mPlanSeconds * 1000.0 / mPlanUpdates : 0.0, mCycles,
-			mCycles > 0 ? mCycleMilliseconds / mCycles : 0.0, mCyclesLate, mPlanReorders, mPlans, mPlanWaits, mPlanFailures, mPlanCommitted, mPlanReroutes, mPlanPredictions, mPlanNextLegs);
-		mPlans = mPlanWaits = mPlanFailures = mPlanCommitted = mPlanReroutes = mPlanPredictions = mPlanNextLegs = mPlanUpdates = mCycles = mCyclesLate = mPlanReorders = 0;
+			mCycles > 0 ? mCycleMilliseconds / mCycles : 0.0, mCyclesLate, mPlanReorders, mPlans, mPlanWaits, mPlanFailures, mPlanCommitted, mPlanReroutes, mPlanPredictions);
+		mPlans = mPlanWaits = mPlanFailures = mPlanCommitted = mPlanReroutes = mPlanPredictions = mPlanUpdates = mCycles = mCyclesLate = mPlanReorders = 0;
 		mCycleMilliseconds = 0.0;
 		mPlanSeconds = 0.0;
 		mPlanSummaryAt = Now + PlanSummarySeconds;

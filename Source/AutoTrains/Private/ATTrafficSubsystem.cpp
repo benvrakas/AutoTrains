@@ -615,7 +615,6 @@ void AATTrafficSubsystem::ReadTrain(FATTrafficTrain& State, AFGTrain* Train) con
 		State.bFullBrake = false;
 		State.bForcedBrake = false;
 		State.bCatchArmed = false;
-		State.ClearSeconds = -1.f;
 		State.bHasPlan = false;
 	}
 }
@@ -1775,15 +1774,6 @@ void AATTrafficSubsystem::ApplyAuthority(AFGTrain* Train, float DeltaSeconds)
 	const float Deceleration = GetPlanningDeceleration(*State, Speed);
 	const float Allowed = GetAllowed(FollowLimit, Speed * TargetLeadSeconds, GetNormalBrakingShare());
 	const float AllowedHard = GetAllowed(HardFollowLimit, 0.f, 1.f);
-	float Target = Allowed;
-	// Waiting for a train that will clear: drive at the speed that reaches the braking point as it clears, so the
-	// train rolls on instead of stopping.
-	if (Distance >= 0.f && Usable > 0.f && State->ClearSeconds > 0.f)
-	{
-		const float Seconds = State->ClearSeconds;
-		const float Service = Deceleration * GetNormalBrakingShare();
-		Target = FMath::Min(Target, Service * (FMath::Sqrt(FMath::Square(Seconds) + 2.f * Usable / Service) - Seconds));
-	}
 	// Forced braking: when its own brakes won't stop the train in time, take off the rest of the speed directly, at
 	// the deceleration that stops it at the stop point, the way the game's block signals hold a train. Once started
 	// it holds, with full brake, until the train's own brakes suffice: what it slowed by itself since the last tick
@@ -1796,7 +1786,7 @@ void AATTrafficSubsystem::ApplyAuthority(AFGTrain* Train, float DeltaSeconds)
 	const float Own = bWasForced && DeltaSeconds > 0.f ? (State->ForcedSpeed - Speed) / DeltaSeconds : Deceleration;
 	State->bForcedBrake = DeltaSeconds > 0.f && Speed > 0.f && Needed > Own && (bOverCurve || bWasForced);
 	State->bFullBrake = bOverCurve || State->bForcedBrake;
-	Atc.TargetSpeed = State->bFullBrake ? 0.f : FMath::Min(Atc.TargetSpeed, Target);
+	Atc.TargetSpeed = State->bFullBrake ? 0.f : FMath::Min(Atc.TargetSpeed, Allowed);
 	if (State->bForcedBrake)
 	{
 		const float Velocity = Train->mSimulationData.Velocity;
@@ -2027,11 +2017,10 @@ TArray<FString> AATTrafficSubsystem::DescribeAll() const
 			continue;
 		}
 		const float Distance = GetAuthorityDistance(State.Train.Get());
-		Lines.Add(FString::Printf(TEXT("%s: %.0f km/h (cruises %.0f, accelerates %.2f m/s2), %d claims, may drive %s, brakes at %.1f m/s2, waited %.0f s, rerouted %d times%s%s%s%s%s"),
+		Lines.Add(FString::Printf(TEXT("%s: %.0f km/h (cruises %.0f, accelerates %.2f m/s2), %d claims, may drive %s, brakes at %.1f m/s2, waited %.0f s, rerouted %d times%s%s%s%s"),
 			*TrainName(State.Train.Get()), State.Speed * 0.036f, State.CruiseSeen * 0.036f, State.PlanAccel[GetBrakeBand(State.Speed)] / 100.f, State.Claims.Num(),
 			Distance < 0.f ? TEXT("to its stop") : *FString::Printf(TEXT("%.0f m"), FMath::Max(0.f, Distance - State.StopMargin) / 100.f),
 			GetPlanningDeceleration(State) / 100.f, State.WaitingSeconds, State.Reroutes, State.BlockedReason.IsEmpty() ? TEXT("") : TEXT(", "), *State.BlockedReason,
-			State.ClearSeconds > 0.f ? *FString::Printf(TEXT(" (clears in %.0f s)"), State.ClearSeconds) : TEXT(""),
 			State.PlanNote.IsEmpty() ? TEXT("") : TEXT("; "), *State.PlanNote));
 	}
 	if (Lines.Num() == 0)

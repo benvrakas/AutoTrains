@@ -584,3 +584,26 @@ train, then a row per train every 0.2 s:
   Standing ones (bFixedOnly) so the others yield at their next turn. Not booked when the next stay is unknown. Log:
   "<train>: next leg after its stay at <station> booked, leaving backwards/forwards" on change, and "N next legs
   booked" in the planner summary.
+- 1.3.2 sessions (21:02-21:57 local, 19 trains) and the friend's second report (3 push-pull trains, two dead-end
+  stations Aix-en-Provence / Hamburg, 3-track passing section, video + telemetry in D:\SFMod\Friends logs): the next
+  leg flipped booked / "not booked: no way fits" every cycle (~21000 log lines an hour), e.g. Cable RSC and Crystal
+  Oscilator RSC both bound for Blue Crater Rubber A: one cycle Crystal's leg was booked and Cable's plan waited 236 s,
+  the next neither was. Cause: next legs were booked as Predicted (everyone yields) while planned around nobody's
+  current leg, and skipped when they failed. Grant flips 30/min (1.3.1) -> 224-248/min; time under 12 km/h 7-8% ->
+  25-27% of moving time; cycles 70 -> 140-240 ms. The friend's trains still deadlocked at Hamburg. Reverted in 1.3.3
+  (a4729bf's source), replaced by the dead-end rule: at a goal whose way on ends without a switch (IsDeadEnd: no
+  attachment, a one-way signal, or single attachments to the end), StayFits checks and Build books every resource
+  from the last switch on the way (LastSwitchAt, FOpenResource::StartAt) until the train has backed out past it:
+  arrival + GoalDwell + RestTime(goal - resource start). Part of the train's own plan, so ranks and priority
+  adjustment decide who goes first. Also removed the pre-planner pacing (ClearSeconds: drive at the speed that
+  reaches the wait point as the plan moves off): with long plan waits it made trains crawl at 1-8 km/h for minutes
+  before the switch where they wait, and each flip applied it anew.
+- Audit after the user's rule (revert fixes that weren't the fix), 1.3.3: 1df9278 was the fix for "every train stood
+  still" but the cause was 5cd9dfc; of its parts, passes planned down to a crawl within ForcedReach (Slowest = 0 there,
+  floored at MinPassSpeed) are reverted (Slowest = what braking reaches, floored at MinPassSpeed); harder braking for
+  moves ending within ForcedReach stays (a train inside its service stopping distance has to brake harder; without
+  it plans failed outright), as do the 32 speed bands, the rejection counts and planning a new train at once (made
+  first-cycle-only in e7d5303). Kept as real fixes: 5cd9dfc, 5682b21, 6264747, e067e4a. c873748 (keep held track
+  without a plan slot) and d1673d5 (forced braking counts achieved deceleration) to be re-checked on a 1.3.3 log:
+  the 1.3.2 logs had 2560 forced brakes an hour (80 over 20 m/s^2) and 1635 "no slot" lines, mostly from the
+  next-leg grant flips.

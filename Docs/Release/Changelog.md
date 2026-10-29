@@ -18,6 +18,8 @@
   the track where its plan waited was given that whole track, and the crossings on it past the wait, which nobody had
   checked. It then drove up to the wait at full speed and had to brake hard, or held a crossing another train had too.
   The grant now ends at the wait.
+- **More detail in the log for crossing warnings**: a train coming onto a crossing it wasn't given is logged, and
+  crossing warnings name where each train is, what it holds and what is booked there.
 
 ## 1.3.5
 

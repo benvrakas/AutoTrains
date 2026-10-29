@@ -125,7 +125,8 @@ doesn't cost frame time.
   top is clear. If a train stalls on one anyway, it gets extra traction until it is over the steep part.
 - **Deadlocks cleared.** Trains waiting for each other in a circle get the game's warning over them. With the beta
   setting on (the default), after a minute they pass through each other to clear the jam, and the case is written to
-  a log you can send in.
+  a log you can send in. A train held up that long with no train to wait for also gets the warning and is logged as
+  stuck.
 
 The method follows the safe interval planning of Phillips and Likhachev (2011) and its extension to long vehicles,
 [MT-SIPP](https://doi.org/10.3390/machines12070482) (Miao et al., 2024), which books the body of a train and not just

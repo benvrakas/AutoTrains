@@ -42,6 +42,23 @@ struct FATSettings
 	// How often a planning cycle may be planned again with a train whose plan failed moved up before the train in its
 	// way.
 	float PlanRetries = 3.f;
+	// Route search: every train this often, at once when its planned arrival has got this much later since its last
+	// search, and this often while its plan finds no way. [s]
+	float RouteSearchSeconds = 5.f;
+	float RouteSearchLateSeconds = 15.f;
+	float RouteSearchStuckSeconds = 1.f;
+	// How often the track network is read again in full. [s]
+	float TrackRefreshSeconds = 30.f;
+	// How long a train waits before it counts for deadlock detection. [s]
+	float DeadlockWaitSeconds = 20.f;
+	// A train passing through a deadlock does so until it has driven its length and this much further, or for at most
+	// this long. [m] [s]
+	float GhostDistanceMetres = 300.f;
+	float GhostMaxSeconds = 120.f;
+	// Most search states one plan may use.
+	float PlanSearchLimit = 200000.f;
+	// How far ahead a train's slope is averaged for its braking. [m]
+	float SlopeLookaheadMetres = 300.f;
 };
 
 // Auto Trains' mod configuration: switches and numbers shown in the Mods menu and Satisfactory Mod Manager.

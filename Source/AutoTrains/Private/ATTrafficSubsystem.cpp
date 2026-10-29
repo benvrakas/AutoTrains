@@ -62,7 +62,6 @@ namespace
 	// ahead. [cm/s] [s]
 	constexpr float OverspeedTolerance = 100.f;
 	constexpr float TargetLeadSeconds = 0.5f;
-	constexpr double ConflictRebuildSeconds = 30.0;
 	constexpr double ConflictRebuildMinSeconds = 2.0;
 
 	// How far along its path a follower looks for the vehicles of the trains it follows. [cm]
@@ -70,13 +69,7 @@ namespace
 	// Returned by GetDistanceToTrackStart for a track that isn't on the train's path.
 	constexpr float TrackNotOnPath = -1e9f;
 
-	// A train passing through a deadlock does so until it has driven its length and this much further, or for at most
-	// GhostMaxSeconds. [cm] [s]
-	constexpr float GhostClearDistance = 30000.f;
-	constexpr double GhostMaxSeconds = 120.0;
-	// A train that waited this long counts for deadlock detection; a deadlocked one slower than this shows the game's
-	// long-wait warning. [s] [cm/s]
-	constexpr float DeadlockWaitSeconds = 20.f;
+	// A deadlocked train slower than this shows the game's long-wait warning. [cm/s]
 	constexpr float DeadlockShowSpeed = 50.f;
 	// A deadlock not seen for this long is over. [s]
 	constexpr double DeadlockForgetSeconds = 10.0;
@@ -118,9 +111,8 @@ namespace
 		return MaxVelocity;
 	}
 
-	// Gravity, and how far ahead a train's slope is averaged for its braking. [cm/s^2] [cm]
+	// Gravity. [cm/s^2]
 	constexpr float GravityAcceleration = 980.f;
-	constexpr float GradeAheadDistance = 30000.f;
 
 	// How much Connection's track rises per cm towards it. [cm/cm]
 	float GetGrade(const UFGRailroadTrackConnectionComponent* Connection)
@@ -326,7 +318,7 @@ FString AATTrafficSubsystem::SetRerouteEnabled(bool bEnabled)
 void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 {
 	const double Now = FPlatformTime::Seconds();
-	if (Now - mConflictsBuiltAt > ConflictRebuildSeconds || (mConflictsStale && Now - mConflictsBuiltAt > ConflictRebuildMinSeconds))
+	if (Now - mConflictsBuiltAt > mSettings.TrackRefreshSeconds || (mConflictsStale && Now - mConflictsBuiltAt > ConflictRebuildMinSeconds))
 	{
 		RebuildConflicts();
 	}
@@ -590,7 +582,7 @@ void AATTrafficSubsystem::ReadTrain(FATTrafficTrain& State, AFGTrain* Train) con
 	{
 		const FATRouteStep& Step = State.Route[Index];
 		const float Ahead = Step.EndDistance - State.FrontAhead;
-		if (Ahead >= GradeAheadDistance || Index == State.Route.Num() - 1)
+		if (Ahead >= mSettings.SlopeLookaheadMetres * 100.f || Index == State.Route.Num() - 1)
 		{
 			if (Ahead > 0.f && Step.Exit)
 			{
@@ -1085,8 +1077,8 @@ void AATTrafficSubsystem::GhostThrough(const TArray<const FATTrafficTrain*>& Cha
 	{
 		if (FATTrafficTrain* Stuck = mTrains.Find(Member->Train))
 		{
-			Stuck->GhostUntil = Now + GhostMaxSeconds;
-			Stuck->GhostLeft = Stuck->Length + GhostClearDistance;
+			Stuck->GhostUntil = Now + mSettings.GhostMaxSeconds;
+			Stuck->GhostLeft = Stuck->Length + mSettings.GhostDistanceMetres * 100.f;
 			Lines.Add(FString::Printf(TEXT("%s: %s"), *TrainName(Stuck->Train.Get()), *Stuck->BlockedReason));
 		}
 	}
@@ -1111,7 +1103,7 @@ void AATTrafficSubsystem::LogDeadlocks()
 	for (const TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Pair : mTrains)
 	{
 		const FATTrafficTrain& Start = Pair.Value;
-		if (!Start.bManaged || Start.WaitingSeconds < DeadlockWaitSeconds || InCycle.Contains(&Start))
+		if (!Start.bManaged || Start.WaitingSeconds < mSettings.DeadlockWaitSeconds || InCycle.Contains(&Start))
 		{
 			continue;
 		}
@@ -1121,7 +1113,7 @@ void AATTrafficSubsystem::LogDeadlocks()
 		{
 			Chain.Add(Current);
 			Current = mTrains.Find(Current->BlockedBy);
-			if (Current && (!Current->bManaged || Current->WaitingSeconds < DeadlockWaitSeconds))
+			if (Current && (!Current->bManaged || Current->WaitingSeconds < mSettings.DeadlockWaitSeconds))
 			{
 				Current = nullptr;
 			}

@@ -36,8 +36,6 @@ void FATSippTable::Remove(int32 Owner)
 
 namespace
 {
-	// Search size limit per plan (some MB at most).
-	constexpr int32 MaxStates = 200000;
 	// A train standing at a track end tries at most MaxWindows windows of the way on, each found within MaxShifts
 	// moves of its departure.
 	constexpr int32 MaxWindows = 4;
@@ -291,7 +289,7 @@ namespace
 					RejectedStay += State.bStopped ? 1 : 0;
 					continue;
 				}
-				if (States.Num() >= MaxStates)
+				if (States.Num() >= Cycle.MaxStates)
 				{
 					break;
 				}

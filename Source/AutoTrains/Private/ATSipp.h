@@ -209,6 +209,8 @@ struct FATSippCycle
 	// How often and for how long the turns may be planned again with a failed train moved up. [s]
 	int32 MaxRetries = 0;
 	double RetrySeconds = 0.0;
+	// Most search states one plan may use.
+	int32 MaxStates = 200000;
 	TArray<FATSippTrain> Trains;
 	FATSippTable Table;
 	TArray<FATSippResult> Results;

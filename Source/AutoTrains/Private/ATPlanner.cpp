@@ -22,12 +22,6 @@ namespace
 	constexpr double OverdueDepartSeconds = 1.0;
 	// A departure that couldn't be predicted is tried again after this long. [s]
 	constexpr double PredictRetrySeconds = 10.0;
-	// Route search: each train every SearchIntervalSeconds (spread out), at once when its planned arrival has got
-	// SearchWorseSeconds later than at its last search, and at least every SearchFailedSeconds while its plan fails;
-	// the gain a new route needs and how long it's kept are settings. [s]
-	constexpr float SearchIntervalSeconds = 5.f;
-	constexpr double SearchWorseSeconds = 15.0;
-	constexpr float SearchFailedSeconds = 1.f;
 	// How long after leaving a train may still be set to the route searched for its departure. [s]
 	constexpr double DepartRouteSeconds = 10.0;
 	// Trains that waited longer than WaitDumpSeconds are described in the log every WaitDumpInterval. [s]
@@ -808,19 +802,19 @@ bool AATTrafficSubsystem::IsSearchDue(FATTrafficTrain& State, float DeltaSeconds
 	if (State.RerouteTimer < 0.f)
 	{
 		// Spread the searches out over the interval.
-		State.RerouteTimer = FMath::FRandRange(0.f, SearchIntervalSeconds);
+		State.RerouteTimer = FMath::FRandRange(0.f, mSettings.RouteSearchSeconds);
 	}
 	State.RerouteTimer -= DeltaSeconds;
 	if (!State.PlanFailure.IsEmpty())
 	{
-		State.RerouteTimer = FMath::Min(State.RerouteTimer, SearchFailedSeconds);
+		State.RerouteTimer = FMath::Min(State.RerouteTimer, mSettings.RouteSearchStuckSeconds);
 	}
-	const bool bWorse = State.SearchedArrival >= 0.0 && !IsOpen(State.SearchedArrival) && State.PlanArrival - State.SearchedArrival > SearchWorseSeconds;
+	const bool bWorse = State.SearchedArrival >= 0.0 && !IsOpen(State.SearchedArrival) && State.PlanArrival - State.SearchedArrival > mSettings.RouteSearchLateSeconds;
 	if ((State.RerouteTimer > 0.f && !bWorse) || State.RerouteCooldown > 0.f || State.Route.Num() < 3)
 	{
 		return false;
 	}
-	State.RerouteTimer = State.PlanFailure.IsEmpty() ? SearchIntervalSeconds : SearchFailedSeconds;
+	State.RerouteTimer = State.PlanFailure.IsEmpty() ? mSettings.RouteSearchSeconds : mSettings.RouteSearchStuckSeconds;
 	State.SearchedArrival = State.PlanArrival;
 	return true;
 }
@@ -1012,6 +1006,7 @@ void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds, bool bW
 	// Retries end by half the update interval, so the cycle is in by the next update.
 	Cycle->MaxRetries = FMath::RoundToInt(mSettings.PlanRetries);
 	Cycle->RetrySeconds = mSettings.UpdateIntervalSeconds * 0.5;
+	Cycle->MaxStates = FMath::RoundToInt(mSettings.PlanSearchLimit);
 	TMap<const AFGTrain*, int32> SlotOf;
 	for (const FTurn& Turn : Turns)
 	{
@@ -1080,7 +1075,7 @@ void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds, bool bW
 				Out.MinDepart = Depart;
 				FTrainDockingRuleSet Rules;
 				Out.GoalDwell = GetExpectedStay(Train, State.PredictedStation.Get(), GetStopRules(Train, State.PredictedStop, State.PredictedStation.Get(), Rules), -1);
-				// A departure that finds no way searches the whole network for another, at most every SearchFailedSeconds.
+				// A departure that finds no way searches the whole network for another, at most every route search while stuck.
 				State.RerouteTimer -= DeltaSeconds;
 				Out.Commit = 0;
 				Out.bSearch = mRerouteEnabled && State.bPredictFailed && State.RerouteTimer <= 0.f && Out.Route.Num() > 2;
@@ -1088,7 +1083,7 @@ void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds, bool bW
 				Out.MinGainPercent = mSettings.RerouteMinGainPercent;
 				if (Out.bSearch)
 				{
-					State.RerouteTimer = SearchFailedSeconds;
+					State.RerouteTimer = mSettings.RouteSearchStuckSeconds;
 				}
 				continue;
 			}

@@ -72,3 +72,5 @@ Plugins/*/Intermediate/*
 
 # Cache files for the editor to use
 DerivedDataCache/*
+# Player bug reports (logs, telemetry)
+Bug Reports/

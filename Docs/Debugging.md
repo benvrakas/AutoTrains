@@ -686,3 +686,16 @@ train, then a row per train every 0.2 s:
   LogDeadlocks reports `STUCK:` (log + faults.log) for a train waiting longer than the deadlock threshold with no
   train to wait for, naming the trains whose wait chain ends at it; they all get the long-wait icon and the root
   looks for another way at once.
+- 1.3.6, second round (8a1d56e session, 34 min): no Rubber-style stall (no standstill with an unnamed blocker for 20 s
+  in telemetry), but 39 deadlocks (rate as before). 29 of their members: `X: waits for Y before crossing N, ~5 m
+  ahead: holds crossing N` with `Y: stays behind X` (56 in the 1.3.5 hour too). IsBehind required the key past
+  Self's front track (`*OtherKeyAt <= SelfAt` -> false); a crossing zone can be on that track ahead of the front, so
+  the follower got it through the follow exemption and the leader then waited for its own follower. Now crossings on
+  Self's front track count (FirstAt = SelfAt), FillSippTrain's Behind sets add the zones of the front track, and the
+  crossing double-hold check skips same-line pairs like the track check. IsBehind also returns false when Other
+  stands on the key: route indices don't see what the tail stands on, so a route coming back over a crossing let ACU A
+  be granted crossing 72 while Steel Pipe Xtra Steel stood on it.
+  STUCK fired 17 times on momentary "waits for ?" lines (a failed plan between named blockers) because it used
+  WaitingSeconds; it now needs UnnamedWaitSeconds (held up with no named train, without a break) past the threshold.
+  CHECK FAILED right after "conflict model rebuilt" (crossing count changed while building) is one update of claims
+  under the old crossing numbers; it clears on the next update.

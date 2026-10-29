@@ -128,6 +128,8 @@ struct FATTrafficTrain
 	const void* RoutePath = nullptr;
 	int32 RouteFirstSegment = 0;
 	float WaitingSeconds = 0.f;
+	// Of that, how long it has been held up with no train named to wait for, without a break.
+	float UnnamedWaitSeconds = 0.f;
 	// Full-brake braking force measured on this train per speed band, as deceleration times mass so a train that
 	// takes on cargo plans with less; 0 where not measured. [cm/s^2 kg]
 	float BrakeForce[ATBrakeBands] = {};

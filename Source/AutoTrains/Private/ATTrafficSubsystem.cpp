@@ -457,6 +457,7 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 
 		// Held up, even while it rolls slowly up to its stop; with or without a train to wait for.
 		State->WaitingSeconds = !State->BlockedReason.IsEmpty() && State->Speed < PlannerWaitSpeed ? State->WaitingSeconds + DeltaSeconds : 0.f;
+		State->UnnamedWaitSeconds = State->WaitingSeconds > 0.f && !State->BlockedBy.IsValid() ? State->UnnamedWaitSeconds + DeltaSeconds : 0.f;
 	}
 	LogDeadlocks();
 }
@@ -623,6 +624,7 @@ void AATTrafficSubsystem::ReadTrain(FATTrafficTrain& State, AFGTrain* Train) con
 		State.BlockedReason.Reset();
 		State.BlockedBy = nullptr;
 		State.WaitingSeconds = 0.f;
+		State.UnnamedWaitSeconds = 0.f;
 		State.bFullBrake = false;
 		State.bForcedBrake = false;
 		State.bCatchArmed = false;
@@ -1197,14 +1199,14 @@ void AATTrafficSubsystem::LogDeadlocks()
 			}
 		}
 	}
-	// A train long held up with no train to wait for: nothing ahead will let it go, so it and every train whose chain of
-	// waits ends at it are stuck. Logged when it first shows up; it looks for another way at once.
+	// A train held up for long with no train to wait for all that time: nothing ahead will let it go, so it and every
+	// train whose chain of waits ends at it are stuck. Logged when it first shows up; it looks for another way at once.
 	auto IsWaiting = [this](const FATTrafficTrain* State) { return State && State->bManaged && State->WaitingSeconds >= mSettings.DeadlockWaitSeconds; };
 	TSet<const FATTrafficTrain*> InStall;
 	for (TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Pair : mTrains)
 	{
 		FATTrafficTrain& Root = Pair.Value;
-		if (!IsWaiting(&Root) || Root.BlockedBy.IsValid() || InCycle.Contains(&Root))
+		if (!IsWaiting(&Root) || Root.UnnamedWaitSeconds < mSettings.DeadlockWaitSeconds || InCycle.Contains(&Root))
 		{
 			continue;
 		}
@@ -1237,7 +1239,7 @@ void AATTrafficSubsystem::LogDeadlocks()
 		}
 		Behind.Sort();
 		const FString Fault = FString::Printf(TEXT("%s %s has waited %.0f s with no train to wait for: %s; %d waiting behind it%s%s\n"),
-			*FDateTime::Now().ToString(TEXT("%Y-%m-%d %H:%M:%S")), *TrainName(Root.Train.Get()), Root.WaitingSeconds, *Root.BlockedReason, Behind.Num(),
+			*FDateTime::Now().ToString(TEXT("%Y-%m-%d %H:%M:%S")), *TrainName(Root.Train.Get()), Root.UnnamedWaitSeconds, *Root.BlockedReason, Behind.Num(),
 			Behind.Num() > 0 ? TEXT(": ") : TEXT(""), *FString::Join(Behind, TEXT(", ")));
 		UE_LOG(LogAutoTrains, Warning, TEXT("traffic: STUCK: %s"), *Fault.TrimEnd());
 		const FString Path = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("AutoTrains") / TEXT("faults.log"));

@@ -964,6 +964,12 @@ void AATTrafficSubsystem::FillSippTrain(const FATTrafficTrain& State, const FATS
 			continue;
 		}
 		TSet<int32>& Keys = Out.Behind.FindOrAdd(*OtherSlot);
+		for (const FATZone& Zone : GetZones(State.Route[0].Track))
+		{
+			FResourceKey CrossingKey;
+			CrossingKey.Crossing = Zone.Crossing;
+			Keys.Add(ResourceOf(CrossingKey));
+		}
 		for (int32 Step = 1; Step < State.Route.Num() && SelfAt + Step < Other.Route.Num() && Other.Route[SelfAt + Step].Track == State.Route[Step].Track; ++Step)
 		{
 			FResourceKey TrackKey;
@@ -1564,7 +1570,7 @@ void AATTrafficSubsystem::UpdatePlannedTraffic(float DeltaSeconds)
 			{
 				FResourceKey Key;
 				Key.Crossing = Crossing;
-				if (!State.OccupiedCrossings.Contains(Crossing) && HoldsCrossing(Other, Crossing))
+				if (!State.OccupiedCrossings.Contains(Crossing) && HoldsCrossing(Other, Crossing) && !IsBehind(Other, State, Key) && !IsBehind(State, Other, Key))
 				{
 					Shared.Add(Key);
 				}
@@ -1804,10 +1810,17 @@ void AATTrafficSubsystem::RankTrains(TArray<FATTrafficTrain*>& Trains) const
 
 bool AATTrafficSubsystem::IsBehind(const FATTrafficTrain& Other, const FATTrafficTrain& Self, const FResourceKey& Key) const
 {
-	// Self's front on Other's route, Key further along it, and both routes the same tracks from there up to Key: Self
-	// gets there first along one line.
+	// Self's front on Other's route, Key further along it (a crossing zone also on Self's front track), and both routes
+	// the same tracks from there up to Key: Self gets there first along one line.
 	const int32 SelfAt = FrontIndexOn(Other, Self);
 	if (SelfAt == INDEX_NONE)
+	{
+		return false;
+	}
+	// Standing on it, Other isn't behind there, whatever its route says.
+	const bool bStands = Key.Joint != INDEX_NONE ? Other.OccupiedJoints.Contains(Key.Joint)
+		: Key.Crossing != INDEX_NONE ? Other.OccupiedCrossings.Contains(Key.Crossing) : Other.Occupied.Contains(const_cast<AFGBuildableRailroadTrack*>(Key.Track));
+	if (bStands)
 	{
 		return false;
 	}
@@ -1817,7 +1830,8 @@ bool AATTrafficSubsystem::IsBehind(const FATTrafficTrain& Other, const FATTraffi
 	};
 	const int32* OtherKeyAt = KeyAt(Other);
 	const int32* SelfKeyAt = KeyAt(Self);
-	if (!OtherKeyAt || !SelfKeyAt || *OtherKeyAt <= SelfAt || *OtherKeyAt - SelfAt != *SelfKeyAt)
+	const int32 FirstAt = Key.Crossing != INDEX_NONE ? SelfAt : SelfAt + 1;
+	if (!OtherKeyAt || !SelfKeyAt || *OtherKeyAt < FirstAt || *OtherKeyAt - SelfAt != *SelfKeyAt)
 	{
 		return false;
 	}

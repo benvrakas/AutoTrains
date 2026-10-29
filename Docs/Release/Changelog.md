@@ -8,6 +8,9 @@
 - **Stuck trains show up in the log.** A train held up for longer than the deadlock threshold with no train to wait
   for is logged as STUCK (also in faults.log), with the trains waiting behind it, and shows the game's long-wait
   warning like a deadlocked train.
+- **Fixed: a train waiting for the train behind it at a crossing.** Where a crossing lay just ahead of a train on the
+  track it was on, the train following it could be given the crossing first, and both then stood still until the
+  deadlock was passed through. The train in front now always gets it first.
 
 ## 1.3.5
 

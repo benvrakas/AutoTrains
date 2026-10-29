@@ -349,6 +349,7 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 		FATTrafficTrain& State = mTrains.FindOrAdd(Train);
 		ReadTrain(State, Train);
 		TrackDocking(State, Train, WorldNow);
+		ApplyDepartRoute(State, Train, WorldNow);
 		ApplyLocomotivePower(Train, Train->IsSelfDrivingEnabled() ? GAccelerationScale : 1.f, Train->IsSelfDrivingEnabled() ? GTopSpeed * 0.036f : 0.f);
 
 		// Measure full-brake deceleration per speed band between updates with full brake on at both; a catch ends at

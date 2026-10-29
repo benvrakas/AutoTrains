@@ -28,6 +28,8 @@ namespace
 	constexpr float SearchIntervalSeconds = 5.f;
 	constexpr double SearchWorseSeconds = 15.0;
 	constexpr float SearchFailedSeconds = 1.f;
+	// How long after leaving a train may still be set to the route searched for its departure. [s]
+	constexpr double DepartRouteSeconds = 10.0;
 	// Trains that waited longer than WaitDumpSeconds are described in the log every WaitDumpInterval. [s]
 	constexpr double WaitDumpSeconds = 60.0;
 	constexpr double WaitDumpInterval = 30.0;
@@ -253,6 +255,9 @@ void AATTrafficSubsystem::TrackDocking(FATTrafficTrain& State, AFGTrain* Train, 
 		State.PredictedRoute.Reset();
 		State.PredictedStation = nullptr;
 		State.PredictedAt = -1e9;
+		State.bPredictFailed = false;
+		State.bPredictRerouted = false;
+		State.DepartRoute.Reset();
 	}
 	else if (!bDocked && State.bWasDocked)
 	{
@@ -279,8 +284,20 @@ void AATTrafficSubsystem::TrackDocking(FATTrafficTrain& State, AFGTrain* Train, 
 				bFully ? TEXT("fully load/unload") : TEXT("load/unload once"), State.DockTransfer > 0 ? TEXT("cargo moved") : State.DockTransfer == 0 ? TEXT("no cargo to move") : TEXT("cargo unknown"));
 		}
 		State.DockedAt = -1.0;
+		// Leaving on the route searched for its departure, once the game has given it a path.
+		State.DepartRoute.Reset();
+		if (State.bPredictRerouted)
+		{
+			for (const FATRouteStep& Step : State.PredictedRoute)
+			{
+				State.DepartRoute.Add(Step.Exit);
+			}
+			State.DepartRouteUntil = Now + DepartRouteSeconds;
+		}
 		State.PredictedRoute.Reset();
 		State.PredictedStation = nullptr;
+		State.bPredictFailed = false;
+		State.bPredictRerouted = false;
 		State.LegStart = -1.0;
 	}
 	// While docked: the stop's rules, and whether the freight platforms move cargo.
@@ -431,6 +448,75 @@ void AATTrafficSubsystem::PredictDeparture(FATTrafficTrain& State, double Now)
 	UE_LOG(LogAutoTrains, Log, TEXT("planner: %s docked at %s, expected to stay %.0f s; next leg to %s: %d tracks, %.0f m, leaving with %s"), *NameOf(Train),
 		*StationName(Docked), GetExpectedStay(Train, Docked, &State.DockRules, State.DockTransfer), *StationName(Next), State.PredictedRoute.Num(), BestLength / 100.f,
 		BestLocomotive == Train->GetMultipleUnitMaster() ? TEXT("its lead locomotive") : TEXT("another locomotive (the other way)"));
+}
+
+void AATTrafficSubsystem::ApplyDepartureReroute(FATTrafficTrain& State, const FATSippCycle& Cycle, int32 Slot)
+{
+	const FATSippGraph& Graph = *Cycle.Graph;
+	const FATSippResult& Result = Cycle.Results[Slot];
+	if (Result.Route.Num() == 0 || !Graph.Connections.IsValidIndex(Result.Route[0]) || Graph.Connections[Result.Route[0]].Get() != State.PredictedRoute[0].Exit)
+	{
+		return;
+	}
+	TArray<FATRouteStep> Route;
+	float Distance = State.PredictedRoute[0].EndDistance;
+	for (int32 Index = 0; Index < Result.Route.Num(); ++Index)
+	{
+		UFGRailroadTrackConnectionComponent* Exit = Graph.Connections[Result.Route[Index]].Get();
+		AFGBuildableRailroadTrack* Track = Exit ? Exit->GetTrack() : nullptr;
+		if (!Track)
+		{
+			return;
+		}
+		Distance += Index > 0 ? Track->GetLength() : 0.f;
+		Route.Add({Track, Exit, Distance});
+	}
+	UE_LOG(LogAutoTrains, Log, TEXT("planner: %s's departure from %s rerouted: %s -> %.0f s to %s, %d -> %d tracks (route search: %d states, %.2f ms on a worker)"),
+		*NameOf(State.Train.Get()), *StationName(State.DockStation.Get()), IsOpen(Result.OldArrival) ? TEXT("no way") : *FString::Printf(TEXT("%.0f s"), Result.OldArrival - Cycle.Now),
+		Result.Arrival - Cycle.Now, *StationName(State.PredictedStation.Get()), State.PredictedRoute.Num(), Route.Num(), Result.SearchStates, Result.SearchMilliseconds);
+	State.PredictedRoute = MoveTemp(Route);
+	State.bPredictRerouted = true;
+	++mPlanReroutes;
+}
+
+void AATTrafficSubsystem::ApplyDepartRoute(FATTrafficTrain& State, AFGTrain* Train, double Now)
+{
+	if (State.DepartRoute.Num() == 0)
+	{
+		return;
+	}
+	if (Now > State.DepartRouteUntil)
+	{
+		UE_LOG(LogAutoTrains, Log, TEXT("planner: %s left on the game's own path: its path never started the way of the route searched for its departure"), *NameOf(Train));
+		State.DepartRoute.Reset();
+		return;
+	}
+	if (Train->IsDocked() || !Train->mAtcData.Path.IsValid() || State.Route.Num() == 0)
+	{
+		return;
+	}
+	// From where the game's path and the searched route meet: the connection the front leaves its track through.
+	const int32 From = State.DepartRoute.IndexOfByPredicate([&State](const TWeakObjectPtr<UFGRailroadTrackConnectionComponent>& Exit) { return Exit.Get() == State.Route[0].Exit; });
+	if (From == INDEX_NONE)
+	{
+		return;
+	}
+	TArray<UFGRailroadTrackConnectionComponent*> Connections;
+	for (int32 Index = From; Index < State.DepartRoute.Num(); ++Index)
+	{
+		UFGRailroadTrackConnectionComponent* Exit = State.DepartRoute[Index].Get();
+		if (!Exit || !Exit->GetTrack())
+		{
+			State.DepartRoute.Reset();
+			return;
+		}
+		Connections.Add(Exit);
+	}
+	State.DepartRoute.Reset();
+	const bool bApplied = FATRouter::ApplyPath(Train, FATRouter::BuildPath(Connections, Train->mAtcData.Path->Station.Get()), Connections.Last());
+	State.RerouteCooldown = mSettings.RerouteHoldSeconds;
+	UE_LOG(LogAutoTrains, Log, TEXT("planner: %s left on the route searched for its departure (%d tracks), applied %s"), *NameOf(Train), Connections.Num(),
+		bApplied ? TEXT("yes") : TEXT("NO"));
 }
 
 bool AATTrafficSubsystem::CanEnter(FATTrafficTrain& Self, const FResourceKey& Key, int32 Index, double Enter, bool bLocked, bool bHeldBefore,
@@ -994,6 +1080,16 @@ void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds, bool bW
 				Out.MinDepart = Depart;
 				FTrainDockingRuleSet Rules;
 				Out.GoalDwell = GetExpectedStay(Train, State.PredictedStation.Get(), GetStopRules(Train, State.PredictedStop, State.PredictedStation.Get(), Rules), -1);
+				// A departure that finds no way searches the whole network for another, at most every SearchFailedSeconds.
+				State.RerouteTimer -= DeltaSeconds;
+				Out.Commit = 0;
+				Out.bSearch = mRerouteEnabled && State.bPredictFailed && State.RerouteTimer <= 0.f && Out.Route.Num() > 2;
+				Out.MinGainSeconds = mSettings.RerouteMinGainSeconds;
+				Out.MinGainPercent = mSettings.RerouteMinGainPercent;
+				if (Out.bSearch)
+				{
+					State.RerouteTimer = SearchFailedSeconds;
+				}
 				continue;
 			}
 			Out.Kind = EATSippKind::Predicted;
@@ -1139,6 +1235,14 @@ void AATTrafficSubsystem::ApplyPlanCycle()
 		if (State && State->bManaged && Input.Turn == EATSippTurn::Plan && Input.Kind == EATSippKind::Moving && Cycle->Results[Slot].bPlanned)
 		{
 			ApplyPlan(*State, *Cycle, Slot);
+		}
+		if (State && Input.Turn == EATSippTurn::Plan && Input.Kind == EATSippKind::Predicted && Cycle->Results[Slot].bPlanned && State->PredictedRoute.Num() > 0)
+		{
+			State->bPredictFailed = Cycle->Results[Slot].bFailed;
+			if (Cycle->Results[Slot].bRerouted)
+			{
+				ApplyDepartureReroute(*State, *Cycle, Slot);
+			}
 		}
 	}
 }

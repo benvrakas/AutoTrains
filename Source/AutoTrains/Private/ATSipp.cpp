@@ -350,11 +350,24 @@ namespace
 
 		bool InScope(const FATSippBooking& Booking, bool bFirst) const
 		{
-			if (bFirst || Booking.Kind != EATSippKind::Moving || Booking.bHeld || Booking.bCommitted)
+			if (bFirst || Booking.Kind == EATSippKind::Standing || Booking.bHeld || Booking.bCommitted)
 			{
 				return true;
 			}
-			return Train.bRanked && !PlansAfter(Booking.Owner);
+			return !PlansAfter(Booking.Owner) && (Booking.Kind != EATSippKind::Moving || Train.bRanked);
+		}
+
+		// When a booking ends for this train: a docked train planned after it stands where it is only until it can leave
+		// and its tail has pulled clear (it plans around this one at its turn); else as booked.
+		double ClearOf(const FATSippBooking& Booking, int32 Resource) const
+		{
+			const FATSippTrain& Other = Cycle.Trains[Booking.Owner];
+			if (!Booking.bLocked || Booking.Kind != EATSippKind::Predicted || Other.Turn != EATSippTurn::Plan || !PlansAfter(Booking.Owner))
+			{
+				return Booking.Clear;
+			}
+			const float Out = Other.Length + (Resource < Graph.Length.Num() ? Graph.Length[Resource] : Graph.JointFoul[Resource - Graph.Length.Num()]);
+			return FMath::Min(Booking.Clear, FMath::Max(Booking.Enter, Other.MinDepart) + RestTime(Out, FMath::Max(Other.Cruise, MinPassSpeed), FMath::Max(Other.Accel, 1.f)));
 		}
 
 		bool PlansAfter(int32 Owner) const
@@ -413,7 +426,8 @@ namespace
 					{
 						continue;
 					}
-					const bool bOpen = IsNever(Booking.Clear);
+					const double Clear = ClearOf(Booking, Checked);
+					const bool bOpen = IsNever(Clear);
 					const bool bByRank = !bFirst && Booking.Kind == EATSippKind::Moving && !Booking.bHeld && !Booking.bCommitted;
 					auto LowerHi = [&](double Hi)
 					{
@@ -430,7 +444,7 @@ namespace
 						if (Enter >= Booking.Enter + Headway)
 						{
 							After = FMath::Max(After, Booking.Enter + Headway);
-							const double Lo = bOpen ? ATSippNever : Booking.Clear + Headway;
+							const double Lo = bOpen ? ATSippNever : Clear + Headway;
 							if (Lo > Out.ClearLo)
 							{
 								Out.ClearLo = Lo;
@@ -439,7 +453,7 @@ namespace
 						}
 						else if (!bFirst && Enter <= Booking.Enter - Headway)
 						{
-							LowerHi(bOpen ? ATSippNever : Booking.Clear - Headway);
+							LowerHi(bOpen ? ATSippNever : Clear - Headway);
 						}
 						else
 						{
@@ -451,7 +465,7 @@ namespace
 						continue;
 					}
 					const double Lo = bFirst ? -ATSippNever : Booking.Enter - Headway;
-					const double Hi = bOpen ? ATSippNever : Booking.Clear + Headway;
+					const double Hi = bOpen ? ATSippNever : Clear + Headway;
 					if (Enter >= Hi)
 					{
 						After = FMath::Max(After, Hi);
@@ -1126,8 +1140,8 @@ namespace
 						{
 							// Trains not driven plan nothing, ones planned after this one keep clear of it, and ones the same
 							// way queue behind it.
-							if (bHolds || Booking.Owner == Slot || Booking.Kind == EATSippKind::Standing || Booking.Clear + Headway <= Arrive
-								|| (Booking.Kind == EATSippKind::Moving && PlansAfter(Booking.Owner))
+							if (bHolds || Booking.Owner == Slot || Booking.Kind == EATSippKind::Standing || ClearOf(Booking, Checked) + Headway <= Arrive
+								|| ((Booking.Kind == EATSippKind::Moving || !Booking.bLocked) && PlansAfter(Booking.Owner))
 								|| (Checked == Pass.Resource && Pass.Exit != INDEX_NONE && Booking.Exit == Pass.Exit && Booking.Via == Pass.Via)
 								|| IsBehind(Booking.Owner, Checked))
 							{
@@ -1351,7 +1365,7 @@ void ATSipp::Run(FATSippCycle& Cycle)
 		for (const int32 Slot : Cycle.Order)
 		{
 			FATSippTrain& Train = Cycle.Trains[Slot];
-			Train.Rank = Train.Turn == EATSippTurn::Plan && Train.Kind == EATSippKind::Moving ? Rank++ : INDEX_NONE;
+			Train.Rank = Train.Turn == EATSippTurn::Plan ? Rank++ : INDEX_NONE;
 		}
 		if (Attempt > 0)
 		{

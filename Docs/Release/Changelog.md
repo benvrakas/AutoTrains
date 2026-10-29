@@ -16,6 +16,8 @@
 - **A train that is in another's way finds another route** even when it already has track granted to its goal, so
   in a passing section it takes the free track instead of waiting on the one the other train needs.
 - **A train with no way on never stops on a switch:** it waits where it is clear of every switch instead.
+- **A docked train whose departure finds no way searches for another route** and leaves on it, so two push-pull
+  trains docked at opposite ends of a single line take different tracks through the passing place.
 
 ## 1.3.2
 

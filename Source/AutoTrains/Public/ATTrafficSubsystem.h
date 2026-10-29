@@ -314,6 +314,12 @@ private:
 	void GhostThrough(const TArray<const FATTrafficTrain*>& Chain, double Seconds);
 	// Logs what a long-waiting train waits for: its booking and every booking at that resource, with their trains.
 	void LogWaitDump(const FATTrafficTrain& State, double Now) const;
+	// Logs each crossing zone a driven train has come to stand on without holding it. WasOn: the zones it stood on before.
+	void LogCrossingEntries(const FATTrafficTrain& State, const TSet<int32>& WasOn, double Now) const;
+	// One train's footing on a crossing zone: where the zone lies on its route and under it, its claim and plan there.
+	FString DescribeCrossing(const FATTrafficTrain& State, int32 Crossing, double Now) const;
+	// Both trains on the crossing zone, how they stand to each other there, and the zone's bookings; one line each.
+	FString CrossingDetails(const FATTrafficTrain& A, const FATTrafficTrain& B, int32 Crossing, double Now) const;
 
 	// Returns how far Holder still travels until none of its vehicles is on Track, a track off its route, or reaches
 	// onto it past an end (or is in Joint's fouling zone); -1 if none does. [cm]

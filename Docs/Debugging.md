@@ -699,3 +699,10 @@ train, then a row per train every 0.2 s:
   WaitingSeconds; it now needs UnnamedWaitSeconds (held up with no named train, without a break) past the threshold.
   CHECK FAILED right after "conflict model rebuilt" (crossing count changed while building) is one update of claims
   under the old crossing numbers; it clears on the next update.
+- CROSSING diagnostics (after 706e968): `planner: CROSSING ENTRY:` logs a driven, non-ghosting train coming to stand
+  on a crossing zone it doesn't hold (speed, authority, full/forced brake, seconds since the conflict model rebuild,
+  last wait reason). The CROSSING warning and crossing CHECK FAILED lines now carry, per train: stands on/holds, each
+  route step with the zone (metres from its front, track held or not), its vehicles over the zone, its plan's entry
+  time, its claims and grant cut; then route order both ways, IsBehind both ways, FollowedTrains both ways, ranks, and
+  the zone's bookings. Read them as: "was granted" with the granter's zone ahead and no IsBehind/follow = a grant
+  that ignored the stander; a CROSSING ENTRY at speed with forced brake = an overrun; right after a rebuild = renumbering.

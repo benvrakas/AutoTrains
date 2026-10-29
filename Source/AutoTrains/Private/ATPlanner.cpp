@@ -1579,8 +1579,9 @@ void AATTrafficSubsystem::UpdatePlannedTraffic(float DeltaSeconds)
 			if (Shared.Num() > 0 && Pair2 != mLastDoubleHold)
 			{
 				mLastDoubleHold = Pair2;
-				UE_LOG(LogAutoTrains, Warning, TEXT("planner: CHECK FAILED: %s was granted %s while %s holds it"), *NameOf(State.Train.Get()),
-					*ResourceName(Shared[0].Track, INDEX_NONE, Shared[0].Crossing), *NameOf(Other.Train.Get()));
+				UE_LOG(LogAutoTrains, Warning, TEXT("planner: CHECK FAILED: %s was granted %s while %s holds it%s"), *NameOf(State.Train.Get()),
+					*ResourceName(Shared[0].Track, INDEX_NONE, Shared[0].Crossing), *NameOf(Other.Train.Get()),
+					Shared[0].Crossing != INDEX_NONE ? *CrossingDetails(State, Other, Shared[0].Crossing, Now) : TEXT(""));
 			}
 		}
 	}
@@ -1604,10 +1605,11 @@ void AATTrafficSubsystem::UpdatePlannedTraffic(float DeltaSeconds)
 					continue;
 				}
 				mLoggedCrossings.Add(Key);
-				UE_LOG(LogAutoTrains, Warning, TEXT("planner: CROSSING: %s (%s, %.0f km/h, may drive %.0f m%s%s) stands on %s, which %s (%s, %.0f km/h) %s"),
+				UE_LOG(LogAutoTrains, Warning, TEXT("planner: CROSSING: %s (%s, %.0f km/h, may drive %.0f m%s%s) stands on %s, which %s (%s, %.0f km/h) %s%s"),
 					*NameOf(State.Train.Get()), State.bManaged ? TEXT("driving") : TEXT("not driven"), State.Speed * 0.036f, GetAuthorityDistance(State.Train.Get()) / 100.f,
 					State.BlockedReason.IsEmpty() ? TEXT("") : TEXT(", "), *State.BlockedReason, *ResourceName(nullptr, INDEX_NONE, Crossing), *NameOf(Other.Train.Get()),
-					Other.bManaged ? TEXT("driving") : TEXT("not driven"), Other.Speed * 0.036f, Other.OccupiedCrossings.Contains(Crossing) ? TEXT("stands on too") : TEXT("was granted"));
+					Other.bManaged ? TEXT("driving") : TEXT("not driven"), Other.Speed * 0.036f, Other.OccupiedCrossings.Contains(Crossing) ? TEXT("stands on too") : TEXT("was granted"),
+					*CrossingDetails(State, Other, Crossing, Now));
 			}
 		}
 	}
@@ -1709,6 +1711,94 @@ void AATTrafficSubsystem::LogWaitDump(const FATTrafficTrain& State, double Now) 
 		}
 	}
 	UE_LOG(LogAutoTrains, Log, TEXT("%s"), *Lines);
+}
+
+void AATTrafficSubsystem::LogCrossingEntries(const FATTrafficTrain& State, const TSet<int32>& WasOn, double Now) const
+{
+	// Trains passing through a deadlock run onto others' zones on purpose.
+	if (!State.bManaged || State.GhostUntil >= 0.0)
+	{
+		return;
+	}
+	for (const int32 Crossing : State.OccupiedCrossings)
+	{
+		if (WasOn.Contains(Crossing) || State.ClaimedCrossings.Contains(Crossing))
+		{
+			continue;
+		}
+		const AFGTrain* Train = State.Train.Get();
+		UE_LOG(LogAutoTrains, Warning, TEXT("planner: CROSSING ENTRY: %s came onto %s without holding it (%.0f km/h, may drive %.0f m, full brake %s, forced brake %s, conflict model rebuilt %.0f s ago%s%s): %s"),
+			*NameOf(Train), *ResourceName(nullptr, INDEX_NONE, Crossing), State.Speed * 0.036f, GetAuthorityDistance(Train) / 100.f, State.bFullBrake ? TEXT("on") : TEXT("off"),
+			State.bForcedBrake ? TEXT("on") : TEXT("off"), FPlatformTime::Seconds() - mConflictsBuiltAt, State.BlockedReason.IsEmpty() ? TEXT("") : TEXT(", last "),
+			*State.BlockedReason, *DescribeCrossing(State, Crossing, Now));
+	}
+}
+
+FString AATTrafficSubsystem::DescribeCrossing(const FATTrafficTrain& State, int32 Crossing, double Now) const
+{
+	TArray<FString> Parts;
+	Parts.Add(State.OccupiedCrossings.Contains(Crossing) ? TEXT("stands on it") : TEXT("doesn't stand on it"));
+	Parts.Add(State.ClaimedCrossings.Contains(Crossing) ? TEXT("holds it") : TEXT("doesn't hold it"));
+	if (State.GhostUntil >= 0.0)
+	{
+		Parts.Add(TEXT("passing through a deadlock"));
+	}
+	for (int32 Index = 0; Index < State.Route.Num(); ++Index)
+	{
+		const FATRouteStep& Step = State.Route[Index];
+		const float Begin = Step.EndDistance - Step.Track->GetLength() - State.FrontAhead;
+		for (const FATZone& Zone : GetZones(Step.Track))
+		{
+			if (Zone.Crossing != Crossing)
+			{
+				continue;
+			}
+			float From = 0.f;
+			float To = 0.f;
+			GetZoneAlong(Zone, Step.Track, Step.Exit, From, To);
+			Parts.Add(FString::Printf(TEXT("route step %d (%s, %s): zone %.0f to %.0f m ahead of its front"), Index, *ResourceName(Step.Track, INDEX_NONE),
+				HoldsTrack(State, Step.Track) ? TEXT("held") : TEXT("not held"), (Begin + From) / 100.f, (Begin + To) / 100.f));
+		}
+	}
+	for (const FATVehicleSpot& Spot : State.Vehicles)
+	{
+		for (const FATZone& Zone : GetZones(Spot.Track))
+		{
+			if (Zone.Crossing == Crossing)
+			{
+				Parts.Add(FString::Printf(TEXT("a vehicle on %s from %.0f to %.0f m, the zone there %.0f to %.0f m"), *ResourceName(Spot.Track, INDEX_NONE),
+					(Spot.Offset - Spot.HalfLength) / 100.f, (Spot.Offset + Spot.HalfLength) / 100.f, Zone.From / 100.f, Zone.To / 100.f));
+			}
+		}
+	}
+	const double* Enter = State.PlanCrossingEnter.Find(Crossing);
+	Parts.Add(Enter ? FString::Printf(TEXT("its plan enters in %s%s"), *SecondsText(*Enter - Now), State.PlanCrossingLocked.Contains(Crossing) ? TEXT(", locked") : TEXT(""))
+		: FString(TEXT("no slot in its plan")));
+	Parts.Add(FString::Printf(TEXT("%d claims%s"), State.Claims.Num(),
+		State.AuthorityCut >= 0.f ? *FString::Printf(TEXT(", the last cut %.0f m before its end"), State.AuthorityCut / 100.f) : TEXT("")));
+	return FString::Join(Parts, TEXT("; "));
+}
+
+FString AATTrafficSubsystem::CrossingDetails(const FATTrafficTrain& A, const FATTrafficTrain& B, int32 Crossing, double Now) const
+{
+	const FString NameA = NameOf(A.Train.Get());
+	const FString NameB = NameOf(B.Train.Get());
+	FResourceKey Key;
+	Key.Crossing = Crossing;
+	FString Lines = FString::Printf(TEXT("\n    %s: %s\n    %s: %s"), *NameA, *DescribeCrossing(A, Crossing, Now), *NameB, *DescribeCrossing(B, Crossing, Now));
+	Lines += FString::Printf(TEXT("\n    order on %s's route %d, on %s's route %d; %s behind %s there: %s, %s behind %s there: %s; %s follows %s: %s, %s follows %s: %s; ranks %d, %d"),
+		*NameA, GetRouteOrder(A, B), *NameB, GetRouteOrder(B, A), *NameA, *NameB, IsBehind(B, A, Key) ? TEXT("yes") : TEXT("no"), *NameB, *NameA,
+		IsBehind(A, B, Key) ? TEXT("yes") : TEXT("no"), *NameA, *NameB, A.FollowedTrains.Contains(B.Train) ? TEXT("yes") : TEXT("no"), *NameB, *NameA,
+		B.FollowedTrains.Contains(A.Train) ? TEXT("yes") : TEXT("no"), A.PlanRank, B.PlanRank);
+	if (const TArray<FBooking>* Bookings = mBookings.Find(Key))
+	{
+		for (const FBooking& Booking : *Bookings)
+		{
+			Lines += FString::Printf(TEXT("\n    booked: %s %s-%s s%s%s%s"), *NameOf(Booking.Owner), *SecondsText(Booking.Enter - Now), *SecondsText(Booking.Clear - Now),
+				Booking.bLocked ? TEXT(" locked") : TEXT(""), Booking.bHeld ? TEXT(" held") : TEXT(""), Booking.bCommitted ? TEXT(" committed") : TEXT(""));
+		}
+	}
+	return Lines;
 }
 
 void AATTrafficSubsystem::IndexRoute(FATTrafficTrain& State) const

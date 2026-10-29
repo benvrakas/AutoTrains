@@ -346,7 +346,9 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 		}
 		Seen.Add(Train);
 		FATTrafficTrain& State = mTrains.FindOrAdd(Train);
+		const TSet<int32> WasOnCrossings = State.OccupiedCrossings;
 		ReadTrain(State, Train);
+		LogCrossingEntries(State, WasOnCrossings, WorldNow);
 		TrackDocking(State, Train, WorldNow);
 		UpdateHillHelp(State, WorldNow);
 		ApplyLocomotivePower(Train, Train->IsSelfDrivingEnabled() ? GAccelerationScale * State.HillBoost : 1.f, Train->IsSelfDrivingEnabled() ? GTopSpeed * 0.036f : 0.f);

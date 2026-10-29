@@ -16,6 +16,7 @@ const FString UATConfig::ReroutingKey = TEXT("Rerouting");
 const FString UATConfig::PhaseThroughKey = TEXT("PhaseThrough");
 const FString UATConfig::AggressiveKey = TEXT("AggressiveTiming");
 const FString UATConfig::GhostDeadlocksKey = TEXT("GhostDeadlocks");
+const FString UATConfig::HillHelpKey = TEXT("HillHelp");
 
 namespace
 {
@@ -69,6 +70,8 @@ namespace
 				LOCTEXT("TrackRefreshTip", "How often the whole track network is read again, 5 to 600 seconds. Track built or removed is usually picked up within 2 seconds anyway; this catches anything missed.")},
 			{TEXT("DeadlockWaitSeconds"), &FATSettings::DeadlockWaitSeconds, 5.f, 300.f, LOCTEXT("DeadlockWait", "Deadlock: count trains waiting longer than (seconds)"),
 				LOCTEXT("DeadlockWaitTip", "How long a train has to wait, 5 to 300 seconds, before it counts when looking for deadlocks. The pass-through time starts once a deadlock is found.")},
+			{TEXT("HillHelpMax"), &FATSettings::HillHelpMax, 1.f, 10.f, LOCTEXT("HillHelpMax", "Hill help: most extra traction (x)"),
+				LOCTEXT("HillHelpMaxTip", "The most traction a stalled train gets on a climb, 1 to 10 times its own. Raise it if heavy trains still stall on very steep ramps.")},
 			{TEXT("GhostDistanceMetres"), &FATSettings::GhostDistanceMetres, 0.f, 2000.f, LOCTEXT("GhostDistance", "Deadlock pass-through distance (m)"),
 				LOCTEXT("GhostDistanceTip", "A train passing through a deadlock does so until it has driven its own length and this much further, 0 to 2000 m.")},
 			{TEXT("GhostMaxSeconds"), &FATSettings::GhostMaxSeconds, 10.f, 600.f, LOCTEXT("GhostMax", "Deadlock pass-through time limit (seconds)"),
@@ -172,6 +175,9 @@ UATConfig::UATConfig()
 	AddBool(GhostDeadlocksKey, TEXT("GhostDeadlocks"), LOCTEXT("GhostDeadlocks", "Clear deadlocks by passing through (beta)"),
 		LOCTEXT("GhostDeadlocksTip", "When trains have been stuck waiting for each other in a circle for the set time, they drive on and pass through each other until they're clear of the jam. Each case is written to FactoryGame/Saved/AutoTrains/faults.log so it can be reported."),
 		Defaults.bGhostDeadlocks);
+	AddBool(HillHelpKey, TEXT("HillHelp"), LOCTEXT("HillHelp", "Help stalled trains up hills"),
+		LOCTEXT("HillHelpTip", "A train that has slowed down on a climb too steep for its locomotives to get going again gets extra traction, up to the set limit, until it is moving and the slope under it is one it can manage. Trains are planned not to wait on such climbs; this is for when one has to anyway."),
+		Defaults.bHillHelp);
 
 	for (const FNumberSetting& Setting : GetNumberSettings())
 	{
@@ -258,6 +264,7 @@ bool UATConfig::Read(const UObject* WorldContext, FATSettings& OutSettings)
 	OutSettings.bPhaseThrough = ReadBool(Root, PhaseThroughKey, Defaults.bPhaseThrough);
 	OutSettings.bAggressive = ReadBool(Root, AggressiveKey, Defaults.bAggressive);
 	OutSettings.bGhostDeadlocks = ReadBool(Root, GhostDeadlocksKey, Defaults.bGhostDeadlocks);
+	OutSettings.bHillHelp = ReadBool(Root, HillHelpKey, Defaults.bHillHelp);
 	for (const FNumberSetting& Setting : GetNumberSettings())
 	{
 		OutSettings.*Setting.Field = FMath::Clamp(ReadFloat(Root, Setting.Key, Defaults.*Setting.Field), Setting.Min, Setting.Max);

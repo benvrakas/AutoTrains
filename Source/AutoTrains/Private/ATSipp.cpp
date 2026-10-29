@@ -226,6 +226,7 @@ namespace
 			Out.RejectedMotion = RejectedMotion;
 			Out.RejectedTail = RejectedTail;
 			Out.RejectedStay = RejectedStay;
+			Out.RejectedClimb = RejectedClimb;
 		}
 
 		// The fastest way from where the train is, along its route up to step Commit, then over the whole network to the
@@ -250,7 +251,7 @@ namespace
 			Opens.Reset();
 			Best.Reset();
 			ReachedTracks.Reset();
-			RejectedMotion = RejectedTail = RejectedStay = 0;
+			RejectedMotion = RejectedTail = RejectedStay = RejectedClimb = 0;
 			FState Start;
 			Start.bStopped = Train.bStanding;
 			Start.Speed = Train.bStanding ? 0.f : Train.Speed;
@@ -622,8 +623,19 @@ namespace
 				const float Grade = BodyGrade(Index, Run, NodePos);
 				const float RunAccel = FMath::Max(Accel - Gravity * Grade, MinSlopeAccel);
 				const float RunBrake = FMath::Max(Brake + Gravity * Grade, MinSlopeBrake);
+				// The most it gains over the move at full traction (from where it is now, with the hill help); below zero it
+				// loses speed even so, and a move it would stall on is left out.
+				const float Climb = (State.Step < 0 && State.Pos < MinMove ? Train.StartClimb : Train.Climb) - Gravity * Grade;
+				auto Reaches = [&](float Distance, float EndSpeed)
+				{
+					return Climb >= 0.f || SpeedSquared + 2.f * Climb * Distance >= FMath::Square(EndSpeed);
+				};
 				const float StopAt = NodePos - (bGoalNode ? 0.f : Graph.StopMarginOf[End]);
-				if (StopAt - State.Pos >= MinMove && (StopAt <= ForcedReach || SpeedSquared <= 2.f * RunBrake * (StopAt - State.Pos) + 1.f))
+				if (!Reaches(FMath::Max(StopAt - State.Pos, 0.f), 0.f))
+				{
+					++RejectedClimb;
+				}
+				else if (StopAt - State.Pos >= MinMove && (StopAt <= ForcedReach || SpeedSquared <= 2.f * RunBrake * (StopAt - State.Pos) + 1.f))
 				{
 					Move(Index, Run, NodePos, StopAt, 0.f, true, RunAccel, RunBrake);
 				}
@@ -643,7 +655,7 @@ namespace
 						float To = 0.f;
 						ZoneSpan(Run[Link], Zone, From, To);
 						const float ZoneStop = LinkEnd - Graph.Length[LinkTrack] + From - Graph.StopDistance;
-						if (ZoneStop - State.Pos >= MinMove && ZoneStop < StopAt && (ZoneStop <= ForcedReach || SpeedSquared <= 2.f * RunBrake * (ZoneStop - State.Pos) + 1.f))
+						if (ZoneStop - State.Pos >= MinMove && ZoneStop < StopAt && Reaches(ZoneStop - State.Pos, 0.f) && (ZoneStop <= ForcedReach || SpeedSquared <= 2.f * RunBrake * (ZoneStop - State.Pos) + 1.f))
 						{
 							Move(Index, FRun(Run.GetData(), Link + 1), LinkEnd, ZoneStop, 0.f, true, RunAccel, RunBrake);
 						}
@@ -654,7 +666,12 @@ namespace
 				{
 					continue;
 				}
-				const float Fastest = FMath::Min(Top, FMath::Sqrt(SpeedSquared + 2.f * RunAccel * Pass));
+				if (!Reaches(Pass, MinPassSpeed))
+				{
+					++RejectedClimb;
+					continue;
+				}
+				const float Fastest = FMath::Min3(Top, FMath::Sqrt(SpeedSquared + 2.f * RunAccel * Pass), Climb >= 0.f ? Top : FMath::Sqrt(SpeedSquared + 2.f * Climb * Pass));
 				const float Slowest = FMath::Max(FMath::Sqrt(FMath::Max(SpeedSquared - 2.f * RunBrake * Pass, 0.f)), MinPassSpeed);
 				TArray<float, TInlineAllocator<6>> Speeds;
 				// However slow: a train standing at a track end gets past it only creeping.
@@ -1257,11 +1274,12 @@ namespace
 		int32 FurthestStopped = INDEX_NONE;
 		int32 FurthestClear = INDEX_NONE;
 		int32 FurthestAny = 0;
-		// Moves left out because the train can't reach the speed, its tail can't keep to a window, or the stay at the
-		// goal doesn't fit, for the log.
+		// Moves left out because the train can't reach the speed, its tail can't keep to a window, the stay at the goal
+		// doesn't fit, or it would stall on a climb, for the log.
 		int32 RejectedMotion = 0;
 		int32 RejectedTail = 0;
 		int32 RejectedStay = 0;
+		int32 RejectedClimb = 0;
 	};
 }
 

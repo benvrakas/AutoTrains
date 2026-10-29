@@ -13,6 +13,9 @@ struct FATSettings
 	bool bAggressive = true;
 	// Deadlocked trains pass through each other after GhostAfterSeconds to clear the jam (beta).
 	bool bGhostDeadlocks = true;
+	// A train too slow to climb the slope under it gets extra traction, up to HillHelpMax times its own, until it can.
+	bool bHillHelp = true;
+	float HillHelpMax = 4.f;
 	// Time kept between two trains' bookings of the same track or switch. [s]
 	float SafetyMargin = 0.f;
 	// Top speed of every self-driving train, 0 for each train's own. [km/h]
@@ -75,6 +78,7 @@ public:
 	static const FString PhaseThroughKey;
 	static const FString AggressiveKey;
 	static const FString GhostDeadlocksKey;
+	static const FString HillHelpKey;
 
 	// Sets OutMin and OutMax to the accepted range of the number setting Key; returns false if Key isn't one.
 	static bool GetRange(const FString& Key, float& OutMin, float& OutMax);

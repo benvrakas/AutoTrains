@@ -141,6 +141,13 @@ struct FATTrafficTrain
 	// the acceleration planned with in each band on level track. [cm/s^2 kg] [cm/s^2]
 	float TractionForce[ATBrakeBands] = {};
 	float PlanAccel[ATBrakeBands] = {};
+	// Its locomotives' full traction at low speed without the hill help, 0 until known [cm/s^2 kg]; the traction
+	// multiple the hill help gives it (1 for none), and since when (world s).
+	float FullTraction = 0.f;
+	float HillBoost = 1.f;
+	double HillSince = 0.0;
+	// Blocked key of the last wait before a climb, so each is logged once.
+	FString ClimbWaitKey;
 	// Whether the train is on full brake, and whether it was at the previous update.
 	bool bFullBrake = false;
 	bool bWasFullBrake = false;
@@ -380,6 +387,9 @@ private:
 	// Sets State.PlanAccel: measured bands as measured; the others from its locomotives' traction curves at that speed,
 	// scaled by the share of them the train was seen to use in measured bands (half until measured).
 	void RefreshTractionPlan(FATTrafficTrain& State) const;
+	// Sets State.HillBoost: extra traction while the train, wanting to go on and slow, has less traction than the slope
+	// under it pulls back with, until that slope is one it manages on its own.
+	void UpdateHillHelp(FATTrafficTrain& State, double Now) const;
 
 	// Deceleration planned with at Speed (the train's own speed if negative). [cm/s^2]
 	static float GetPlanningDeceleration(const FATTrafficTrain& State, float Speed = -1.f);

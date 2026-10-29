@@ -152,6 +152,8 @@ replanning.
 | **Station stay estimate (seconds)** | 40 | How long a train is expected to stay at a stop set to fully load or unload, until it has been seen there; after that its own last stay there counts. Stops that load or unload once take the freight platforms' fixed time, or the stop's set duration when there's no cargo to move. |
 | **Clear deadlocks by passing through (beta)** | On | Trains stuck waiting for each other in a circle drive on through each other after the set time; each case is written to FactoryGame/Saved/AutoTrains/faults.log. |
 | **Pass through a deadlock after (seconds)** | 60 | How long a deadlock lasts before its trains pass through each other. |
+| **Help stalled trains up hills** | On | A train that has slowed down on a climb too steep for its locomotives to get going again gets extra traction until it is over the steep part. Trains are planned not to wait on such climbs; this is for when one has to anyway. |
+| **Hill help: most extra traction (x)** | 4 | The most traction a stalled train gets on a climb, 1 to 10 times its own. Raise it if heavy trains still stall on very steep ramps. |
 | **Planning retries** | 3 | When a train finds no way because a train planned before it is in the way, it is planned before that train and the round is planned again, up to this many times. 0 keeps the planning order as it is. |
 | **Route search interval (seconds)** | 5 | How often each train looks for a faster route. Shorter finds better routes sooner; longer costs less planning time on big networks. |
 | **Route search when late (seconds)** | 15 | A train looks for another route at once when its planned arrival has got this much later since its last search. |

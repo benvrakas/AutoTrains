@@ -9,6 +9,8 @@ class UFGRailroadTrackConnectionComponent;
 
 // An open-ended time: a stay nobody knows the end of, or a resource held for good. [world s]
 constexpr double ATSippNever = 1e12;
+// A train's traction when not known: no climb is too steep for it. [cm/s^2]
+constexpr float ATSippNoClimbLimit = 1e6f;
 
 // A crossing zone on a track: its resource and the stretch of the track it covers, from the end of the track's
 // connection 0. [cm]
@@ -161,6 +163,10 @@ struct FATSippTrain
 	float Accel = 100.f;
 	float Brake = 100.f;
 	float Speed = 0.f;
+	// Full traction at low speed as acceleration on level track, on its own and from where it is now (with the hill
+	// help if that's on). [cm/s^2]
+	float Climb = ATSippNoClimbLimit;
+	float StartClimb = ATSippNoClimbLimit;
 	// Heights of its front and rear cars' centres, and how far ahead of its front they are (negative). [cm]
 	float FrontZ = 0.f;
 	float RearZ = 0.f;
@@ -209,11 +215,12 @@ struct FATSippResult
 	int32 SearchStates = 0;
 	double SearchMilliseconds = 0.0;
 	// The plan's search: its states, and the moves it left out because the train couldn't reach the speed, its tail
-	// couldn't keep to a window, or the stay at the goal didn't fit.
+	// couldn't keep to a window, the stay at the goal didn't fit, or it would have stalled on a climb.
 	int32 States = 0;
 	int32 RejectedMotion = 0;
 	int32 RejectedTail = 0;
 	int32 RejectedStay = 0;
+	int32 RejectedClimb = 0;
 };
 
 // One planning cycle: every train in turn (Order, slot order unless a failure moved a train up) removes its own

@@ -652,3 +652,15 @@ train, then a row per train every 0.2 s:
   track came back it was too slow to climb on. The planner kept planning it as able to drive ("may drive 351 m, target
   133 km/h"), so trains behind and around it waited on its plan for up to 2534 s, and the deadlock detector (wait
   cycles) never saw it; ghosting through at 05:57 and 06:12 left it on the hill.
+- 1.3.4 climbs (fix for the stall above). Planner: FATSippTrain.Climb is the train's full low-speed traction
+  (FullTraction: its locomotives' curve at band 0, without the hill help) over its mass; StartClimb is that times the
+  hill help limit when it's on, used for moves from where the train stands now. Expand used to floor the acceleration
+  on a slope at MinSlopeAccel, so a train could always speed up; now a move is left out (RejectedClimb, in the failure
+  log) when, at full traction against the mean body slope over the move, the train would stall before its end, and a
+  pass is capped at the speed that leaves it. So no wait is planned where the train couldn't move off again. Grants: a
+  route track whose end-to-end slope pulls back with over 90% of FullTraction is a hard climb; the grant runs through a
+  hard climb rather than ending on it, and a train held up on one it hasn't reached yet (and can still stop before)
+  waits at its foot ("waits before the climb at ..."). Hill help (UpdateHillHelp): a managed self-driving train under
+  15 km/h that wants to go faster, with the pull under its body over 90% of FullTraction, gets traction x1.3 the pull
+  (at most the setting, default 4), raised but never lowered, until the pull is under 80% of FullTraction; traction
+  isn't learned while it lasts. Logs "stalls on a N % climb" / "is over the climb". Untested in game.

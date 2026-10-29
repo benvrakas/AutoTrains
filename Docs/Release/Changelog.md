@@ -11,6 +11,13 @@
   station almost at once, but the planner expected the usual 15-30 s and kept the track booked for it, so other
   trains (push-pull pairs in particular) waited for a train that had already left. Stations without freight or fluid
   platforms now count as no stay, or as long as the train was last seen staying there.
+- **Fixed: trains stalling for good on steep climbs.** A heavy train held up halfway up a ramp steeper than its
+  locomotives can start on rolled back and forth at full throttle forever, and every train behind it waited for it
+  (it never counted as a deadlock, since it was trying to move). Now:
+  - trains are planned with what their locomotives can really climb: they don't plan to wait on such a climb, and a
+    train that is held up before one waits at its foot until its way to the top is clear;
+  - a train that stalls on a climb anyway gets extra traction until it is over the steep part (new settings **Help
+    stalled trains up hills**, on by default, and **Hill help: most extra traction (x)**, 4 by default).
 
 ## 1.3.3
 

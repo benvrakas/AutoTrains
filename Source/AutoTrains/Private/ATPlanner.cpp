@@ -39,6 +39,11 @@ namespace
 	// measurement moves the transfer stay by. [s]
 	constexpr float DockingSeconds = 2.f;
 	constexpr float TransferStayRate = 0.2f;
+	// A climb whose slope pulls back with more than this share of a train's full traction is one it couldn't get going
+	// on again.
+	constexpr float HillStartShare = 0.9f;
+	// Gravity, for the climbs. [cm/s^2]
+	constexpr float ClimbGravity = 980.f;
 	// Most platforms walked on one side of a station.
 	constexpr int32 MaxPlatformChain = 64;
 	// An update slower than this is logged, at most once per SlowLogSeconds. [s]
@@ -634,10 +639,26 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 	}
 	// The plan waits somewhere ahead and doesn't move off right away.
 	const bool bPlanWaits = State.PlanWaitAt >= 0.f && State.PlanDepart > Now + PlanWaitGraceSeconds;
+	// A track climbing too steeply for the train to get going on again: granted all the way up or not at all.
+	auto IsHardClimb = [&State](const FATRouteStep& Step)
+	{
+		const UFGRailroadTrackConnectionComponent* Entry = Step.Exit ? Step.Exit->GetOpposite() : nullptr;
+		const float Length = Step.Track->GetLength();
+		if (!Entry || Length < 100.f || State.FullTraction <= 0.f)
+		{
+			return false;
+		}
+		const float Grade = (Step.Exit->GetComponentLocation().Z - Entry->GetComponentLocation().Z) / Length;
+		return ClimbGravity * Grade * State.Mass > State.FullTraction * HillStartShare;
+	};
+	// The route step the climb ahead of the last one granted starts at, INDEX_NONE if that isn't on one.
+	int32 ClimbStart = INDEX_NONE;
 	for (int32 Index = 0; Index < State.Route.Num() && !bBlocked; ++Index)
 	{
 		const FATRouteStep& Step = State.Route[Index];
 		const float Begin = Step.EndDistance - Step.Track->GetLength() - State.FrontAhead;
+		const bool bHardClimb = IsHardClimb(Step);
+		ClimbStart = !bHardClimb ? INDEX_NONE : ClimbStart != INDEX_NONE ? ClimbStart : Index;
 		// Its plan stands it where it is: nothing past what it stands on.
 		if (bPlanWaits && State.PlanWaitAt <= 100.f && !State.Occupied.Contains(Step.Track))
 		{
@@ -724,7 +745,7 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 		{
 			break;
 		}
-		if (Step.EndDistance - State.FrontAhead >= Need)
+		if (Step.EndDistance - State.FrontAhead >= Need && !bHardClimb)
 		{
 			break;
 		}
@@ -738,6 +759,25 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 			State.BlockedKey = NameOf(State.PlanWaitFor.Get()) + TEXT("|plan|") + ResourceName(Step.Track, INDEX_NONE);
 			bBlocked = true;
 			break;
+		}
+	}
+	// Held up on a climb it hasn't reached yet: it waits before the climb, where it can get going again, if it can still
+	// stop there.
+	if (bBlocked && ClimbStart > 0 && ClimbStart < State.Claims.Num() && !State.Occupied.Contains(State.Route[ClimbStart].Track))
+	{
+		const FATRouteStep& Foot = State.Route[ClimbStart - 1];
+		const float Room = Foot.EndDistance - State.FrontAhead - GetStopMargin(Foot.Exit);
+		if (Room >= GetStoppingDistance(State, State.Speed))
+		{
+			if (State.BlockedKey != State.ClimbWaitKey)
+			{
+				UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s waits before the climb at %s, %.0f m ahead, until its way up is clear (it %s)"), *NameOf(State.Train.Get()),
+					*ResourceName(State.Route[ClimbStart].Track, INDEX_NONE), Room / 100.f, *State.BlockedReason);
+				State.ClimbWaitKey = State.BlockedKey;
+			}
+			State.Claims.SetNum(ClimbStart);
+			State.AuthorityCut = -1.f;
+			State.BlockedReason += FString::Printf(TEXT("; waits before the climb at %s"), *ResourceName(State.Route[ClimbStart].Track, INDEX_NONE));
 		}
 	}
 	UpdateAuthority(State);
@@ -844,6 +884,11 @@ void AATTrafficSubsystem::FillSippTrain(const FATTrafficTrain& State, const FATS
 	Out.Cruise = Speed.Cruise;
 	Out.Accel = Speed.Accel;
 	Out.Brake = Speed.Brake;
+	if (State.FullTraction > 0.f)
+	{
+		Out.Climb = State.FullTraction / FMath::Max(State.Mass, 1.f);
+		Out.StartClimb = Out.Climb * (mSettings.bHillHelp ? mSettings.HillHelpMax : 1.f);
+	}
 	Out.Speed = State.Speed;
 	Out.FrontZ = State.FrontZ;
 	Out.RearZ = State.RearZ;
@@ -1310,8 +1355,8 @@ void AATTrafficSubsystem::ApplyPlan(FATTrafficTrain& State, const FATSippCycle& 
 		if (!Failure.IsEmpty())
 		{
 			++mPlanFailures;
-			UE_LOG(LogAutoTrains, Log, TEXT("planner: %s: %s; it stands before it until that train has passed (%d states; left out: %d moves out of its reach, %d tail windows missed, %d stays at the goal that don't fit)"),
-				*NameOf(Train), *Failure, Result.States, Result.RejectedMotion, Result.RejectedTail, Result.RejectedStay);
+			UE_LOG(LogAutoTrains, Log, TEXT("planner: %s: %s; it stands before it until that train has passed (%d states; left out: %d moves out of its reach, %d tail windows missed, %d stays at the goal that don't fit, %d moves it would stall on a climb)"),
+				*NameOf(Train), *Failure, Result.States, Result.RejectedMotion, Result.RejectedTail, Result.RejectedStay, Result.RejectedClimb);
 		}
 		State.PlanFailure = Failure;
 	}

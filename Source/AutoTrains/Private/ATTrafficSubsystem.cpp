@@ -85,6 +85,13 @@ namespace
 	constexpr float UnseenTractionShare = 0.5f;
 	constexpr float MinPlanCruise = 833.f;
 	constexpr float MinPlanAcceleration = 10.f;
+	// Hill help: starts below this speed when the slope's pull is over this share of its traction and it wants to go
+	// this much faster; gives this much more traction than the pull; ends once the pull is under this share. [cm/s]
+	constexpr float HillHelpSpeed = 417.f;
+	constexpr float HillStallShare = 0.9f;
+	constexpr float HillWantMargin = 100.f;
+	constexpr float HillHelpHeadroom = 1.3f;
+	constexpr float HillHelpEndShare = 0.8f;
 
 	// Top speed a train runs to: the setting, or the consist's own. [cm/s]
 	float GetTopSpeed(const AFGTrain* Train)
@@ -341,7 +348,8 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 		FATTrafficTrain& State = mTrains.FindOrAdd(Train);
 		ReadTrain(State, Train);
 		TrackDocking(State, Train, WorldNow);
-		ApplyLocomotivePower(Train, Train->IsSelfDrivingEnabled() ? GAccelerationScale : 1.f, Train->IsSelfDrivingEnabled() ? GTopSpeed * 0.036f : 0.f);
+		UpdateHillHelp(State, WorldNow);
+		ApplyLocomotivePower(Train, Train->IsSelfDrivingEnabled() ? GAccelerationScale * State.HillBoost : 1.f, Train->IsSelfDrivingEnabled() ? GTopSpeed * 0.036f : 0.f);
 
 		// Measure full-brake deceleration per speed band between updates with full brake on at both; a catch ends at
 		// standstill, and docking catches and crashes are far above 20 m/s^2.
@@ -375,7 +383,7 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 			const float Rate = State.Speed > State.CruiseSeen ? CruiseRiseRate : CruiseFallRate;
 			State.CruiseSeen = State.CruiseSeen <= 0.f ? State.Speed : State.CruiseSeen + (State.Speed - State.CruiseSeen) * Rate;
 		}
-		if (bFree && DeltaSeconds > 0.f && Target > State.Speed + 100.f && State.Speed > State.LastSpeed)
+		if (bFree && State.HillBoost == 1.f && DeltaSeconds > 0.f && Target > State.Speed + 100.f && State.Speed > State.LastSpeed)
 		{
 			const float Sample = (State.Speed - State.LastSpeed) / DeltaSeconds + GravityAcceleration * State.Grade;
 			if (Sample > 5.f && Sample < 500.f)
@@ -1658,11 +1666,48 @@ void AATTrafficSubsystem::RefreshTractionPlan(FATTrafficTrain& State) const
 		}
 	}
 	Share = Measured > 0 ? Share / Measured : UnseenTractionShare;
+	// Curve as applied, the hill help included.
+	State.FullTraction = Curve[0] / FMath::Max(State.HillBoost, 1.f);
 	const float Fallback = GetAcceleration(State, UnseenTractionShare);
 	for (int32 Band = 0; Band < ATBrakeBands; ++Band)
 	{
 		const float Force = State.TractionForce[Band] > 0.f ? State.TractionForce[Band] : Curve[Band] * Share;
 		State.PlanAccel[Band] = FMath::Clamp(Force > 0.f ? Force / Mass : Fallback, MinPlanAcceleration, 1200.f);
+	}
+}
+
+void AATTrafficSubsystem::UpdateHillHelp(FATTrafficTrain& State, double Now) const
+{
+	const AFGTrain* Train = State.Train.Get();
+	const float Pull = GravityAcceleration * State.Grade * State.Mass;
+	const bool bOn = mSettings.bHillHelp && Train && Train->IsSelfDrivingEnabled() && State.bManaged && State.FullTraction > 0.f;
+	if (State.HillBoost > 1.f && (!bOn || Pull < State.FullTraction * HillHelpEndShare))
+	{
+		UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s is over the climb at %.0f km/h (slope %.1f %%); its own traction again after %.0f s of hill help"), *TrainName(Train),
+			State.Speed * 0.036f, State.Grade * 100.f, Now - State.HillSince);
+		State.HillBoost = 1.f;
+		return;
+	}
+	if (!bOn)
+	{
+		return;
+	}
+	// Help starts once it is slow and wants to go on; it is raised, never lowered, while it lasts.
+	const bool bWants = Train->mAtcData.TargetSpeed > State.Speed + HillWantMargin && !State.bFullBrake;
+	const float Needed = FMath::Min(Pull * HillHelpHeadroom / State.FullTraction, mSettings.HillHelpMax);
+	if (State.HillBoost == 1.f && !(bWants && State.Speed < HillHelpSpeed && Pull > State.FullTraction * HillStallShare))
+	{
+		return;
+	}
+	if (Needed > State.HillBoost + 0.05f)
+	{
+		UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s %s on a %.1f %% climb at %.0f km/h (slope pulls %.0f kN, its traction %.0f kN): hill help x%.2f traction"), *TrainName(Train),
+			State.HillBoost == 1.f ? TEXT("stalls") : TEXT("still stalls"), State.Grade * 100.f, State.Speed * 0.036f, Pull / 100000.f, State.FullTraction / 100000.f, Needed);
+		if (State.HillBoost == 1.f)
+		{
+			State.HillSince = Now;
+		}
+		State.HillBoost = FMath::Max(Needed, 1.f);
 	}
 }
 

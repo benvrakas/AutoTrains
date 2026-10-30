@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.7
+
+- **Fixed: trains braking hard where 1.3.6 had them stop for their plan.** 1.3.6 made a train stop at every wait its
+  plan had on the track ahead, also waits a plan made a moment earlier had put too close to stop for, so some trains
+  braked hard from full speed, and two trains could end up planned to wait for each other until one found another
+  way. Trains keep going as before 1.3.6; the crossings past such a wait are now checked before a train is given
+  them, which was the real fault behind the crossing given to two trains.
+
 ## 1.3.6
 
 - **Fixed: a train stopping for good just past a crossing**, which could hold up the whole network. A train that

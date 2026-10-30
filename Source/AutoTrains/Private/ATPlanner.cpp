@@ -722,35 +722,45 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 			}
 		}
 		Zones.Sort([](const TPair<float, int32>& A, const TPair<float, int32>& B) { return A.Key < B.Key; });
-		for (const TPair<float, int32>& Zone : Zones)
+		// Grants the zones up to where its plan waits, or those past it; false when it can't have one.
+		auto GrantZones = [&](bool bPastWait)
 		{
-			if ((bPlanWaits && Zone.Key > State.PlanWaitAt) || State.OccupiedCrossings.Contains(Zone.Value))
+			for (const TPair<float, int32>& Zone : Zones)
 			{
-				continue;
+				if ((bPlanWaits && Zone.Key > State.PlanWaitAt) != bPastWait || State.OccupiedCrossings.Contains(Zone.Value))
+				{
+					continue;
+				}
+				FResourceKey Key;
+				Key.Crossing = Zone.Value;
+				if (!CanEnter(State, Key, Index, CrossingEnter(Zone.Value), State.PlanCrossingLocked.Contains(Zone.Value), HeldCrossings.Contains(Zone.Value), nullptr, Step.Exit, Now, Blocker, Why))
+				{
+					Where = ResourceName(nullptr, INDEX_NONE, Zone.Value);
+					State.AuthorityCut = End - Zone.Key + GetStopDistance();
+					State.BlockedAtTrack = nullptr;
+					State.BlockedAtJoint = INDEX_NONE;
+					State.BlockedAtCrossing = Zone.Value;
+					State.BlockedBy = Blocker ? Blocker->Train : nullptr;
+					State.BlockedReason = FString::Printf(TEXT("waits for %s before %s, %.0f m ahead: %s"), *NameOf(Blocker ? Blocker->Train.Get() : nullptr), *Where,
+						FMath::Max(Zone.Key, 0.f) / 100.f, *Why);
+					State.BlockedKey = NameOf(Blocker ? Blocker->Train.Get() : nullptr) + TEXT("|") + Where;
+					bBlocked = true;
+					return false;
+				}
 			}
-			FResourceKey Key;
-			Key.Crossing = Zone.Value;
-			if (!CanEnter(State, Key, Index, CrossingEnter(Zone.Value), State.PlanCrossingLocked.Contains(Zone.Value), HeldCrossings.Contains(Zone.Value), nullptr, Step.Exit, Now, Blocker, Why))
-			{
-				Where = ResourceName(nullptr, INDEX_NONE, Zone.Value);
-				State.AuthorityCut = End - Zone.Key + GetStopDistance();
-				State.BlockedAtTrack = nullptr;
-				State.BlockedAtJoint = INDEX_NONE;
-				State.BlockedAtCrossing = Zone.Value;
-				State.BlockedBy = Blocker ? Blocker->Train : nullptr;
-				State.BlockedReason = FString::Printf(TEXT("waits for %s before %s, %.0f m ahead: %s"), *NameOf(Blocker ? Blocker->Train.Get() : nullptr), *Where,
-					FMath::Max(Zone.Key, 0.f) / 100.f, *Why);
-				State.BlockedKey = NameOf(Blocker ? Blocker->Train.Get() : nullptr) + TEXT("|") + Where;
-				bBlocked = true;
-				break;
-			}
-		}
-		if (bBlocked)
+			return true;
+		};
+		if (!GrantZones(false))
 		{
 			break;
 		}
-		// No further than where its plan waits: that's a place it can stand without blocking anyone. Before the check for
-		// enough room, so the zones past the wait, left unchecked above, aren't held.
+		if (Step.EndDistance - State.FrontAhead >= Need && !bHardClimb)
+		{
+			// It holds the whole track: the zones past where its plan waits too.
+			GrantZones(true);
+			break;
+		}
+		// No further than where its plan waits: that's a place it can stand without blocking anyone.
 		if (bPlanWaits && Step.EndDistance - State.FrontAhead - GetStopMargin(Step.Exit) >= State.PlanWaitAt - 100.f)
 		{
 			State.AuthorityCut = End - State.PlanWaitAt;
@@ -759,10 +769,6 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 				*ResourceName(Step.Track, INDEX_NONE), *SecondsText(State.PlanDepart - Now));
 			State.BlockedKey = NameOf(State.PlanWaitFor.Get()) + TEXT("|plan|") + ResourceName(Step.Track, INDEX_NONE);
 			bBlocked = true;
-			break;
-		}
-		if (Step.EndDistance - State.FrontAhead >= Need && !bHardClimb)
-		{
 			break;
 		}
 	}

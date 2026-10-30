@@ -724,3 +724,12 @@ train, then a row per train every 0.2 s:
   (AI Limiter 113 km/h allowed 0, MF Resource 99 allowed 0): no cut, so the train ran at speed up to the wait, where
   PlanWaitAt = 0 and the "where it stands" branch left it only the tracks it stood on. Now the plan-wait cut is checked
   before the Need break.
+- 1.3.6 (43ccc1b) session, 1 h: worse, not better. Severe braking-curve overruns 7/h (was ~3/h); e.g. Reinforced Plates
+  97 km/h with 96 m to its plan's wait, Coated Plates 127 km/h with 63 m. The plan-wait cut now applied on the step
+  where the Need break used to end the grant, so waits a plan (made from a snapshot ~1 cycle old, possibly with
+  forced-braking reach) put within stopping distance were enforced; before, the train drove on and the next plan
+  moved the wait. Also Train 2 and Steel Pipe Xtra Steel planned to wait for each other (plan waits growing ~130 s per
+  s, DEADLOCK + STUCK at 23:39:29) until Steel Pipe rerouted 11 s later. 43ccc1b reverted; instead, when the Need break
+  ends the grant on a step, the zones past PlanWaitAt are checked with CanEnter there (GrantZones(true)); a refusal
+  cuts the grant at that zone. "where it stands" hard stops at speed (Train 2 103 km/h, allowed 0) predate 43ccc1b:
+  PlanWaitAt clamps to 0 when the train has already passed its plan's wait point.

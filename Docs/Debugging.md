@@ -733,3 +733,7 @@ train, then a row per train every 0.2 s:
   ends the grant on a step, the zones past PlanWaitAt are checked with CanEnter there (GrantZones(true)); a refusal
   cuts the grant at that zone. "where it stands" hard stops at speed (Train 2 103 km/h, allowed 0) predate 43ccc1b:
   PlanWaitAt clamps to 0 when the train has already passed its plan's wait point.
+- a1647c4 session (46 min): 0 deadlocks/STUCK/CHECK FAILED/CROSSING warnings, longest wait 37-40 s, severe overruns
+  3.9/h (pre-1.3.6 level), "where it stands" 12/h, no runaway plan waits. The 3 CROSSING ENTRY lines followed the
+  rebuild SetEnabled does when traffic control comes on (not seen by UpdateTraffic's own check), so the entry check is
+  now skipped whenever mConflictsBuiltAt changed since the last update (mConflictsSeenAt).

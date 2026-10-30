@@ -325,11 +325,13 @@ FString AATTrafficSubsystem::SetRerouteEnabled(bool bEnabled)
 void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 {
 	const double Now = FPlatformTime::Seconds();
-	const bool bRebuilt = Now - mConflictsBuiltAt > mSettings.TrackRefreshSeconds || (mConflictsStale && Now - mConflictsBuiltAt > ConflictRebuildMinSeconds);
-	if (bRebuilt)
+	if (Now - mConflictsBuiltAt > mSettings.TrackRefreshSeconds || (mConflictsStale && Now - mConflictsBuiltAt > ConflictRebuildMinSeconds))
 	{
 		RebuildConflicts();
 	}
+	// Rebuilt since the last update, here or when traffic control came on: the crossings are numbered anew.
+	const bool bRenumbered = mConflictsBuiltAt != mConflictsSeenAt;
+	mConflictsSeenAt = mConflictsBuiltAt;
 
 	TArray<AFGTrain*> Trains;
 	if (AFGRailroadSubsystem* Railroad = AFGRailroadSubsystem::Get(GetWorld()))
@@ -349,8 +351,7 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 		FATTrafficTrain& State = mTrains.FindOrAdd(Train);
 		const TSet<int32> WasOnCrossings = State.OccupiedCrossings;
 		ReadTrain(State, Train);
-		// A rebuild numbers the crossings anew.
-		if (!bRebuilt)
+		if (!bRenumbered)
 		{
 			LogCrossingEntries(State, WasOnCrossings, WorldNow);
 		}

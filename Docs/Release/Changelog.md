@@ -7,6 +7,7 @@
   braked hard from full speed, and two trains could end up planned to wait for each other until one found another
   way. Trains keep going as before 1.3.6; the crossings past such a wait are now checked before a train is given
   them, which was the real fault behind the crossing given to two trains.
+- No more false crossing warnings in the log right after loading a save.
 
 ## 1.3.6
 

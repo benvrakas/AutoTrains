@@ -611,6 +611,8 @@ private:
 	TMap<const UFGRailroadTrackConnectionComponent*, float> mFoulOf;
 	TMap<int32, float> mJointFoul;
 	double mConflictsBuiltAt = -1e9;
+	// mConflictsBuiltAt as of the last traffic update.
+	double mConflictsSeenAt = -1e9;
 	// Set when a track missing from the conflict model was looked up.
 	mutable bool mConflictsStale = false;
 	// Deadlocks going on, by their trains' names: when each was first and last seen (world seconds).

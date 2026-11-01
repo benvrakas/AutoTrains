@@ -95,6 +95,9 @@ namespace
 	// A train told to go counts as standing under this speed; each stall time raises its help by this much. [cm/s]
 	constexpr float HillStandSpeed = 56.f;
 	constexpr float HillStallStep = 1.25f;
+	// A switch is set for a train this far ahead of it, on top of this many updates of its driving. [cm]
+	constexpr float SwitchThrowMargin = 2000.f;
+	constexpr float SwitchThrowUpdates = 2.f;
 
 	void WriteFault(const FString& Fault)
 	{
@@ -381,6 +384,7 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 		}
 		TrackDocking(State, Train, WorldNow);
 		UpdateHillHelp(State, WorldNow);
+		WatchLostPath(State, WorldNow);
 		ApplyLocomotivePower(Train, Train->IsSelfDrivingEnabled() ? GAccelerationScale * State.HillBoost : 1.f, Train->IsSelfDrivingEnabled() ? GTopSpeed * 0.036f : 0.f);
 
 		// Measure full-brake deceleration per speed band between updates with full brake on at both; a catch ends at
@@ -471,6 +475,8 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 			Managed.Add(&Pair.Value);
 		}
 	}
+
+	ThrowSwitches(DeltaSeconds);
 
 	// Reasons carry times: logged again only when the train or place waited at changes.
 	auto LogKey = [](const FATTrafficTrain* State) { return State->BlockedKey; };
@@ -693,6 +699,124 @@ void AATTrafficSubsystem::ReadTrain(FATTrafficTrain& State, AFGTrain* Train) con
 		State.bCatchArmed = false;
 		State.bHasPlan = false;
 	}
+}
+
+bool AATTrafficSubsystem::HasToLeaveThrough(const FATTrafficTrain& Other, const UFGRailroadTrackConnectionComponent* Exit, float Within) const
+{
+	const AFGBuildableRailroadTrack* Track = Exit->GetTrack();
+	const auto HasVehicleOn = [&Other](const AFGBuildableRailroadTrack* On)
+	{
+		return Other.Vehicles.ContainsByPredicate([On](const FATVehicleSpot& Spot) { return Spot.Track == On; });
+	};
+	const bool bOnTrack = HasVehicleOn(Track);
+	for (const FATRouteStep& Step : Other.Route)
+	{
+		if (Step.Track == Track)
+		{
+			return Step.Exit == Exit && (bOnTrack || Step.EndDistance - Other.FrontAhead < Within);
+		}
+	}
+	if (!bOnTrack)
+	{
+		return false;
+	}
+	// Its front is past the track or it has no route: it is leaving through Exit if it reaches past it.
+	for (const UFGRailroadTrackConnectionComponent* Attached : Exit->GetConnections())
+	{
+		const AFGBuildableRailroadTrack* Next = Attached ? Attached->GetTrack() : nullptr;
+		if (HasVehicleOn(Next) || Other.Route.ContainsByPredicate([Next](const FATRouteStep& Step) { return Step.Track == Next; }))
+		{
+			return true;
+		}
+	}
+	return Other.Route.Num() == 0 && Other.Speed >= HillStandSpeed;
+}
+
+void AATTrafficSubsystem::ThrowSwitches(float DeltaSeconds)
+{
+	for (TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Pair : mTrains)
+	{
+		FATTrafficTrain& State = Pair.Value;
+		AFGTrain* Train = State.Train.Get();
+		if (!Train || !State.bManaged)
+		{
+			continue;
+		}
+		const float Drives = State.Speed * DeltaSeconds * SwitchThrowUpdates;
+		for (int32 Index = 0; Index + 1 < State.Route.Num(); ++Index)
+		{
+			UFGRailroadTrackConnectionComponent* Exit = State.Route[Index].Exit;
+			const float Ahead = State.Route[Index].EndDistance - State.FrontAhead;
+			if (Ahead > Drives + SwitchThrowMargin)
+			{
+				break;
+			}
+			if (Ahead < 0.f || !Exit || !Exit->IsFacingSwitch())
+			{
+				continue;
+			}
+			const int32 Position = Exit->GetSwitchPositionForTrack(State.Route[Index + 1].Track);
+			if (Position == INDEX_NONE || Position == Exit->GetSwitchPosition())
+			{
+				continue;
+			}
+			const FATTrafficTrain* Leaving = nullptr;
+			for (const TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& OtherPair : mTrains)
+			{
+				if (&OtherPair.Value != &State && HasToLeaveThrough(OtherPair.Value, Exit, Ahead))
+				{
+					Leaving = &OtherPair.Value;
+					break;
+				}
+			}
+			if (!Leaving)
+			{
+				if (!Exit->IsSwitchClear(Train))
+				{
+					UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s sets the switch at the end of %s, %.0f m ahead, which the game wouldn't: another train is within 12 m of it"), *TrainName(Train),
+						*TrackName(State.Route[Index].Track), Ahead / 100.f);
+				}
+				Exit->SetSwitchPosition(Position);
+			}
+			else if (Ahead <= Drives && State.WrongSwitch != Exit)
+			{
+				State.WrongSwitch = Exit;
+				UE_LOG(LogAutoTrains, Warning, TEXT("traffic: WRONG SWITCH: %s reaches the switch at the end of %s, %.0f m ahead, set for %s, which still has to go through it"), *TrainName(Train),
+					*TrackName(State.Route[Index].Track), Ahead / 100.f, *TrainName(Leaving->Train.Get()));
+			}
+		}
+	}
+}
+
+void AATTrafficSubsystem::WatchLostPath(FATTrafficTrain& State, double Now) const
+{
+	const AFGTrain* Train = State.Train.Get();
+	if (State.bManaged && State.bLostReported)
+	{
+		UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s has a path again after %.0f s"), *TrainName(Train), Now - State.LostSince);
+	}
+	if (State.bManaged || !Train || !Train->IsSelfDrivingEnabled() || Train->IsDocked())
+	{
+		State.bHadPath = State.bManaged;
+		State.LostSince = -1.0;
+		State.bLostReported = false;
+		return;
+	}
+	if (!State.bHadPath)
+	{
+		return;
+	}
+	State.LostSince = State.LostSince < 0.0 ? Now : State.LostSince;
+	if (State.bLostReported || Now - State.LostSince < mSettings.DeadlockWaitSeconds)
+	{
+		return;
+	}
+	State.bLostReported = true;
+	const FString Where = State.Vehicles.Num() > 0 ? TrackName(State.Vehicles[0].Track) : TEXT("no track");
+	const FString Fault = FString::Printf(TEXT("%s %s has had no path for %.0f s (on %s, %.0f km/h): %s\n"), *FDateTime::Now().ToString(TEXT("%Y-%m-%d %H:%M:%S")), *TrainName(Train),
+		Now - State.LostSince, *Where, State.Speed * 0.036f, *DescribeDrive(*Train));
+	UE_LOG(LogAutoTrains, Warning, TEXT("traffic: LOST: %s"), *Fault.TrimEnd());
+	WriteFault(Fault);
 }
 
 void AATTrafficSubsystem::ReleasePassedClaims(FATTrafficTrain& State) const

@@ -754,3 +754,33 @@ train, then a row per train every 0.2 s:
   time; help ends only once it is also moving or no longer wants to. At HillHelpMax it reports STALLED (log and
   faults.log) with DescribeDrive (throttle, brakes, forces, power, error) and how long ago ApplyAuthority last ran
   (DrivenAt), which tells the two theories apart. Untested in game.
+- 1.3.8 (wrong branch): the user saw a train from a single track head onto a double track the wrong way, screenshots of
+  a junction with red signals. Session 2026-10-31 19:09 local (log is UTC). MF Resource Train and AI Limiter RSC met
+  nose to nose at the joint of tracks 2145780312 and 2147407495 at 02:01:53, both on failed plans ("no way on past ...
+  for" each other, each driving up to the end of what it held); deadlock ghosted at 02:03:12. 02:03:19 MF, ghosting at
+  90 km/h: `LogRailroad: UpdatePathSegment, failed to find our location along the path, aborting`, then "forced braking
+  at 309 m/s2 (-10 m to stop)". MF is then in no WAIT dump, STUCK report or blocker line until 03:29:02: unmanaged, no
+  path (bManaged needs one). AI Limiter stood 28 m short of switch 126/128 for 5000 s ("no way to its goal", waits for
+  ?), Reinforced Plates beside it; both moved within seconds of MF at 03:29, a few seconds after the user's message:
+  probably the user moving MF by hand (not confirmed). That warning always sits next to a train past its stop point:
+  7 this session, 1129 in the 15 h gridlock (Adaptive Control Unit GTHR Train B, "-24 m to stop", 2-4 a minute from
+  08:48, i.e. after AI Limiter stood at 08:44, so it did not cause that stall).
+  RE (AFGTrain::TickSelfDriving_FollowPath, 0xa0b616): each tick, if Atc.CurrentConnection IsFacingSwitch, it takes
+  PathPoints[CurrentPathSegment + 1]'s track and, only if CurrentConnection->IsSwitchClear(this), sets the position. On
+  not clear it does nothing and the train drives on. IsSwitchClear collects every track of the switch on both sides and
+  fails if IsConnectionOccupied(connection, 1200, ignored): another train's vehicle within 12 m of the joint, whichever
+  way it moves. SetSwitchPosition just forwards to the switch control, no check. The planner's own limit is the fouling
+  zone (track clearance, 3 m by default), and ghosting ignores the switch, so a train can legally reach a switch the
+  game won't set: MF reached switch 140 with AI Limiter's body on it, so it stayed set the way AI Limiter came and MF
+  ran onto that lane against the signals. Position only matters to a vehicle leaving through the facing connection: a
+  branch connection has one attached connection, so a train coming in from a branch ignores it, and vehicles past the
+  joint ignore it. Fix: ThrowSwitches sets each facing switch within two updates of driving plus 20 m ahead of the
+  train's front, unless HasToLeaveThrough says another train has a vehicle leaving through it or gets there sooner. Such
+  a train is ahead on the same line, so following keeps this one behind it and no hold is needed; ghosting past one
+  would log WRONG SWITCH. Game logic is left running (same route, same result). WatchLostPath reports LOST for a
+  self-driving train without a path for DeadlockWaitSeconds, since these trains were invisible. NOT fixed: how the two
+  trains got nose to nose (failed plans each drive up to the end of what they hold, from both ends of a single-track
+  section), and a train stranded the wrong way still needs help by hand. The user's temporary signal (placed wrong way
+  to split a spline, deleted seconds later, far from here) is unlikely: the track count stayed 4929 from 01:21 to 02:29
+  UTC, so no split in the hour before; a wrong-way signal only counts if a 30 s rebuild lands while it stands.
+  Untested in game.

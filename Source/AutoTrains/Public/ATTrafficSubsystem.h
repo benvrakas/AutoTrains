@@ -153,6 +153,13 @@ struct FATTrafficTrain
 	double StandSince = -1.0;
 	bool bStallReported = false;
 	double DrivenAt = 0.0;
+	// Whether it had a path since it last docked, since when it has had none, below 0 while it has; whether that was
+	// reported. [world s]
+	bool bHadPath = false;
+	double LostSince = -1.0;
+	bool bLostReported = false;
+	// The last switch reported as set for another train as it reached it.
+	const UFGRailroadTrackConnectionComponent* WrongSwitch = nullptr;
 	// Blocked key of the last wait before a climb, so each is logged once.
 	FString ClimbWaitKey;
 	// Whether the train is on full brake, and whether it was at the previous update.
@@ -311,6 +318,12 @@ private:
 	void UpdateTraffic(float DeltaSeconds);
 	void ReadTrain(FATTrafficTrain& State, AFGTrain* Train) const;
 	void ReleasePassedClaims(FATTrafficTrain& State) const;
+	// Returns true if Other has a vehicle that will leave its track through Exit, or its front gets there within Within. [cm]
+	bool HasToLeaveThrough(const FATTrafficTrain& Other, const UFGRailroadTrackConnectionComponent* Exit, float Within) const;
+	// Sets the switches just ahead of each managed train for its route, unless another train has to go through first.
+	void ThrowSwitches(float DeltaSeconds);
+	// Reports a self-driving train that had a path and has been without one for the deadlock wait time.
+	void WatchLostPath(FATTrafficTrain& State, double Now) const;
 
 	void UpdateAuthority(FATTrafficTrain& State) const;
 	void RefreshClaimedJoints(FATTrafficTrain& State) const;

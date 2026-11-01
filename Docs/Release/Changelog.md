@@ -7,6 +7,13 @@
   for hours with the way ahead clear, and the trains behind it queued up with no warning. A train that stands while it
   is told to go now gets more and more traction, on any slope, until it moves. If it still stands at the full hill
   help, the log and faults.log say so, with what its driver and brakes are doing.
+- **Fixed: a train could take the wrong branch at a switch and run onto a track the wrong way.** The game won't set a
+  switch while any other train is within 12 m of it, and a train that gets there anyway just follows the switch as it
+  stands. That could put it off its route, sometimes facing a signal from behind with no way on, holding up every train
+  behind it. The mod now sets the switches just ahead of a train itself, unless another train still has to go through
+  the same switch first.
+- A self-driving train that loses its path is now reported in the log and faults.log. It used to stand there with no
+  warning.
 - New setting: **Hill help: stall time**.
 
 ## 1.3.7

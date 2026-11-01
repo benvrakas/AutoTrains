@@ -92,6 +92,30 @@ namespace
 	constexpr float HillWantMargin = 100.f;
 	constexpr float HillHelpHeadroom = 1.3f;
 	constexpr float HillHelpEndShare = 0.8f;
+	// A train told to go counts as standing under this speed; each stall time raises its help by this much. [cm/s]
+	constexpr float HillStandSpeed = 56.f;
+	constexpr float HillStallStep = 1.25f;
+
+	void WriteFault(const FString& Fault)
+	{
+		const FString Path = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("AutoTrains") / TEXT("faults.log"));
+		if (!FFileHelper::SaveStringToFile(Fault, *Path, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM, &IFileManager::Get(), FILEWRITE_Append))
+		{
+			UE_LOG(LogAutoTrains, Error, TEXT("Could not write the fault to %s"), *Path);
+		}
+	}
+
+	// What the train's driver is doing and the forces on the train, for the log.
+	FString DescribeDrive(const AFGTrain& Train)
+	{
+		const AFGLocomotive* Master = Train.GetMultipleUnitMaster();
+		const UFGLocomotiveMovementComponent* Movement = Master ? Master->GetLocomotiveMovementComponent() : nullptr;
+		const FTrainSimulationData& Simulation = Train.mSimulationData;
+		return FString::Printf(TEXT("target %.0f km/h, throttle %.2f, air brake %.2f, dynamic brake %.2f, traction %.0f kN, brakes %.0f kN, resistance %.0f kN, gradient %.0f kN, power %d, %d target points, %s"),
+			Train.mAtcData.TargetSpeed * 0.036f, Movement ? Movement->GetThrottle() : -1.f, Movement ? Movement->GetAirBrake() : -1.f, Movement ? Movement->GetDynamicBrake() : -1.f,
+			Simulation.TractiveForce / 100000.f, (Simulation.AirBrakingForce + Simulation.DynamicBrakingForce) / 100000.f, Simulation.ResistiveForce / 100000.f, Simulation.GradientForce / 100000.f,
+			Master && Master->HasPower() ? 1 : 0, Train.mAtcData.TargetPoints.Num(), *StaticEnum<ESelfDrivingLocomotiveError>()->GetNameStringByValue(static_cast<int64>(Train.GetSelfDrivingError())));
+	}
 
 	// Top speed a train runs to: the setting, or the consist's own. [cm/s]
 	float GetTopSpeed(const AFGTrain* Train)
@@ -1166,11 +1190,7 @@ void AATTrafficSubsystem::GhostThrough(const TArray<const FATTrafficTrain*>& Cha
 	const FString Fault = FString::Printf(TEXT("%s deadlock of %d trains passed through after %.0f s:\n  %s\n"), *FDateTime::Now().ToString(TEXT("%Y-%m-%d %H:%M:%S")), Chain.Num(),
 		Seconds, *FString::Join(Lines, TEXT("\n  ")));
 	UE_LOG(LogAutoTrains, Warning, TEXT("traffic: DEADLOCK passed through: %s"), *Fault);
-	const FString Path = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("AutoTrains") / TEXT("faults.log"));
-	if (!FFileHelper::SaveStringToFile(Fault, *Path, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM, &IFileManager::Get(), FILEWRITE_Append))
-	{
-		UE_LOG(LogAutoTrains, Error, TEXT("Could not write the fault to %s"), *Path);
-	}
+	WriteFault(Fault);
 }
 
 void AATTrafficSubsystem::LogDeadlocks()
@@ -1281,11 +1301,7 @@ void AATTrafficSubsystem::LogDeadlocks()
 			*FDateTime::Now().ToString(TEXT("%Y-%m-%d %H:%M:%S")), *TrainName(Root.Train.Get()), Root.UnnamedWaitSeconds, *Root.BlockedReason, Behind.Num(),
 			Behind.Num() > 0 ? TEXT(": ") : TEXT(""), *FString::Join(Behind, TEXT(", ")));
 		UE_LOG(LogAutoTrains, Warning, TEXT("traffic: STUCK: %s"), *Fault.TrimEnd());
-		const FString Path = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("AutoTrains") / TEXT("faults.log"));
-		if (!FFileHelper::SaveStringToFile(Fault, *Path, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM, &IFileManager::Get(), FILEWRITE_Append))
-		{
-			UE_LOG(LogAutoTrains, Error, TEXT("Could not write the fault to %s"), *Path);
-		}
+		WriteFault(Fault);
 		Root.RerouteCooldown = 0.f;
 		Root.RerouteTimer = 0.f;
 	}
@@ -1779,7 +1795,13 @@ void AATTrafficSubsystem::UpdateHillHelp(FATTrafficTrain& State, double Now) con
 	const AFGTrain* Train = State.Train.Get();
 	const float Pull = GravityAcceleration * State.Grade * State.Mass;
 	const bool bOn = mSettings.bHillHelp && Train && Train->IsSelfDrivingEnabled() && State.bManaged && State.FullTraction > 0.f;
-	if (State.HillBoost > 1.f && (!bOn || Pull < State.FullTraction * HillHelpEndShare))
+	const bool bWants = bOn && Train->mAtcData.TargetSpeed > State.Speed + HillWantMargin && !State.bFullBrake;
+	if (!bWants || State.Speed >= HillStandSpeed || State.StandSince < 0.0)
+	{
+		State.StandSince = Now;
+		State.bStallReported = false;
+	}
+	if (State.HillBoost > 1.f && (!bOn || (Pull < State.FullTraction * HillHelpEndShare && (State.Speed >= HillHelpSpeed || !bWants))))
 	{
 		UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s is over the climb at %.0f km/h (slope %.1f %%); its own traction again after %.0f s of hill help"), *TrainName(Train),
 			State.Speed * 0.036f, State.Grade * 100.f, Now - State.HillSince);
@@ -1790,22 +1812,36 @@ void AATTrafficSubsystem::UpdateHillHelp(FATTrafficTrain& State, double Now) con
 	{
 		return;
 	}
-	// Help starts once it is slow and wants to go on; it is raised, never lowered, while it lasts.
-	const bool bWants = Train->mAtcData.TargetSpeed > State.Speed + HillWantMargin && !State.bFullBrake;
-	const float Needed = FMath::Min(Pull * HillHelpHeadroom / State.FullTraction, mSettings.HillHelpMax);
-	if (State.HillBoost == 1.f && !(bWants && State.Speed < HillHelpSpeed && Pull > State.FullTraction * HillStallShare))
+	// Help starts once it is slow and wants to go on, or stands though told to go on any slope; it is raised, never
+	// lowered, while it lasts.
+	const bool bStalled = Now - State.StandSince >= mSettings.HillStallSeconds;
+	const float Needed = FMath::Min(FMath::Max(Pull * HillHelpHeadroom / State.FullTraction, bStalled ? State.HillBoost * HillStallStep : 0.f), mSettings.HillHelpMax);
+	if (State.HillBoost == 1.f && !bStalled && !(bWants && State.Speed < HillHelpSpeed && Pull > State.FullTraction * HillStallShare))
 	{
 		return;
 	}
+	if (bStalled)
+	{
+		State.StandSince = Now;
+	}
 	if (Needed > State.HillBoost + 0.05f)
 	{
-		UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s %s on a %.1f %% climb at %.0f km/h (slope pulls %.0f kN, its traction %.0f kN): hill help x%.2f traction"), *TrainName(Train),
-			State.HillBoost == 1.f ? TEXT("stalls") : TEXT("still stalls"), State.Grade * 100.f, State.Speed * 0.036f, Pull / 100000.f, State.FullTraction / 100000.f, Needed);
+		UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s %s on a %.1f %% climb at %.0f km/h (slope pulls %.0f kN, its traction %.0f kN): hill help x%.2f traction%s%s"), *TrainName(Train),
+			bStalled ? TEXT("stands though told to go") : State.HillBoost == 1.f ? TEXT("stalls") : TEXT("still stalls"), State.Grade * 100.f, State.Speed * 0.036f, Pull / 100000.f,
+			State.FullTraction / 100000.f, Needed, bStalled ? TEXT("; ") : TEXT(""), bStalled ? *DescribeDrive(*Train) : TEXT(""));
 		if (State.HillBoost == 1.f)
 		{
 			State.HillSince = Now;
 		}
 		State.HillBoost = FMath::Max(Needed, 1.f);
+	}
+	else if (bStalled && !State.bStallReported)
+	{
+		State.bStallReported = true;
+		const FString Fault = FString::Printf(TEXT("%s %s stands at x%.2f traction though told to go (slope %.1f %%, last driven %.1f s ago): %s\n"), *FDateTime::Now().ToString(TEXT("%Y-%m-%d %H:%M:%S")),
+			*TrainName(Train), State.HillBoost, State.Grade * 100.f, Now - State.DrivenAt, *DescribeDrive(*Train));
+		UE_LOG(LogAutoTrains, Warning, TEXT("traffic: STALLED: %s"), *Fault.TrimEnd());
+		WriteFault(Fault);
 	}
 }
 
@@ -1906,6 +1942,7 @@ void AATTrafficSubsystem::ApplyAuthority(AFGTrain* Train, float DeltaSeconds)
 		return;
 	}
 	AATControlSubsystem::IgnoreSignalStops(Train);
+	State->DrivenAt = GetWorld()->GetTimeSeconds();
 	const float Distance = GetAuthorityDistance(Train);
 	// Behind a leader on shared track: keep able to stop where the leader could stop.
 	float HardFollowLimit = -1.f;

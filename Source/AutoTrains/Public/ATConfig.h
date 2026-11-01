@@ -16,6 +16,8 @@ struct FATSettings
 	// A train too slow to climb the slope under it gets extra traction, up to HillHelpMax times its own, until it can.
 	bool bHillHelp = true;
 	float HillHelpMax = 4.f;
+	// A train told to go that stands this long, on any slope, gets more hill help, again each time this passes. [s]
+	float HillStallSeconds = 4.f;
 	// Time kept between two trains' bookings of the same track or switch. [s]
 	float SafetyMargin = 0.f;
 	// Top speed of every self-driving train, 0 for each train's own. [km/h]

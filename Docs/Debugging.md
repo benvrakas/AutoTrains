@@ -737,3 +737,20 @@ train, then a row per train every 0.2 s:
   3.9/h (pre-1.3.6 level), "where it stands" 12/h, no runaway plan waits. The 3 CROSSING ENTRY lines followed the
   rebuild SetEnabled does when traffic control comes on (not seen by UpdateTraffic's own check), so the entry check is
   now skipped whenever mConflictsBuiltAt changed since the last update (mConflictsSeenAt).
+- 1.3.8 (stall with no warning): the 1.3.7 session left running 16 h ended in a 12-train queue, screenshot of a junction
+  on a hump; the user: looks gravity related. Head of the queue: AI Limiter RSC (700 t, 2000 kN), never in a WAIT dump
+  or STUCK report, only as a booking line: "0 km/h, waited 0 s, 10 claims, may drive 330 m, target 136 km/h" from
+  08:44 UTC for 15 h. It came up the climb past switch 66 at 32 km/h, slowed, and stood with its front 30 m before
+  switch 101 and its tail on switch 66, 245 m short of what it was waiting for, so no authority stopped it. No
+  BlockedReason, so WaitingSeconds stayed 0 and neither the deadlock nor the stuck check saw it; everything behind it
+  waited on its bookings ("waits for ?": Rubber SNK [conc]'s failed plan had 3 states, its block noted on moving states
+  that aren't the one it stands at). Hill help never logged: it needs the body-chord pull over 90% of traction (26.2 %
+  for this train) and the stand was gentler; after a reload the same train moved off at once, reached 14 km/h at
+  26.5 % and hill help took it over a 34.4 % chord. NOT known: why it didn't move in the old session. A driver at full
+  throttle should have moved it at that pull, and there was no telemetry; the driver (throttle up to 1.00 in telemetry)
+  may have idled with a stale target, or the real gradient may exceed the chord (cars aren't evenly loaded; the 1.3.4
+  stall also sat at full throttle where gradient equals traction). Fix: UpdateHillHelp also counts a train standing
+  (under 2 km/h) that wants 3.6 km/h more for HillStallSeconds as stalled on any slope and raises the help x1.25 each
+  time; help ends only once it is also moving or no longer wants to. At HillHelpMax it reports STALLED (log and
+  faults.log) with DescribeDrive (throttle, brakes, forces, power, error) and how long ago ApplyAuthority last ran
+  (DrivenAt), which tells the two theories apart. Untested in game.

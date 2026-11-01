@@ -148,6 +148,11 @@ struct FATTrafficTrain
 	float FullTraction = 0.f;
 	float HillBoost = 1.f;
 	double HillSince = 0.0;
+	// Since when it has stood though told to go, below 0 until seen; whether that was reported at the full hill help;
+	// when the mod last drove it. [world s]
+	double StandSince = -1.0;
+	bool bStallReported = false;
+	double DrivenAt = 0.0;
 	// Blocked key of the last wait before a climb, so each is logged once.
 	FString ClimbWaitKey;
 	// Whether the train is on full brake, and whether it was at the previous update.
@@ -398,7 +403,8 @@ private:
 	// scaled by the share of them the train was seen to use in measured bands (half until measured).
 	void RefreshTractionPlan(FATTrafficTrain& State) const;
 	// Sets State.HillBoost: extra traction while the train, wanting to go on and slow, has less traction than the slope
-	// under it pulls back with, until that slope is one it manages on its own.
+	// under it pulls back with, or stands though told to go, until that slope is one it manages on its own and it is
+	// moving. Reports a train that stands even at the full help.
 	void UpdateHillHelp(FATTrafficTrain& State, double Now) const;
 
 	// Deceleration planned with at Speed (the train's own speed if negative). [cm/s^2]

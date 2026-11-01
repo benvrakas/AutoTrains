@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.8
+
+- **Fixed: a train stopped on a climb could hold up the network for good.** Hill help only came on when the slope alone
+  was too much for the train, so a train that lost its speed on a slightly gentler part of a climb could stand there
+  for hours with the way ahead clear, and the trains behind it queued up with no warning. A train that stands while it
+  is told to go now gets more and more traction, on any slope, until it moves. If it still stands at the full hill
+  help, the log and faults.log say so, with what its driver and brakes are doing.
+- New setting: **Hill help: stall time**.
+
 ## 1.3.7
 
 - **Fixed: trains braking hard where 1.3.6 had them stop for their plan.** 1.3.6 made a train stop at every wait its

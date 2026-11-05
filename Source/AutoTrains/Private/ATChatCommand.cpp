@@ -1,4 +1,5 @@
 #include "ATChatCommand.h"
+#include "ATConfig.h"
 #include "ATControlSubsystem.h"
 #include "ATTrafficSubsystem.h"
 #include "AutoTrains.h"
@@ -6,6 +7,7 @@
 #include "FGPlayerController.h"
 #include "FGPlayerState.h"
 #include "FGTrain.h"
+#include "Server/FGDSAuthenticationTypes.h"
 
 AATChatCommand::AATChatCommand()
 {
@@ -13,7 +15,7 @@ AATChatCommand::AATChatCommand()
 	Aliases.Add(TEXT("autotrains"));
 	MinNumberOfArguments = 1;
 	bOnlyUsableByPlayer = true;
-	Usage = NSLOCTEXT("AutoTrains", "ChatUsage", "/at traffic on|off|status | reroute on|off | list | autopilot <train|all> on|off | removesignals confirm   (<train> = number from /at list, or part of its name)");
+	Usage = NSLOCTEXT("AutoTrains", "ChatUsage", "/at traffic on|off|status | reroute on|off | list | autopilot <train|all> on|off | removesignals confirm | settings | set <setting> <value>   (<train> = number from /at list, or part of its name)");
 }
 
 bool AATChatCommand::MayChangeWorld(UCommandSender* Sender)
@@ -24,7 +26,14 @@ bool AATChatCommand::MayChangeWorld(UCommandSender* Sender)
 		return false;
 	}
 	const AFGPlayerState* State = Player->GetPlayerState<AFGPlayerState>();
-	return Player->IsLocalController() || (State && State->IsServerAdmin());
+	if (Player->IsLocalController() || (State && State->IsServerAdmin()))
+	{
+		return true;
+	}
+	const AFGPlayerController* Controller = Cast<AFGPlayerController>(Player);
+	const UWorld* World = Player->GetWorld();
+	const EPrivilegeLevel Level = Controller ? Controller->GetDSPrivilegeLevel() : EPrivilegeLevel::None;
+	return World && World->GetNetMode() == NM_DedicatedServer && (Level == EPrivilegeLevel::Administrator || Level == EPrivilegeLevel::InitialAdmin);
 }
 
 EExecutionStatus AATChatCommand::ExecuteCommand_Implementation(UCommandSender* Sender, const TArray<FString>& Arguments, const FString& Label)
@@ -39,12 +48,43 @@ EExecutionStatus AATChatCommand::ExecuteCommand_Implementation(UCommandSender* S
 	UE_LOG(LogAutoTrains, Log, TEXT("/at %s"), *FString::Join(Arguments, TEXT(" ")));
 
 	const FString Verb = Arguments[0].ToLower();
-	const bool bReadOnly = Verb == TEXT("list") || (Verb == TEXT("traffic") && Arguments.Num() == 2 && Arguments[1].Equals(TEXT("status"), ESearchCase::IgnoreCase));
-	if (!bReadOnly && !MayChangeWorld(Sender))
+	const bool bReadOnly = Verb == TEXT("list") || Verb == TEXT("settings") || (Verb == TEXT("traffic") && Arguments.Num() == 2 && Arguments[1].Equals(TEXT("status"), ESearchCase::IgnoreCase));
+	const bool bAdmin = MayChangeWorld(Sender);
+	if (!bReadOnly && !bAdmin)
 	{
+		const APlayerController* Player = Sender ? Sender->GetPlayer() : nullptr;
+		const APlayerState* State = Player ? Player->GetPlayerState<APlayerState>() : nullptr;
 		Sender->SendChatMessage(TEXT("Auto Trains: only the host or a server admin can use this /at command."), FLinearColor::Red);
-		UE_LOG(LogAutoTrains, Log, TEXT("/at %s refused: the sender isn't the host or a server admin"), *Verb);
+		UE_LOG(LogAutoTrains, Log, TEXT("/at %s refused: %s isn't the host or a server admin"), *Verb, State ? *State->GetPlayerName() : TEXT("the sender"));
 		return EExecutionStatus::INSUFFICIENT_PERMISSIONS;
+	}
+	if (Verb == TEXT("settings"))
+	{
+		Sender->SendChatMessage(TEXT("Auto Trains settings on this server (* = changed from the default):"));
+		for (const FString& Line : UATConfig::DescribeForChat(this))
+		{
+			Sender->SendChatMessage(Line);
+		}
+		Sender->SendChatMessage(bAdmin ? TEXT("You're an admin: change one with /at set <setting> <value>.") : TEXT("Only the host or a server admin can change them."));
+		const UWorld* World = GetWorld();
+		if (World && World->GetNetMode() == NM_DedicatedServer)
+		{
+			Sender->SendChatMessage(TEXT("Your own Mods menu doesn't change a dedicated server's settings."));
+		}
+		return EExecutionStatus::COMPLETED;
+	}
+	if (Verb == TEXT("set"))
+	{
+		if (Arguments.Num() < 3)
+		{
+			Sender->SendChatMessage(TEXT("Usage: /at set <setting> <value>, e.g. /at set DetailedLog on. /at settings lists them."), FLinearColor::Red);
+			return EExecutionStatus::BAD_ARGUMENTS;
+		}
+		FString Message;
+		const bool bOk = UATConfig::Write(this, Arguments[1], Arguments[2], Message);
+		UE_LOG(LogAutoTrains, Log, TEXT("Settings: /at set %s %s: %s"), *Arguments[1], *Arguments[2], *Message);
+		Sender->SendChatMessage(Message, bOk ? FLinearColor::White : FLinearColor::Red);
+		return bOk ? EExecutionStatus::COMPLETED : EExecutionStatus::BAD_ARGUMENTS;
 	}
 	if (Verb == TEXT("list"))
 	{
@@ -56,7 +96,7 @@ EExecutionStatus AATChatCommand::ExecuteCommand_Implementation(UCommandSender* S
 	}
 	if (Verb == TEXT("log"))
 	{
-		Sender->SendChatMessage(TEXT("/at log is gone: switch Detailed log on in Mods > Auto Trains instead."));
+		Sender->SendChatMessage(TEXT("/at log is gone: use /at set DetailedLog on (or Mods > Auto Trains) instead."));
 		return EExecutionStatus::BAD_ARGUMENTS;
 	}
 	if (Verb == TEXT("traffic") && Arguments.Num() == 2)

@@ -13,7 +13,8 @@ class AUTOTRAINS_API AATChatCommand : public AChatCommandInstance
 public:
 	AATChatCommand();
 
-	// Returns true if Sender is the host's own player or a dedicated server admin.
+	// Returns true if Sender is the host's own player, a player the game flags as server admin, or on a dedicated server a
+	// player whose privilege level is Administrator.
 	static bool MayChangeWorld(UCommandSender* Sender);
 
 	virtual EExecutionStatus ExecuteCommand_Implementation(UCommandSender* Sender, const TArray<FString>& Arguments, const FString& Label) override;

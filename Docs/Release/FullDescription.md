@@ -227,6 +227,7 @@ Type them in the game chat. A `<train>` is its number from `/at list`, or part o
 |---|---|
 | `/at list` | Every train with its number, speed, length and distance to its goal. |
 | `/at traffic status` | Every moving self-driving train, how far it may drive and what it is waiting for. The first place to look when a train seems stuck. |
+| `/at settings` | Every Auto Trains setting on the host or server, with its key and range. Settings changed from their default are marked `*`. |
 
 **Switch things on and off** (host or server admin)
 
@@ -236,6 +237,7 @@ Type them in the game chat. A `<train>` is its number from `/at list`, or part o
 | `/at reroute on` / `off` | Congestion rerouting on or off. Same as the Congestion rerouting setting. |
 | `/at autopilot <train> on` / `off` | Self-driving for one train. |
 | `/at autopilot all on` / `off` | Self-driving for every train. |
+| `/at set <setting> <value>` | Changes a setting, e.g. `/at set DetailedLog on` or `/at set JunctionWaitSeconds 10`. The key's case doesn't matter, and a unique part of a key or name works. It is saved to the server's `Configs/AutoTrains.cfg`. |
 
 **One-off jobs** (host or server admin)
 
@@ -243,7 +245,9 @@ Type them in the game chat. A `<train>` is its number from `/at list`, or part o
 |---|---|
 | `/at removesignals confirm` | Dismantles every block and path signal in the world, with no refund and no undo. Without `confirm` it only explains what it would do. |
 
-In multiplayer only the host or a server admin can change anything.
+In multiplayer only the host or a server admin can change anything. A server admin is a player signed in to the
+dedicated server with its admin password. On a dedicated server, `/at set` is the way to change settings in game:
+your own Mods menu only changes your copy, which the server doesn't read.
 
 ### Bugs and ideas
 

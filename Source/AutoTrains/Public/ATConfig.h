@@ -96,4 +96,13 @@ public:
 
 	// Fills OutSettings from the registered configuration; returns false, leaving the defaults, if it isn't available.
 	static bool Read(const UObject* WorldContext, FATSettings& OutSettings);
+
+	// One line per setting of the registered configuration for chat: key, value, range and name; settings off their
+	// default are marked.
+	static TArray<FString> DescribeForChat(const UObject* WorldContext);
+
+	// Sets the setting Key (any case; a unique part of a key or name also works) to Value ("on"/"off" or a number) in
+	// the registered configuration, which SML saves to this machine's config file. OutMessage says what happened.
+	// Returns false if Key or Value isn't valid or the configuration isn't available.
+	static bool Write(const UObject* WorldContext, const FString& Key, const FString& Value, FString& OutMessage);
 };

@@ -259,6 +259,122 @@ void UATConfig::UseSMLEditorClasses()
 	UE_LOG(LogAutoTrains, Log, TEXT("Config: %d of %d settings use SML's editor widgets"), Converted, OldRoot->SectionProperties.Num());
 }
 
+TArray<FString> UATConfig::DescribeForChat(const UObject* WorldContext)
+{
+	TArray<FString> Out;
+	const UConfigPropertySection* Root = FindRoot(WorldContext);
+	if (!Root)
+	{
+		Out.Add(TEXT("Auto Trains' configuration isn't available on this machine."));
+		return Out;
+	}
+	for (const TPair<FString, TObjectPtr<UConfigProperty>>& Pair : Root->SectionProperties)
+	{
+		if (const UConfigPropertyBool* Bool = Cast<UConfigPropertyBool>(Pair.Value.Get()))
+		{
+			Out.Add(FString::Printf(TEXT("%s%s = %s   (%s)"), Bool->Value != Bool->DefaultValue ? TEXT("* ") : TEXT(""), *Pair.Key,
+				Bool->Value ? TEXT("on") : TEXT("off"), *Bool->DisplayName.ToString()));
+		}
+		else if (const UConfigPropertyFloat* Float = Cast<UConfigPropertyFloat>(Pair.Value.Get()))
+		{
+			float Min = 0.f;
+			float Max = 0.f;
+			GetRange(Pair.Key, Min, Max);
+			Out.Add(FString::Printf(TEXT("%s%s = %g   (%s, %g to %g)"), !FMath::IsNearlyEqual(Float->Value, Float->DefaultValue) ? TEXT("* ") : TEXT(""), *Pair.Key,
+				Float->Value, *Float->DisplayName.ToString(), Min, Max));
+		}
+	}
+	return Out;
+}
+
+bool UATConfig::Write(const UObject* WorldContext, const FString& Key, const FString& Value, FString& OutMessage)
+{
+	const UWorld* World = WorldContext ? WorldContext->GetWorld() : nullptr;
+	const UGameInstance* GameInstance = World ? World->GetGameInstance() : nullptr;
+	UConfigManager* Manager = GameInstance ? GameInstance->GetSubsystem<UConfigManager>() : nullptr;
+	UConfigPropertySection* Root = Manager ? Manager->GetConfigurationRootSection(MakeConfigId()) : nullptr;
+	if (!Root)
+	{
+		OutMessage = TEXT("Auto Trains' configuration isn't available on this machine.");
+		UE_LOG(LogAutoTrains, Warning, TEXT("Settings: write of %s failed: configuration not found"), *Key);
+		return false;
+	}
+
+	// The setting: an exact key, else the only key or name containing Key.
+	const FString Wanted = Key.TrimStartAndEnd();
+	FString Chosen;
+	TArray<FString> Matches;
+	for (const TPair<FString, TObjectPtr<UConfigProperty>>& Pair : Root->SectionProperties)
+	{
+		const UConfigProperty* Property = Pair.Value.Get();
+		if (!Property)
+		{
+			continue;
+		}
+		if (Pair.Key.Equals(Wanted, ESearchCase::IgnoreCase))
+		{
+			Chosen = Pair.Key;
+			break;
+		}
+		if (Pair.Key.Contains(Wanted, ESearchCase::IgnoreCase) || Property->DisplayName.ToString().Contains(Wanted, ESearchCase::IgnoreCase))
+		{
+			Matches.Add(Pair.Key);
+		}
+	}
+	if (Chosen.IsEmpty() && Matches.Num() == 1)
+	{
+		Chosen = Matches[0];
+	}
+	if (Chosen.IsEmpty())
+	{
+		OutMessage = Matches.Num() == 0 ? FString::Printf(TEXT("No setting called '%s'; /at settings lists them."), *Wanted)
+			: FString::Printf(TEXT("'%s' matches %s; use the full key."), *Wanted, *FString::Join(Matches, TEXT(", ")));
+		return false;
+	}
+
+	UConfigProperty* Property = Root->SectionProperties.FindChecked(Chosen).Get();
+	FString Shown;
+	if (UConfigPropertyBool* Bool = Cast<UConfigPropertyBool>(Property))
+	{
+		const FString Word = Value.TrimStartAndEnd();
+		const bool bOn = Word.Equals(TEXT("on"), ESearchCase::IgnoreCase) || Word.Equals(TEXT("true"), ESearchCase::IgnoreCase) || Word.Equals(TEXT("yes"), ESearchCase::IgnoreCase) || Word == TEXT("1");
+		const bool bOff = Word.Equals(TEXT("off"), ESearchCase::IgnoreCase) || Word.Equals(TEXT("false"), ESearchCase::IgnoreCase) || Word.Equals(TEXT("no"), ESearchCase::IgnoreCase) || Word == TEXT("0");
+		if (!bOn && !bOff)
+		{
+			OutMessage = FString::Printf(TEXT("%s takes on or off."), *Chosen);
+			return false;
+		}
+		Bool->Value = bOn;
+		Shown = bOn ? TEXT("on") : TEXT("off");
+	}
+	else if (UConfigPropertyFloat* Float = Cast<UConfigPropertyFloat>(Property))
+	{
+		float Min = 0.f;
+		float Max = 0.f;
+		const FString Number = Value.TrimStartAndEnd();
+		const bool bRange = GetRange(Chosen, Min, Max);
+		const float Parsed = FCString::Atof(*Number);
+		if (!bRange || !Number.IsNumeric() || Parsed < Min || Parsed > Max)
+		{
+			OutMessage = FString::Printf(TEXT("%s takes a number from %g to %g."), *Chosen, Min, Max);
+			return false;
+		}
+		Float->Value = Parsed;
+		Shown = FString::Printf(TEXT("%g"), Parsed);
+	}
+	else
+	{
+		OutMessage = FString::Printf(TEXT("%s can't be set from chat."), *Chosen);
+		UE_LOG(LogAutoTrains, Warning, TEXT("Settings: write of %s failed: property of an unexpected class"), *Chosen);
+		return false;
+	}
+	Property->MarkDirty();
+	Manager->MarkConfigurationDirty(MakeConfigId());
+	Manager->FlushPendingSaves();
+	OutMessage = FString::Printf(TEXT("%s is now %s."), *Chosen, *Shown);
+	return true;
+}
+
 bool UATConfig::Read(const UObject* WorldContext, FATSettings& OutSettings)
 {
 	const UConfigPropertySection* Root = FindRoot(WorldContext);

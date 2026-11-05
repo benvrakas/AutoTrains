@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.4.0
+
+- **Change settings on a dedicated server from in game:** `/at settings` lists the server's Auto Trains settings, and
+  `/at set <setting> <value>` changes one, e.g. `/at set DetailedLog on`. Changing them is for the host or a server
+  admin, like the other `/at` commands that change something. Before, a dedicated server's settings could only be
+  changed in its config file: your own Mods menu doesn't reach the server.
+- A player signed in to a dedicated server with its admin password now always counts as a server admin for `/at`.
+- Refused `/at` commands are logged with the player's name.
+
+**Good to know**
+
+- Everyone in a multiplayer session needs Auto Trains 1.4.0.
+
 ## 1.3.10
 
 - New setting: **Detailed log**, off by default. FactoryGame.log now keeps to what matters: deadlocks, stuck,

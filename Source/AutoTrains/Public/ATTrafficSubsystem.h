@@ -158,6 +158,10 @@ struct FATTrafficTrain
 	bool bHadPath = false;
 	double LostSince = -1.0;
 	bool bLostReported = false;
+	// Room ahead to where it has to stop as last driven, MAX_flt with nothing to stop for. [cm]
+	float Room = MAX_flt;
+	// Whether it was in a deadlock at the last update.
+	bool bInDeadlock = false;
 	// The last switch reported as set for another train as it reached it.
 	const UFGRailroadTrackConnectionComponent* WrongSwitch = nullptr;
 	// Blocked key of the last wait before a climb, so each is logged once.
@@ -298,6 +302,40 @@ public:
 
 	// Called after ApplyAuthority: applies the top speed setting to a self-driving train.
 	void ApplySpeedSettings(AFGTrain* Train, float DeltaSeconds);
+
+	// For other mods, by reflection (FindFunction and ProcessEvent), on the server's game thread.
+
+	// Returns true if Auto Trains drives Train now. OutWaitingFor: the trains it waits for, the one holding it up first,
+	// parked trains and trains it doesn't drive included; OutWaitedSeconds: how long it has been held up; OutReason:
+	// why, as in the log, empty if it isn't held up.
+	UFUNCTION(BlueprintCallable, Category = "Auto Trains")
+	bool ExternalGetWaitingFor(AFGTrain* Train, TArray<AFGTrain*>& OutWaitingFor, float& OutWaitedSeconds, FString& OutReason);
+
+	// Seconds until Train reaches the station it heads for by its plan, around every other train's booking and queue
+	// (for a docked train: the station of its next stop, its stay included); -1 without a plan that gets there.
+	// OutGoal: that station, null if none.
+	UFUNCTION(BlueprintCallable, Category = "Auto Trains")
+	float ExternalGetPlannedArrival(AFGTrain* Train, AFGBuildableRailroadStation*& OutGoal);
+
+	// Seconds Train would take from station From to station To on the shortest way the signals allow, leaving either
+	// way, at its cruising speed and acceleration with no other train in the way; -1 if there is no such way.
+	UFUNCTION(BlueprintCallable, Category = "Auto Trains")
+	float ExternalEstimateTravelSeconds(AFGTrain* Train, AFGBuildableRailroadStation* From, AFGBuildableRailroadStation* To);
+
+	// The trains docked at Station, then those heading there for their current stop in order of planned arrival.
+	// Returns the seconds until the last of them is expected to have left (0 if none, -1 if one of them has no plan).
+	UFUNCTION(BlueprintCallable, Category = "Auto Trains")
+	float ExternalGetStationQueue(AFGBuildableRailroadStation* Station, TArray<AFGTrain*>& OutTrains);
+
+	// The trains in trouble now, each with its kind and for how long [s]: "Deadlock" (in a cycle of trains waiting for
+	// each other), "Stuck" (held up with no train to wait for), "Lost" (self-driving without a path) and "Stalled"
+	// (standing at the full hill help though told to go). Returns how many.
+	UFUNCTION(BlueprintCallable, Category = "Auto Trains")
+	int32 ExternalGetTroubledTrains(TArray<AFGTrain*>& OutTrains, TArray<FString>& OutKinds, TArray<float>& OutSeconds);
+
+	// Called after Train's timetable changed: its next leg is predicted again from the new timetable.
+	UFUNCTION(BlueprintCallable, Category = "Auto Trains")
+	void ExternalTimeTableChanged(AFGTrain* Train);
 
 	// Returns the distance from Train's front to the end of its authority track, or -1 for no limit. [cm]
 	float GetAuthorityDistance(const AFGTrain* Train) const;
@@ -555,6 +593,9 @@ private:
 	// trains.
 	bool CanEnter(FATTrafficTrain& Self, const FResourceKey& Key, int32 Index, double Enter, bool bLocked, bool bHeldBefore, const UFGRailroadTrackConnectionComponent* Via,
 		const UFGRailroadTrackConnectionComponent* Exit, double Now, const FATTrafficTrain*& OutBlocker, FString& OutWhy) const;
+	// Returns true if Other has a vehicle on the switch's fouling zone or crossing zone Key on a track that isn't on
+	// Self's route or under Self.
+	bool HasVehicleOffRoute(const FATTrafficTrain& Other, const FATTrafficTrain& Self, const FResourceKey& Key) const;
 	// Returns the last route step the train can no longer change: what it holds and what it can't stop short of.
 	int32 GetRouteCommit(const FATTrafficTrain& State) const;
 	// Rebuilds the network copy the planner runs on.

@@ -95,6 +95,8 @@ namespace
 	// A train told to go counts as standing under this speed; each stall time raises its help by this much. [cm/s]
 	constexpr float HillStandSpeed = 56.f;
 	constexpr float HillStallStep = 1.25f;
+	// A train counts as told to go only with at least this much room to where it has to stop. [cm]
+	constexpr float HillStallRoom = 500.f;
 	// A switch is set for a train this far ahead of it, on top of this many updates of its driving. [cm]
 	constexpr float SwitchThrowMargin = 2000.f;
 	constexpr float SwitchThrowUpdates = 2.f;
@@ -1323,6 +1325,10 @@ void AATTrafficSubsystem::LogDeadlocks()
 	// Follow each long-waiting train's chain of trains it waits for; a chain that comes back is a deadlock. Every train
 	// in one is marked; a cycle is logged when it first shows up. One that drops out of sight for a moment and comes back
 	// within DeadlockForgetSeconds is the same deadlock still going on.
+	for (TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Pair : mTrains)
+	{
+		Pair.Value.bInDeadlock = false;
+	}
 	TSet<const FATTrafficTrain*> InCycle;
 	for (const TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Pair : mTrains)
 	{
@@ -1351,6 +1357,10 @@ void AATTrafficSubsystem::LogDeadlocks()
 		{
 			Names.Add(TrainName(Member->Train.Get()));
 			InCycle.Add(Member);
+			if (FATTrafficTrain* Marked = mTrains.Find(Member->Train))
+			{
+				Marked->bInDeadlock = true;
+			}
 		}
 		TArray<FString> Sorted = Names;
 		Sorted.Sort();
@@ -1919,7 +1929,7 @@ void AATTrafficSubsystem::UpdateHillHelp(FATTrafficTrain& State, double Now) con
 	const AFGTrain* Train = State.Train.Get();
 	const float Pull = GravityAcceleration * State.Grade * State.Mass;
 	const bool bOn = mSettings.bHillHelp && Train && Train->IsSelfDrivingEnabled() && State.bManaged && State.FullTraction > 0.f;
-	const bool bWants = bOn && Train->mAtcData.TargetSpeed > State.Speed + HillWantMargin && !State.bFullBrake;
+	const bool bWants = bOn && Train->mAtcData.TargetSpeed > State.Speed + HillWantMargin && !State.bFullBrake && State.Room >= HillStallRoom;
 	if (!bWants || State.Speed >= HillStandSpeed || State.StandSince < 0.0)
 	{
 		State.StandSince = Now;
@@ -2076,6 +2086,7 @@ void AATTrafficSubsystem::ApplyAuthority(AFGTrain* Train, float DeltaSeconds)
 	const float FollowLimit = bGhost ? -1.f : GetFollowLimit(Train, *State, HardFollowLimit, &FollowInfo);
 	if (Distance < 0.f && FollowLimit < 0.f)
 	{
+		State->Room = MAX_flt;
 		State->bFullBrake = false;
 		State->bForcedBrake = false;
 		State->bCatchArmed = false;
@@ -2111,6 +2122,7 @@ void AATTrafficSubsystem::ApplyAuthority(AFGTrain* Train, float DeltaSeconds)
 	// it holds, with full brake, until the train's own brakes suffice: what it slowed by itself since the last tick
 	// (its brakes and the slope) counts, else its planned braking.
 	const float StopWithin = FMath::Min(Distance >= 0.f ? Usable : MAX_flt, HardFollowLimit >= 0.f ? HardFollowLimit - StopDistance : MAX_flt);
+	State->Room = StopWithin;
 	const float Needed = StopWithin < MAX_flt ? FMath::Square(Speed) / (2.f * FMath::Max(StopWithin, ForcedBrakeMinDistance)) : 0.f;
 	const bool bOverCurve = Speed > AllowedHard + OverspeedTolerance;
 	const bool bWasFullBrake = State->bFullBrake;

@@ -784,3 +784,31 @@ train, then a row per train every 0.2 s:
   to split a spline, deleted seconds later, far from here) is unlikely: the track count stayed 4929 from 01:21 to 02:29
   UTC, so no split in the hour before; a wrong-way signal only counts if a 30 s rebuild lands while it stands.
   Untested in game.
+- 1.3.9 (SmartTrains session, 2026-11-05 13:07 local, log 19:07+ UTC, ~40 trains, 1.3.8 installed from SMR): the
+  SmartTrains session forwarded "trains drive through each other at junctions" with 21 "can't stop short of ...
+  booked at the same time" warnings. Those are planning conflicts only: the grant still gives a resource to one train
+  at a time, the other brakes hard (forced braking). Real contacts: 19:19:12 (27 sweeps, MF train on track 2146360615,
+  Copper Ingot train on 2146357810, crossing 83) and three deadlock pass-throughs of the water shuttles (19:21, 19:29,
+  19:32). 19:19: MF stood 11 m before crossing 83 waiting for the Copper Ingot train (booked first, locked, clear in
+  7 s), then got target 100 km/h at 19:19:05 while that train had stopped behind a queue with its tail on the
+  crossing. CanEnter's "nobody else holds it" loop lets a followed train (GetRouteOrder > 0: its master's track is on
+  Self's route, same exit) through without asking which side it occupies the resource from; at a merge its front is
+  on Self's route while its rear cars are on the other branch in the joint or crossing zone, and GetFollowLimit's gap
+  only counts vehicles on Self's path. Fix: HasVehicleOffRoute; a followed train with a vehicle in the zone on a track
+  not on Self's route or under it blocks. Not proven that the 19:19 contact was this (no geometry in the log), but
+  it is the only grant path that fits.
+  Water shuttles 19:20: train A left Water SRC B for SNK B while B was docked at SNK B about to leave for SRC B, the
+  same 10 tracks the other way: no way past each other, so each plan waited for the other's booking ("moves off in
+  22719 s" is that, not a stay estimate), deadlock, pass-through. A dispatch problem; SmartTrains can now ask
+  ExternalEstimateTravelSeconds / ExternalGetStationQueue / ExternalGetTroubledTrains. Separately, fully load/unload
+  stops ignored DockForDuration in GetExpectedStay (B: expected 26.9 s, stayed 120.7 s at its "or 120 s" stop with no
+  cargo to move); now max with "and", min with "or".
+  User (same day): even before Auto Trains, trains queueing for a station would stand across the oncoming main line
+  and deadlock. SIPP waits are allowed wherever the windows fit, tail over a junction included, and trains planned
+  later queue behind that. Fix: Move rejects a wait longer than JunctionWaitSeconds (setting, 5 s) at a state whose
+  body is on any joint or crossing resource (IsOnJunction: open resources with ClearAt past the stop), except at the
+  start; counted as "waits across a junction" in failure lines. Risk: tight back-to-back switches may leave no legal
+  waiting place, giving more failed plans; the setting can be raised.
+  Hill help: 55 "stands though told to go" were mostly trains at their stop point with a creep target (target 4 km/h,
+  throttle 0.00, ~1 m of room). bWants now needs State.Room (room to the stop point as last driven) >= 5 m.
+  Untested in game.

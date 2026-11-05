@@ -74,6 +74,8 @@ namespace
 				LOCTEXT("HillHelpMaxTip", "The most traction a stalled train gets on a climb, 1 to 10 times its own. Raise it if heavy trains still stall on very steep ramps.")},
 			{TEXT("HillStallSeconds"), &FATSettings::HillStallSeconds, 1.f, 60.f, LOCTEXT("HillStall", "Hill help: stall time (seconds)"),
 				LOCTEXT("HillStallTip", "A train that stands this long while it is told to go gets more traction, and more again each time this passes, 1 to 60 seconds.")},
+			{TEXT("JunctionWaitSeconds"), &FATSettings::JunctionWaitSeconds, 0.f, 600.f, LOCTEXT("JunctionWait", "Longest wait across a junction (seconds)"),
+				LOCTEXT("JunctionWaitTip", "A train waits no longer than this with any part of it on a switch or crossing, so it doesn't hold up the other line; it waits before the junction instead. 0 to 600 seconds; raise it if trains can't find a way through tight junctions.")},
 			{TEXT("GhostDistanceMetres"), &FATSettings::GhostDistanceMetres, 0.f, 2000.f, LOCTEXT("GhostDistance", "Deadlock pass-through distance (m)"),
 				LOCTEXT("GhostDistanceTip", "A train passing through a deadlock does so until it has driven its own length and this much further, 0 to 2000 m.")},
 			{TEXT("GhostMaxSeconds"), &FATSettings::GhostMaxSeconds, 10.f, 600.f, LOCTEXT("GhostMax", "Deadlock pass-through time limit (seconds)"),

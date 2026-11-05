@@ -227,6 +227,7 @@ namespace
 			Out.RejectedTail = RejectedTail;
 			Out.RejectedStay = RejectedStay;
 			Out.RejectedClimb = RejectedClimb;
+			Out.RejectedJunction = RejectedJunction;
 		}
 
 		// The fastest way from where the train is, along its route up to step Commit, then over the whole network to the
@@ -251,7 +252,7 @@ namespace
 			Opens.Reset();
 			Best.Reset();
 			ReachedTracks.Reset();
-			RejectedMotion = RejectedTail = RejectedStay = RejectedClimb = 0;
+			RejectedMotion = RejectedTail = RejectedStay = RejectedClimb = RejectedJunction = 0;
 			FState Start;
 			Start.bStopped = Train.bStanding;
 			Start.Speed = Train.bStanding ? 0.f : Train.Speed;
@@ -503,6 +504,14 @@ namespace
 					}
 				}
 			}
+		}
+
+		// Whether the body standing at state Index is on a switch's fouling zone or a crossing zone.
+		bool IsOnJunction(int32 Index) const
+		{
+			bool bOn = false;
+			ForEachOpen(Index, States[Index].Pos, [&](const FOpenResource& Open) { bOn = bOn || Open.Resource >= Graph.Length.Num(); });
+			return bOn;
 		}
 
 		bool OnPath(int32 Index, int32 Track) const
@@ -925,6 +934,12 @@ namespace
 					Leave = Later;
 					continue;
 				}
+				// No long wait with the body across a junction, holding up the other line: it waits before the junction.
+				if (State.Step >= 0 && Leave > Earliest + Cycle.JunctionWaitSeconds && IsOnJunction(Index))
+				{
+					++RejectedJunction;
+					return;
+				}
 				FState Next;
 				Next.Node = Run.Last();
 				Next.First = Run[0];
@@ -1280,6 +1295,7 @@ namespace
 		int32 RejectedTail = 0;
 		int32 RejectedStay = 0;
 		int32 RejectedClimb = 0;
+		int32 RejectedJunction = 0;
 	};
 }
 

@@ -215,12 +215,14 @@ struct FATSippResult
 	int32 SearchStates = 0;
 	double SearchMilliseconds = 0.0;
 	// The plan's search: its states, and the moves it left out because the train couldn't reach the speed, its tail
-	// couldn't keep to a window, the stay at the goal didn't fit, or it would have stalled on a climb.
+	// couldn't keep to a window, the stay at the goal didn't fit, it would have stalled on a climb, or it would have
+	// waited long across a junction.
 	int32 States = 0;
 	int32 RejectedMotion = 0;
 	int32 RejectedTail = 0;
 	int32 RejectedStay = 0;
 	int32 RejectedClimb = 0;
+	int32 RejectedJunction = 0;
 };
 
 // One planning cycle: every train in turn (Order, slot order unless a failure moved a train up) removes its own
@@ -234,6 +236,8 @@ struct FATSippCycle
 	// How often and for how long the turns may be planned again with a failed train moved up. [s]
 	int32 MaxRetries = 0;
 	double RetrySeconds = 0.0;
+	// Longest wait a plan may have with the train's body on a switch's fouling zone or a crossing zone. [s]
+	double JunctionWaitSeconds = 0.0;
 	// Most search states one plan may use.
 	int32 MaxStates = 200000;
 	TArray<FATSippTrain> Trains;

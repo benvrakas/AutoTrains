@@ -18,6 +18,8 @@ struct FATSettings
 	float HillHelpMax = 4.f;
 	// A train told to go that stands this long, on any slope, gets more hill help, again each time this passes. [s]
 	float HillStallSeconds = 4.f;
+	// Longest a train waits with any part of it on a switch or crossing; else it waits before the junction. [s]
+	float JunctionWaitSeconds = 5.f;
 	// Time kept between two trains' bookings of the same track or switch. [s]
 	float SafetyMargin = 0.f;
 	// Top speed of every self-driving train, 0 for each train's own. [km/h]

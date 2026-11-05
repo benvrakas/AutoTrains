@@ -160,6 +160,7 @@ replanning.
 | **Help stalled trains up hills** | On | A train that has slowed down on a climb too steep for its locomotives to get going again gets extra traction until it is over the steep part. Trains are planned not to wait on such climbs; this is for when one has to anyway. A train that stands while it is told to go gets the same help on any slope. |
 | **Hill help: most extra traction (x)** | 4 | The most traction a stalled train gets on a climb, 1 to 10 times its own. Raise it if heavy trains still stall on very steep ramps. |
 | **Hill help: stall time (seconds)** | 4 | A train that stands this long while it is told to go gets more traction, and more again each time this passes, 1 to 60 seconds. |
+| **Longest wait across a junction (seconds)** | 5 | A train waits no longer than this with any part of it on a switch or crossing, so it doesn't hold up the other line; it waits before the junction instead. Raise it if trains can't find a way through tight junctions. |
 | **Planning retries** | 3 | When a train finds no way because a train planned before it is in the way, it is planned before that train and the round is planned again, up to this many times. 0 keeps the planning order as it is. |
 | **Route search interval (seconds)** | 5 | How often each train looks for a faster route. Shorter finds better routes sooner; longer costs less planning time on big networks. |
 | **Route search when late (seconds)** | 15 | A train looks for another route at once when its planned arrival has got this much later since its last search. |

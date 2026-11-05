@@ -255,7 +255,13 @@ float AATTrafficSubsystem::GetExpectedStay(const AFGTrain* Train, const AFGBuild
 	if (!Station || !Rules || Rules->DockingDefinition == ETrainDockingDefinition::TDD_FullyLoadUnload)
 	{
 		const float* Own = Station ? mDwell.Find(Key) : nullptr;
-		return Own ? *Own : mSettings.DefaultStaySeconds;
+		const float Stay = Own ? *Own : mSettings.DefaultStaySeconds;
+		// The stop's time: with "and" it stays at least that long, with "or" at most.
+		if (!Rules || Rules->DockForDuration <= 0.f)
+		{
+			return Stay;
+		}
+		return Rules->IsDurationAndRule ? FMath::Max(Stay, Rules->DockForDuration) : FMath::Min(Stay, Rules->DockForDuration);
 	}
 	const bool* Last = mLastTransfer.Find(Key);
 	const bool bTransfer = Transfer >= 0 ? Transfer > 0 : !Last || *Last;
@@ -553,8 +559,8 @@ bool AATTrafficSubsystem::CanEnter(FATTrafficTrain& Self, const FResourceKey& Ke
 			return false;
 		}
 	}
-	// Nobody else stands there or holds it from its own grant, apart from a train followed the same way: only one train
-	// at a time holds a resource, whatever the bookings say.
+	// Nobody else stands there or holds it from its own grant, apart from a train followed the same way that has no
+	// vehicle there off this train's route: only one train at a time holds a resource, whatever the bookings say.
 	for (const TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Pair : mTrains)
 	{
 		const FATTrafficTrain& Other = Pair.Value;
@@ -568,7 +574,7 @@ bool AATTrafficSubsystem::CanEnter(FATTrafficTrain& Self, const FResourceKey& Ke
 		{
 			continue;
 		}
-		if (IsFollowed(&Other))
+		if (IsFollowed(&Other) && !HasVehicleOffRoute(Other, Self, Key))
 		{
 			Self.FollowedTrains.Add(Other.Train);
 			continue;
@@ -1065,6 +1071,7 @@ void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds, bool bW
 	// Retries end by half the update interval, so the cycle is in by the next update.
 	Cycle->MaxRetries = FMath::RoundToInt(mSettings.PlanRetries);
 	Cycle->RetrySeconds = mSettings.UpdateIntervalSeconds * 0.5;
+	Cycle->JunctionWaitSeconds = mSettings.JunctionWaitSeconds;
 	Cycle->MaxStates = FMath::RoundToInt(mSettings.PlanSearchLimit);
 	TMap<const AFGTrain*, int32> SlotOf;
 	for (const FTurn& Turn : Turns)
@@ -1378,8 +1385,8 @@ void AATTrafficSubsystem::ApplyPlan(FATTrafficTrain& State, const FATSippCycle& 
 		if (!Failure.IsEmpty())
 		{
 			++mPlanFailures;
-			UE_LOG(LogAutoTrains, Log, TEXT("planner: %s: %s; it stands before it until that train has passed (%d states; left out: %d moves out of its reach, %d tail windows missed, %d stays at the goal that don't fit, %d moves it would stall on a climb)"),
-				*NameOf(Train), *Failure, Result.States, Result.RejectedMotion, Result.RejectedTail, Result.RejectedStay, Result.RejectedClimb);
+			UE_LOG(LogAutoTrains, Log, TEXT("planner: %s: %s; it stands before it until that train has passed (%d states; left out: %d moves out of its reach, %d tail windows missed, %d stays at the goal that don't fit, %d moves it would stall on a climb, %d waits across a junction)"),
+				*NameOf(Train), *Failure, Result.States, Result.RejectedMotion, Result.RejectedTail, Result.RejectedStay, Result.RejectedClimb, Result.RejectedJunction);
 		}
 		State.PlanFailure = Failure;
 	}
@@ -1905,6 +1912,42 @@ void AATTrafficSubsystem::RankTrains(TArray<FATTrafficTrain*>& Trains) const
 	Trains = MoveTemp(Ranked);
 }
 
+bool AATTrafficSubsystem::HasVehicleOffRoute(const FATTrafficTrain& Other, const FATTrafficTrain& Self, const FResourceKey& Key) const
+{
+	if (Key.Joint == INDEX_NONE && Key.Crossing == INDEX_NONE)
+	{
+		return false;
+	}
+	for (const FATVehicleSpot& Vehicle : Other.Vehicles)
+	{
+		if (!Vehicle.Track || Self.RouteIndexOf.Contains(Vehicle.Track) || Self.Occupied.Contains(Vehicle.Track))
+		{
+			continue;
+		}
+		if (Key.Joint != INDEX_NONE)
+		{
+			for (int32 End = 0; End < 2; ++End)
+			{
+				const UFGRailroadTrackConnectionComponent* Connection = Vehicle.Track->GetConnection(End);
+				if (Connection && GetJoint(Connection) == Key.Joint
+					&& FMath::Abs(Connection->GetTrackPosition().Offset - Vehicle.Offset) < Vehicle.HalfLength + GetFoulDistance(Connection))
+				{
+					return true;
+				}
+			}
+			continue;
+		}
+		for (const FATZone& Zone : GetZones(Vehicle.Track))
+		{
+			if (Zone.Crossing == Key.Crossing && Vehicle.Offset - Vehicle.HalfLength < Zone.To && Vehicle.Offset + Vehicle.HalfLength > Zone.From)
+			{
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
 bool AATTrafficSubsystem::IsBehind(const FATTrafficTrain& Other, const FATTrafficTrain& Self, const FResourceKey& Key) const
 {
 	// Self's front on Other's route, Key further along it (a crossing zone also on Self's front track), and both routes
@@ -1940,4 +1983,221 @@ bool AATTrafficSubsystem::IsBehind(const FATTrafficTrain& Other, const FATTraffi
 		}
 	}
 	return true;
+}
+
+bool AATTrafficSubsystem::ExternalGetWaitingFor(AFGTrain* Train, TArray<AFGTrain*>& OutWaitingFor, float& OutWaitedSeconds, FString& OutReason)
+{
+	OutWaitingFor.Reset();
+	OutWaitedSeconds = 0.f;
+	OutReason.Reset();
+	const FATTrafficTrain* State = Train ? mTrains.Find(Train) : nullptr;
+	if (!State || !State->bManaged)
+	{
+		return false;
+	}
+	for (const TWeakObjectPtr<AFGTrain>& Other : {State->BlockedBy, State->PlanWaitFor})
+	{
+		if (AFGTrain* OtherTrain = Other.Get())
+		{
+			OutWaitingFor.AddUnique(OtherTrain);
+		}
+	}
+	OutWaitedSeconds = State->WaitingSeconds;
+	OutReason = State->BlockedReason;
+	return true;
+}
+
+float AATTrafficSubsystem::ExternalGetPlannedArrival(AFGTrain* Train, AFGBuildableRailroadStation*& OutGoal)
+{
+	OutGoal = nullptr;
+	const FATTrafficTrain* State = Train ? mTrains.Find(Train) : nullptr;
+	const UWorld* World = GetWorld();
+	if (!State || !World || State->PlanArrival < 0.0 || IsOpen(State->PlanArrival))
+	{
+		return -1.f;
+	}
+	if (State->bManaged)
+	{
+		OutGoal = State->GoalStation.Get();
+	}
+	else if (Train->IsDocked() && State->PredictedRoute.Num() > 0)
+	{
+		OutGoal = State->PredictedStation.Get();
+	}
+	else
+	{
+		return -1.f;
+	}
+	return FMath::Max(0.f, static_cast<float>(State->PlanArrival - World->GetTimeSeconds()));
+}
+
+float AATTrafficSubsystem::ExternalEstimateTravelSeconds(AFGTrain* Train, AFGBuildableRailroadStation* From, AFGBuildableRailroadStation* To)
+{
+	const FATSippGraph* Graph = mSearchGraph.Get();
+	const AFGBuildableRailroadTrack* FromTrack = From ? From->GetTrackPosition().Track.Get() : nullptr;
+	const AFGBuildableRailroadTrack* ToTrack = To ? To->GetTrackPosition().Track.Get() : nullptr;
+	const int32* GoalTrack = Graph && ToTrack ? Graph->TrackIndex.Find(ToTrack) : nullptr;
+	if (!Graph || !FromTrack || !GoalTrack)
+	{
+		return -1.f;
+	}
+	// Shortest distance over the network from either end of From's track to To's track, never past a signal from behind.
+	TArray<float> Best;
+	Best.Init(MAX_flt, Graph->TrackOf.Num());
+	TArray<TPair<float, int32>> Open;
+	const auto Less = [](const TPair<float, int32>& A, const TPair<float, int32>& B) { return A.Key < B.Key; };
+	for (int32 End = 0; End < 2; ++End)
+	{
+		const int32* Node = Graph->ConnectionIndex.Find(FromTrack->GetConnection(End));
+		if (Node && Best.IsValidIndex(*Node))
+		{
+			Best[*Node] = 0.f;
+			Open.HeapPush({0.f, *Node}, Less);
+		}
+	}
+	float Distance = -1.f;
+	while (Open.Num() > 0)
+	{
+		TPair<float, int32> Item;
+		Open.HeapPop(Item, Less);
+		if (Item.Key > Best[Item.Value])
+		{
+			continue;
+		}
+		if (Graph->TrackOf[Item.Value] == *GoalTrack && Item.Key > 0.f)
+		{
+			Distance = Item.Key;
+			break;
+		}
+		if (Graph->OneWay[Item.Value])
+		{
+			continue;
+		}
+		for (const int32 Entry : Graph->Attached[Item.Value])
+		{
+			const int32 Next = Graph->OppositeOf.IsValidIndex(Entry) ? Graph->OppositeOf[Entry] : INDEX_NONE;
+			if (Next == INDEX_NONE)
+			{
+				continue;
+			}
+			const float Cost = Item.Key + Graph->Length[Graph->TrackOf[Next]];
+			if (Cost < Best[Next])
+			{
+				Best[Next] = Cost;
+				Open.HeapPush({Cost, Next}, Less);
+			}
+		}
+	}
+	if (Distance < 0.f)
+	{
+		return -1.f;
+	}
+	const FATTrafficTrain* State = Train ? mTrains.Find(Train) : nullptr;
+	const FRouteSpeed Speed = State ? GetRouteSpeed(*State) : FRouteSpeed();
+	const float Cruise = FMath::Max(Speed.Cruise, 100.f);
+	return Distance / Cruise + Cruise / (2.f * FMath::Max(Speed.Accel, 1.f)) + Cruise / (2.f * FMath::Max(Speed.Brake, 1.f));
+}
+
+float AATTrafficSubsystem::ExternalGetStationQueue(AFGBuildableRailroadStation* Station, TArray<AFGTrain*>& OutTrains)
+{
+	OutTrains.Reset();
+	const UWorld* World = GetWorld();
+	if (!Station || !World)
+	{
+		return 0.f;
+	}
+	const double Now = World->GetTimeSeconds();
+	double Free = Now;
+	bool bUnknown = false;
+	TArray<TPair<double, AFGTrain*>> Coming;
+	for (const TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Pair : mTrains)
+	{
+		const FATTrafficTrain& State = Pair.Value;
+		AFGTrain* Train = State.Train.Get();
+		if (!Train)
+		{
+			continue;
+		}
+		if (Train->IsDocked() && State.DockStation.Get() == Station)
+		{
+			OutTrains.Add(Train);
+			const double Start = State.DockedAt >= 0.0 ? State.DockedAt : Now;
+			Free = FMath::Max(Free, Start + GetExpectedStay(Train, Station, &State.DockRules, State.DockTransfer));
+			continue;
+		}
+		if (State.bManaged && State.GoalStation.Get() == Station)
+		{
+			if (State.PlanArrival < 0.0 || IsOpen(State.PlanArrival))
+			{
+				bUnknown = true;
+				Coming.Add({OpenTime, Train});
+				continue;
+			}
+			FTrainDockingRuleSet Rules;
+			const AFGRailroadTimeTable* TimeTable = Train->GetTimeTable();
+			const float Stay = GetExpectedStay(Train, Station, GetStopRules(Train, TimeTable ? TimeTable->GetCurrentStop() : INDEX_NONE, Station, Rules), -1);
+			Coming.Add({State.PlanArrival, Train});
+			Free = FMath::Max(Free, State.PlanArrival + Stay);
+		}
+	}
+	Coming.Sort([](const TPair<double, AFGTrain*>& A, const TPair<double, AFGTrain*>& B) { return A.Key < B.Key; });
+	for (const TPair<double, AFGTrain*>& Train : Coming)
+	{
+		OutTrains.Add(Train.Value);
+	}
+	return bUnknown ? -1.f : static_cast<float>(Free - Now);
+}
+
+int32 AATTrafficSubsystem::ExternalGetTroubledTrains(TArray<AFGTrain*>& OutTrains, TArray<FString>& OutKinds, TArray<float>& OutSeconds)
+{
+	OutTrains.Reset();
+	OutKinds.Reset();
+	OutSeconds.Reset();
+	const UWorld* World = GetWorld();
+	const double Now = World ? World->GetTimeSeconds() : 0.0;
+	for (const TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Pair : mTrains)
+	{
+		const FATTrafficTrain& State = Pair.Value;
+		AFGTrain* Train = State.Train.Get();
+		if (!Train)
+		{
+			continue;
+		}
+		auto Add = [&](const TCHAR* Kind, float Seconds)
+		{
+			OutTrains.Add(Train);
+			OutKinds.Add(Kind);
+			OutSeconds.Add(Seconds);
+		};
+		if (State.bInDeadlock)
+		{
+			Add(TEXT("Deadlock"), State.WaitingSeconds);
+		}
+		else if (State.bManaged && State.UnnamedWaitSeconds >= mSettings.DeadlockWaitSeconds)
+		{
+			Add(TEXT("Stuck"), State.UnnamedWaitSeconds);
+		}
+		if (State.bLostReported)
+		{
+			Add(TEXT("Lost"), static_cast<float>(Now - State.LostSince));
+		}
+		if (State.bStallReported)
+		{
+			Add(TEXT("Stalled"), State.StoppedSeconds);
+		}
+	}
+	return OutTrains.Num();
+}
+
+void AATTrafficSubsystem::ExternalTimeTableChanged(AFGTrain* Train)
+{
+	FATTrafficTrain* State = Train ? mTrains.Find(Train) : nullptr;
+	if (!State)
+	{
+		return;
+	}
+	State->PredictedRoute.Reset();
+	State->PredictedStation = nullptr;
+	State->PredictedAt = -1e9;
+	UE_LOG(LogAutoTrains, Log, TEXT("planner: %s's timetable changed; its next leg is predicted again"), *NameOf(Train));
 }

@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.3.9
+
+- **Fixed: a train could run into the tail of another one at a merge.** A train that is ahead on the same route can be
+  followed closely through a switch or crossing. When its front was already past the merge but its tail was still on
+  the other branch, the train behind was let in anyway and ran into that tail. Now it waits until none of the other
+  train is on that switch or crossing off its own route.
+- **Trains no longer wait across a junction.** A train queueing for a station, or for anything else, could stop with its
+  tail across the switch or crossing of the other line, so trains coming the other way had to wait for it as well,
+  which could end in a deadlock. Now it waits before the junction instead.
+- **Better stay estimates for "fully load/unload" stops with a time.** With "or", a train stays at most that long; with
+  "and", at least that long. Before, the time was left out, so trains that waited the whole time made others plan
+  with a far too short stay.
+- Fewer false "stands though told to go" reports and less needless hill help: a train standing right at the point it
+  has to stop at no longer counts.
+- Other mods can now ask Auto Trains what a train waits for, when it will arrive, how long a trip takes, which trains
+  queue for a station and which trains are in trouble (see Docs/API.md in the source).
+- New setting: **Longest wait across a junction**.
+
 ## 1.3.8
 
 - **Fixed: a train stopped on a climb could hold up the network for good.** Hill help only came on when the slope alone

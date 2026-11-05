@@ -5,6 +5,10 @@ the whole network ahead of time, booking every track and switch it will use for 
 speeds up, slows down, waits or takes another route so that no two trains ever need the same piece of track at the
 same time. Build junctions, roundabouts, crossings and single track however you like, and let the trains sort it out.
 
+**Goes well with:** [SmartTrains](https://ficsit.app/mod/SmartTrains), which sends trains where items are needed
+without fixed timetables, and [Freight Car Control](https://ficsit.app/mod/FreightCarControl), which sets each car
+to load, unload or skip at every stop. More under Works with below.
+
 ### How it works: safe interval path planning
 
 The planner is built on **safe interval path planning (SIPP)**, a method from robotics for moving many vehicles through
@@ -172,6 +176,7 @@ replanning.
 | **Plan search limit (states)** | 200000 | Most steps one train's plan may search. Lower uses less CPU and memory on huge networks; long or busy routes may then find no way more often. |
 | **Slope lookahead (m)** | 300 | How far ahead of a train the slope is averaged for its braking. |
 | **Update interval (seconds)** | 0.25 | How often trains are planned and given track. Shorter reacts faster but costs more on big networks. |
+| **Detailed log** | Off | Writes much more to FactoryGame.log: what each train waits for, its station stays and next legs, how it speeds up and brakes, and every plan that finds no way. Also records every train's speed and control 5 times a second to a CSV file in `%LOCALAPPDATA%\FactoryGame\Saved\AutoTrains`. Turn it on to report a problem. |
 
 </details>
 
@@ -191,9 +196,15 @@ side of the track (back to back) allows both ways.
 
 ### Works with
 
-- **[DynamicTimeTable](https://ficsit.app/mod/DynamicTimeTable)** and
-  **[Freight Car Control](https://ficsit.app/mod/FreightCarControl)**: stations, docking and timetables work as
-  usual.
+- **[SmartTrains](https://ficsit.app/mod/SmartTrains)** (beta) gives your platforms a role and the items they
+  handle, and sends trains from where items pile up to where they're needed. Auto Trains drives them. Before a
+  train leaves a station, SmartTrains asks Auto Trains whether its first leg can be driven now, around every other
+  train, including trains coming the other way on a single track; if not, the train waits in the station. Station
+  queues and travel times feed its trip timing, and its monitor shows trains that are stuck or deadlocked.
+- **[Freight Car Control](https://ficsit.app/mod/FreightCarControl)** sets each freight car to load, unload or skip
+  at every stop, so one train can fill car 1 at one station and car 2 at the next. Stations, docking and timetables
+  work as usual.
+- **[DynamicTimeTable](https://ficsit.app/mod/DynamicTimeTable)**: stations, docking and timetables work as usual.
 - **Not** with mods that set train routes themselves, such as DynamicTrainRoutes. Auto Trains does its own routing,
   so remove them.
 - Multiplayer: the host (or dedicated server) runs all traffic control, using the host's settings. Everyone needs the
@@ -231,7 +242,6 @@ Type them in the game chat. A `<train>` is its number from `/at list`, or part o
 | Command | What it does |
 |---|---|
 | `/at removesignals confirm` | Dismantles every block and path signal in the world, with no refund and no undo. Without `confirm` it only explains what it would do. |
-| `/at log on` / `off` | Writes telemetry for bug reports to a CSV file in `%LOCALAPPDATA%\FactoryGame\Saved\AutoTrains`. |
 
 In multiplayer only the host or a server admin can change anything.
 

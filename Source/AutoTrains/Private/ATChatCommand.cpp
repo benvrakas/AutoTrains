@@ -13,7 +13,7 @@ AATChatCommand::AATChatCommand()
 	Aliases.Add(TEXT("autotrains"));
 	MinNumberOfArguments = 1;
 	bOnlyUsableByPlayer = true;
-	Usage = NSLOCTEXT("AutoTrains", "ChatUsage", "/at traffic on|off|status | reroute on|off | list | autopilot <train|all> on|off | removesignals confirm | log on|off   (<train> = number from /at list, or part of its name)");
+	Usage = NSLOCTEXT("AutoTrains", "ChatUsage", "/at traffic on|off|status | reroute on|off | list | autopilot <train|all> on|off | removesignals confirm   (<train> = number from /at list, or part of its name)");
 }
 
 bool AATChatCommand::MayChangeWorld(UCommandSender* Sender)
@@ -54,10 +54,10 @@ EExecutionStatus AATChatCommand::ExecuteCommand_Implementation(UCommandSender* S
 		}
 		return EExecutionStatus::COMPLETED;
 	}
-	if (Verb == TEXT("log") && Arguments.Num() == 2)
+	if (Verb == TEXT("log"))
 	{
-		Sender->SendChatMessage(Control->SetLogging(Arguments[1].Equals(TEXT("on"), ESearchCase::IgnoreCase)));
-		return EExecutionStatus::COMPLETED;
+		Sender->SendChatMessage(TEXT("/at log is gone: switch Detailed log on in Mods > Auto Trains instead."));
+		return EExecutionStatus::BAD_ARGUMENTS;
 	}
 	if (Verb == TEXT("traffic") && Arguments.Num() == 2)
 	{

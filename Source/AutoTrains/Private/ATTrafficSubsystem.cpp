@@ -296,6 +296,13 @@ void AATTrafficSubsystem::ApplySettings()
 		UE_LOG(LogAutoTrains, Log, TEXT("Settings: track clearance %.1f m; the conflict model is rebuilt"), Settings.SwitchClearanceMetres);
 		mConflictsStale = true;
 	}
+	AATControlSubsystem* Control = AATControlSubsystem::Get(this);
+	if (Control && (!mConfigDetailedLog.IsSet() || mConfigDetailedLog.GetValue() != Settings.bDetailedLog))
+	{
+		mConfigDetailedLog = Settings.bDetailedLog;
+		LogAutoTrains.SetVerbosity(Settings.bDetailedLog ? ELogVerbosity::Verbose : ELogVerbosity::Log);
+		UE_LOG(LogAutoTrains, Log, TEXT("Settings: detailed log %s; %s"), Settings.bDetailedLog ? TEXT("on") : TEXT("off"), *Control->SetTelemetry(Settings.bDetailedLog));
+	}
 	mSettings = Settings;
 }
 
@@ -406,7 +413,7 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 				Stored = bFirst ? Force : Force < Stored ? Stored * 0.5f + Force * 0.5f : Stored * 0.85f + Force * 0.15f;
 				if (bFirst)
 				{
-					UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s brakes at %.2f m/s2 at %.0f-%.0f km/h (rated %.2f, %.0f t); planning with %.2f"), *TrainName(Train),
+					UE_LOG(LogAutoTrains, Verbose, TEXT("traffic: %s brakes at %.2f m/s2 at %.0f-%.0f km/h (rated %.2f, %.0f t); planning with %.2f"), *TrainName(Train),
 						Deceleration / 100.f, Band * ATBrakeBandWidth * 0.036f, (Band + 1) * ATBrakeBandWidth * 0.036f, Train->mConsistData.MaxBrakeDeceleration / 100.f,
 						State.Mass / 1000.f, GetPlanningDeceleration(State) / 100.f);
 				}
@@ -431,7 +438,7 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 				const float Force = Sample * State.Mass;
 				if (Stored <= 0.f)
 				{
-					UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s speeds up at %.2f m/s2 at %.0f-%.0f km/h (%.0f t, slope %.1f %%)"), *TrainName(Train), Sample / 100.f,
+					UE_LOG(LogAutoTrains, Verbose, TEXT("traffic: %s speeds up at %.2f m/s2 at %.0f-%.0f km/h (%.0f t, slope %.1f %%)"), *TrainName(Train), Sample / 100.f,
 						Band * ATBrakeBandWidth * 0.036f, (Band + 1) * ATBrakeBandWidth * 0.036f, State.Mass / 1000.f, State.Grade * 100.f);
 				}
 				Stored = Stored <= 0.f ? Force : Stored + (Force - Stored) * AccelSampleRate;
@@ -502,7 +509,7 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 		}
 		if (LogKey(State) != PreviousReasons.FindRef(State) && !State->BlockedReason.IsEmpty())
 		{
-			UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s: %s"), *TrainName(State->Train.Get()), *State->BlockedReason);
+			UE_LOG(LogAutoTrains, Verbose, TEXT("traffic: %s: %s"), *TrainName(State->Train.Get()), *State->BlockedReason);
 		}
 
 		// Held up, even while it rolls slowly up to its stop; with or without a train to wait for.
@@ -808,7 +815,7 @@ void AATTrafficSubsystem::ThrowSwitches(float DeltaSeconds)
 			{
 				if (!Exit->IsSwitchClear(Train))
 				{
-					UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s sets the switch at the end of %s, %.0f m ahead, which the game wouldn't: another train is within 12 m of it"), *TrainName(Train),
+					UE_LOG(LogAutoTrains, Verbose, TEXT("traffic: %s sets the switch at the end of %s, %.0f m ahead, which the game wouldn't: another train is within 12 m of it"), *TrainName(Train),
 						*TrackName(State.Route[Index].Track), Ahead / 100.f);
 				}
 				Exit->SetSwitchPosition(Position);
@@ -1730,7 +1737,7 @@ void AATTrafficSubsystem::RebuildConflicts()
 				if (!mLoggedClearPairs.Contains(Pair))
 				{
 					mLoggedClearPairs.Add(Pair);
-					UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s and %s overlap for the game but their centre lines stay %.1f m apart: not a crossing"),
+					UE_LOG(LogAutoTrains, Verbose, TEXT("traffic: %s and %s overlap for the game but their centre lines stay %.1f m apart: not a crossing"),
 						*TrackName(Track), *TrackName(Overlapping), Distance / 100.f);
 				}
 				continue;
@@ -2173,7 +2180,7 @@ void AATTrafficSubsystem::ApplyAuthority(AFGTrain* Train, float DeltaSeconds)
 		State->bForcedSinceUpdate = true;
 		if (!bWasForced)
 		{
-			UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s forced braking at %.1f m/s2 (%.0f km/h, %.0f m to stop, its brakes %.1f m/s2)"), *TrainName(Train),
+			UE_LOG(LogAutoTrains, Verbose, TEXT("traffic: %s forced braking at %.1f m/s2 (%.0f km/h, %.0f m to stop, its brakes %.1f m/s2)"), *TrainName(Train),
 				Needed / 100.f, Speed * 0.036f, StopWithin / 100.f, Deceleration / 100.f);
 		}
 	}

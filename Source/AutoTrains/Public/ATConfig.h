@@ -18,6 +18,8 @@ struct FATSettings
 	float HillHelpMax = 4.f;
 	// A train told to go that stands this long, on any slope, gets more hill help, again each time this passes. [s]
 	float HillStallSeconds = 4.f;
+	// Writes every train's waits, departures, acceleration and braking to FactoryGame.log, and telemetry to a CSV file.
+	bool bDetailedLog = false;
 	// Longest a train waits with any part of it on a switch or crossing; else it waits before the junction. [s]
 	float JunctionWaitSeconds = 5.f;
 	// Time kept between two trains' bookings of the same track or switch. [s]
@@ -83,6 +85,7 @@ public:
 	static const FString AggressiveKey;
 	static const FString GhostDeadlocksKey;
 	static const FString HillHelpKey;
+	static const FString DetailedLogKey;
 
 	// Sets OutMin and OutMax to the accepted range of the number setting Key; returns false if Key isn't one.
 	static bool GetRange(const FString& Key, float& OutMin, float& OutMax);

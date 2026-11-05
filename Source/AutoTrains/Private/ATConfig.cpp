@@ -17,6 +17,7 @@ const FString UATConfig::PhaseThroughKey = TEXT("PhaseThrough");
 const FString UATConfig::AggressiveKey = TEXT("AggressiveTiming");
 const FString UATConfig::GhostDeadlocksKey = TEXT("GhostDeadlocks");
 const FString UATConfig::HillHelpKey = TEXT("HillHelp");
+const FString UATConfig::DetailedLogKey = TEXT("DetailedLog");
 
 namespace
 {
@@ -182,6 +183,9 @@ UATConfig::UATConfig()
 	AddBool(HillHelpKey, TEXT("HillHelp"), LOCTEXT("HillHelp", "Help stalled trains up hills"),
 		LOCTEXT("HillHelpTip", "A train that has slowed down on a climb too steep for its locomotives to get going again gets extra traction, up to the set limit, until it is moving and the slope under it is one it can manage. Trains are planned not to wait on such climbs; this is for when one has to anyway."),
 		Defaults.bHillHelp);
+	AddBool(DetailedLogKey, TEXT("DetailedLog"), LOCTEXT("DetailedLog", "Detailed log"),
+		LOCTEXT("DetailedLogTip", "Writes much more to FactoryGame.log: what each train waits for, its station stays and next legs, how it speeds up and brakes, and every plan that finds no way. Also records every train's speed and control 5 times a second to a CSV file in FactoryGame/Saved/AutoTrains. Turn it on to report a problem."),
+		Defaults.bDetailedLog);
 
 	for (const FNumberSetting& Setting : GetNumberSettings())
 	{
@@ -269,6 +273,7 @@ bool UATConfig::Read(const UObject* WorldContext, FATSettings& OutSettings)
 	OutSettings.bAggressive = ReadBool(Root, AggressiveKey, Defaults.bAggressive);
 	OutSettings.bGhostDeadlocks = ReadBool(Root, GhostDeadlocksKey, Defaults.bGhostDeadlocks);
 	OutSettings.bHillHelp = ReadBool(Root, HillHelpKey, Defaults.bHillHelp);
+	OutSettings.bDetailedLog = ReadBool(Root, DetailedLogKey, Defaults.bDetailedLog);
 	for (const FNumberSetting& Setting : GetNumberSettings())
 	{
 		OutSettings.*Setting.Field = FMath::Clamp(ReadFloat(Root, Setting.Key, Defaults.*Setting.Field), Setting.Min, Setting.Max);

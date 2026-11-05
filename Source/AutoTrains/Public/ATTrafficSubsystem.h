@@ -688,6 +688,7 @@ private:
 	// Settings as last read, to notice changes; unset until first read.
 	TOptional<bool> mConfigTraffic;
 	TOptional<bool> mConfigRerouting;
+	TOptional<bool> mConfigDetailedLog;
 	// The Mods menu settings as last read.
 	FATSettings mSettings;
 	TMap<TWeakObjectPtr<AFGTrain>, FATTrafficTrain> mTrains;

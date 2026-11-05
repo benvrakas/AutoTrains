@@ -221,18 +221,18 @@ TArray<FString> AATControlSubsystem::ListTrains() const
 	return Lines;
 }
 
-FString AATControlSubsystem::SetLogging(bool bLog)
+FString AATControlSubsystem::SetTelemetry(bool bOn)
 {
-	if (bLog == mLogging)
+	if (bOn == mLogging)
 	{
-		return bLog ? FString::Printf(TEXT("Already logging to %s"), *mTelemetryPath) : TEXT("Not logging.");
+		return bOn ? FString::Printf(TEXT("already writing telemetry to %s"), *mTelemetryPath) : TEXT("no telemetry");
 	}
-	mLogging = bLog;
-	if (!bLog)
+	mLogging = bOn;
+	if (!bOn)
 	{
 		FlushTelemetry();
 		UE_LOG(LogAutoTrains, Log, TEXT("Telemetry stopped: %s"), *mTelemetryPath);
-		return FString::Printf(TEXT("Telemetry saved to %s"), *mTelemetryPath);
+		return FString::Printf(TEXT("telemetry saved to %s"), *mTelemetryPath);
 	}
 
 	mTelemetryPath = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("AutoTrains") / FString::Printf(TEXT("telemetry-%s.csv"), *FDateTime::Now().ToString(TEXT("%Y%m%d-%H%M%S"))));
@@ -254,7 +254,7 @@ FString AATControlSubsystem::SetLogging(bool bLog)
 	mPendingRows.Add(TEXT("time_s,train,self_driving,status,speed_kmh,game_target_kmh,final_target_kmh,accel_ms2,odometer_m,goal_distance_m,restrictive_aspect,restrictive_distance_m,next_signal_aspect,next_signal_distance_m,front_track,front_offset_m,rear_track,rear_offset_m,docking,error,traffic_managed,authority_m,claims,waiting_s,blocked_by,full_brake,catch_armed,plan_brake_ms2,throttle,tractive_kN,brake_kN,resistive_kN,gradient_kN,mass_t"));
 	FlushTelemetry();
 	UE_LOG(LogAutoTrains, Log, TEXT("Telemetry started: %s"), *mTelemetryPath);
-	return FString::Printf(TEXT("Logging telemetry to %s"), *mTelemetryPath);
+	return FString::Printf(TEXT("writing telemetry to %s"), *mTelemetryPath);
 }
 
 FString AATControlSubsystem::SetAutopilot(AFGTrain* Train, bool bEnabled)

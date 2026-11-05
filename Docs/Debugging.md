@@ -43,7 +43,7 @@ The game log is `%LOCALAPPDATA%\FactoryGame\Saved\Logs\FactoryGame.log`. Filter 
 
 ## Telemetry
 
-`/at log on` writes `%LOCALAPPDATA%\FactoryGame\Saved\AutoTrains\telemetry-<time>.csv`: one `# consist` line per
+The Detailed log setting (before 1.3.10 `/at log on`) writes `%LOCALAPPDATA%\FactoryGame\Saved\AutoTrains\telemetry-<time>.csv`: one `# consist` line per
 train, then a row per train every 0.2 s:
 
 - `speed_kmh`; `game_target_kmh`, the speed the game's driver wanted; `final_target_kmh`, after this mod's control
@@ -823,3 +823,9 @@ train, then a row per train every 0.2 s:
   every self-driving train, with all their bookings in scope and invisible to them; its bookings are replaced by the
   train's own standing/predicted turn next cycle, which comes before the self-driving trains. ExternalGetPlannedArrival
   for docked trains returned the old leg's PlanArrival (0): now PredictedArrival from the predicted-leg result.
+- 1.3.10 (Detailed log): a 7-minute session with 38 trains wrote 1205 Auto Trains lines, about 390 "speeds up" and
+  390 wait reasons. Those, brake samples, station stays and next legs, timetable changes, leg checks, forced braking,
+  switches set for the game, plans finding no way, planning-order moves and non-crossing overlaps are Verbose now;
+  the Detailed log setting sets LogAutoTrains to Verbose and starts the telemetry CSV (replacing /at log). Faults,
+  hill help, reroutes, full brakes and the 60 s planner summary (which counts failed plans) stay at Log. Non-crossing
+  overlaps are only logged at the first rebuild after the setting is on if that pair wasn't seen before.

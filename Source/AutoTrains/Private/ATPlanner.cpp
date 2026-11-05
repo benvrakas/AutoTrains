@@ -358,7 +358,7 @@ void AATTrafficSubsystem::TrackDocking(FATTrafficTrain& State, AFGTrain* Train, 
 					mTransferStay = mTransferStay > 0.f ? mTransferStay + (Dwell - mTransferStay) * TransferStayRate : Dwell;
 				}
 			}
-			UE_LOG(LogAutoTrains, Log, TEXT("planner: %s left %s after %.1f s (expected %.1f s; %s, %s)"), *NameOf(Train), *StationName(Station), Dwell, Before,
+			UE_LOG(LogAutoTrains, Verbose, TEXT("planner: %s left %s after %.1f s (expected %.1f s; %s, %s)"), *NameOf(Train), *StationName(Station), Dwell, Before,
 				bFully ? TEXT("fully load/unload") : TEXT("load/unload once"), State.DockTransfer > 0 ? TEXT("cargo moved") : State.DockTransfer == 0 ? TEXT("no cargo to move") : TEXT("cargo unknown"));
 		}
 		State.DockedAt = -1.0;
@@ -477,7 +477,7 @@ void AATTrafficSubsystem::PredictDeparture(FATTrafficTrain& State, double Now)
 	State.PredictedStation = Next;
 	State.PredictedStop = NextStop;
 	++mPlanPredictions;
-	UE_LOG(LogAutoTrains, Log, TEXT("planner: %s docked at %s, expected to stay %.0f s; next leg to %s: %d tracks, %.0f m, leaving with %s"), *NameOf(Train),
+	UE_LOG(LogAutoTrains, Verbose, TEXT("planner: %s docked at %s, expected to stay %.0f s; next leg to %s: %d tracks, %.0f m, leaving with %s"), *NameOf(Train),
 		*StationName(Docked), GetExpectedStay(Train, Docked, &State.DockRules, State.DockTransfer), *StationName(Next), State.PredictedRoute.Num(), BestLength / 100.f,
 		bLead ? TEXT("its lead locomotive") : TEXT("another locomotive (the other way)"));
 }
@@ -815,7 +815,7 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 		{
 			if (State.BlockedKey != State.ClimbWaitKey)
 			{
-				UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s waits before the climb at %s, %.0f m ahead, until its way up is clear (it %s)"), *NameOf(State.Train.Get()),
+				UE_LOG(LogAutoTrains, Verbose, TEXT("traffic: %s waits before the climb at %s, %.0f m ahead, until its way up is clear (it %s)"), *NameOf(State.Train.Get()),
 					*ResourceName(State.Route[ClimbStart].Track, INDEX_NONE), Room / 100.f, *State.BlockedReason);
 				State.ClimbWaitKey = State.BlockedKey;
 			}
@@ -1345,7 +1345,7 @@ void AATTrafficSubsystem::ApplyPlanCycle()
 		Moved->LegStart = FMath::Min(Moved->LegStart, Passed->LegStart - 0.001);
 		Moved->MovedAheadOf.Add(Passed->Train);
 		++mPlanReorders;
-		UE_LOG(LogAutoTrains, Log, TEXT("planner: %s is planned before %s from now on: its plan found no way past %s's booking"), *NameOf(Moved->Train.Get()),
+		UE_LOG(LogAutoTrains, Verbose, TEXT("planner: %s is planned before %s from now on: its plan found no way past %s's booking"), *NameOf(Moved->Train.Get()),
 			*NameOf(Passed->Train.Get()), *NameOf(Passed->Train.Get()));
 	}
 	const FString Limited = Cycle->Owners.IsValidIndex(Cycle->RetryLimited) ? NameOf(Cycle->Owners[Cycle->RetryLimited].Get()) : FString();
@@ -1370,7 +1370,7 @@ void AATTrafficSubsystem::ApplyPlanCycle()
 					: !Result.bFailed ? FString()
 					: Result.BlockedAt != INDEX_NONE ? FString::Printf(TEXT("no way on past %s for %s"), *CycleResourceName(Graph, Result.BlockedAt), *NameOf(Cycle->Owners.IsValidIndex(Result.BlockedBy) ? Cycle->Owners[Result.BlockedBy].Get() : nullptr))
 					: FString(TEXT("no way to it"));
-				UE_LOG(LogAutoTrains, Log, TEXT("planner: leg check for %s to %s: %s"), *NameOf(State->Train.Get()), *StationName(Check->To.Get()),
+				UE_LOG(LogAutoTrains, Verbose, TEXT("planner: leg check for %s to %s: %s"), *NameOf(State->Train.Get()), *StationName(Check->To.Get()),
 					Check->Reason.IsEmpty() ? *FString::Printf(TEXT("arrives in %.0f s"), Check->Arrival - Cycle->Now) : *Check->Reason);
 			}
 			continue;
@@ -1472,7 +1472,7 @@ void AATTrafficSubsystem::ApplyPlan(FATTrafficTrain& State, const FATSippCycle& 
 		if (!Failure.IsEmpty())
 		{
 			++mPlanFailures;
-			UE_LOG(LogAutoTrains, Log, TEXT("planner: %s: %s; it stands before it until that train has passed (%d states; left out: %d moves out of its reach, %d tail windows missed, %d stays at the goal that don't fit, %d moves it would stall on a climb, %d waits across a junction)"),
+			UE_LOG(LogAutoTrains, Verbose, TEXT("planner: %s: %s; it stands before it until that train has passed (%d states; left out: %d moves out of its reach, %d tail windows missed, %d stays at the goal that don't fit, %d moves it would stall on a climb, %d waits across a junction)"),
 				*NameOf(Train), *Failure, Result.States, Result.RejectedMotion, Result.RejectedTail, Result.RejectedStay, Result.RejectedClimb, Result.RejectedJunction);
 		}
 		State.PlanFailure = Failure;
@@ -2334,5 +2334,5 @@ void AATTrafficSubsystem::ExternalTimeTableChanged(AFGTrain* Train)
 	State->PredictedRoute.Reset();
 	State->PredictedStation = nullptr;
 	State->PredictedAt = -1e9;
-	UE_LOG(LogAutoTrains, Log, TEXT("planner: %s's timetable changed; its next leg is predicted again"), *NameOf(Train));
+	UE_LOG(LogAutoTrains, Verbose, TEXT("planner: %s's timetable changed; its next leg is predicted again"), *NameOf(Train));
 }

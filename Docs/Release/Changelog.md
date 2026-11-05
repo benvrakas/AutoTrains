@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.10
+
+- New setting: **Detailed log**, off by default. FactoryGame.log now keeps to what matters: deadlocks, stuck,
+  stalled and lost trains, hill help, reroutes and the planner's summaries. With Detailed log on it also gets what
+  each train waits for, its station stays and next legs, how it speeds up and brakes, and every plan that finds no
+  way, and every train's speed and control is recorded to a CSV file. Turn it on to report a problem.
+- `/at log on|off` is gone: the Detailed log setting replaces it.
+
 ## 1.3.9
 
 - **Fixed: a train could run into the tail of another one at a merge.** A train that is ahead on the same route can be

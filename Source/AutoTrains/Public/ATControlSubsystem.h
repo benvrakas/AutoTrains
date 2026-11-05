@@ -45,10 +45,12 @@ public:
 
 	// The /at commands; each returns a message for the player and logs what it did.
 	TArray<FString> ListTrains() const;
-	FString SetLogging(bool bLog);
 	FString SetAutopilot(AFGTrain* Train, bool bEnabled);
 	FString SetAutopilotAll(bool bEnabled);
 	FString RemoveAllSignals();
+
+	// Starts or stops writing telemetry to a new CSV file in Saved/AutoTrains; returns what it did.
+	FString SetTelemetry(bool bOn);
 
 private:
 	// Returns the number of block and path signals in the world that aren't being destroyed.

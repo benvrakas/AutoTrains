@@ -248,6 +248,8 @@ struct FATTrafficTrain
 	// out (world seconds).
 	TArray<FATRouteStep> PredictedRoute;
 	float PredictedFrontAhead = 0.f;
+	// When the plan of that next leg gets it to its station, ATSippNever if it doesn't, below 0 if not planned. [world s]
+	double PredictedArrival = -1.0;
 	TWeakObjectPtr<AFGBuildableRailroadStation> PredictedStation;
 	int32 PredictedStop = INDEX_NONE;
 	double PredictedAt = -1e9;
@@ -332,6 +334,13 @@ public:
 	// (standing at the full hill help though told to go). Returns how many.
 	UFUNCTION(BlueprintCallable, Category = "Auto Trains")
 	int32 ExternalGetTroubledTrains(TArray<AFGTrain*>& OutTrains, TArray<FString>& OutKinds, TArray<float>& OutSeconds);
+
+	// Asks whether Train, standing (docked, or parked with self-driving off), could go to station To now: the leg is
+	// planned at the next planning cycle, after every other train, so only into gaps the others leave. Returns 0 while
+	// that is under way (ask again), 1 with OutSeconds until it would arrive, 2 if no plan gets it there (OutSeconds -1,
+	// OutReason: what is in the way), 3 if it can't be asked (OutReason says why: driving, unknown train, no path).
+	UFUNCTION(BlueprintCallable, Category = "Auto Trains")
+	int32 ExternalCheckLeg(AFGTrain* Train, AFGBuildableRailroadStation* To, float& OutSeconds, FString& OutReason);
 
 	// Called after Train's timetable changed: its next leg is predicted again from the new timetable.
 	UFUNCTION(BlueprintCallable, Category = "Auto Trains")
@@ -569,6 +578,25 @@ private:
 	void RemoveBookings(const AFGTrain* Owner);
 	// Works out State's next leg from the station it is docked at, from its timetable and the game's pathfinder.
 	void PredictDeparture(FATTrafficTrain& State, double Now);
+	// The game's path for the train from where it stands to To, from the locomotive with the shortest one (bOutLead: the
+	// lead one); false if there is none.
+	bool FindLeg(const FATTrafficTrain& State, AFGBuildableRailroadStation* To, TArray<FATRouteStep>& OutRoute, float& OutLength, bool& bOutLead) const;
+	// The first train with a vehicle on State's route ahead of its body, or on a switch there; OutWhere names the track.
+	const FATTrafficTrain* FindTrainInWay(const FATTrafficTrain& State, FString& OutWhere) const;
+
+	// A leg another mod asked about with ExternalCheckLeg, planned by the next cycle after every other train.
+	struct FLegCheck
+	{
+		TWeakObjectPtr<AFGBuildableRailroadStation> To;
+		TArray<FATRouteStep> Route;
+		float FrontAhead = 0.f;
+		double AskedAt = 0.0;
+		// Whether a cycle planned it; when the plan gets it there (ATSippNever if not, world s) and why not.
+		bool bDone = false;
+		double Arrival = 0.0;
+		FString Reason;
+	};
+	TMap<TWeakObjectPtr<AFGTrain>, FLegCheck> mLegChecks;
 	// Notes docking and departure; a dock seen from its start teaches the dwell.
 	void TrackDocking(FATTrafficTrain& State, AFGTrain* Train, double Now);
 	// Expected stay of Train at Station under the stop's Rules (null if unknown), with Transfer as in DockTransfer: at a

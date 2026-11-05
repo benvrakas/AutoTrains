@@ -812,3 +812,14 @@ train, then a row per train every 0.2 s:
   Hill help: 55 "stands though told to go" were mostly trains at their stop point with a creep target (target 4 km/h,
   throttle 0.00, ~1 m of room). bWants now needs State.Room (room to the stop point as last driven) >= 5 m.
   Untested in game.
+- 1.3.9 (head-on pair, SmartTrains log 13:55 local, 20:16 UTC): the two push-pull water trains left opposite ends
+  of their shared single track 4 s apart and stood nose to nose, both "waits for ? ... no way to its goal", STUCK at
+  20:16:41/45, never DEADLOCK (the cycle needs BlockedBy and the failed plans name nobody: the block is noted on moving
+  states the stand state doesn't see). Fix: after planning, a held-up train with no BlockedBy gets the first train with
+  a vehicle on its route ahead of its body (or on a switch there) as BlockedBy (FindTrainInWay), so the pair is a
+  cycle and gets passed through. Side effect: such waits are no longer "unnamed", so they leave STUCK; a train held by
+  a parked train is named but no deadlock (the chain stops at an unmanaged train). Also ExternalCheckLeg for
+  SmartTrains to hold a train in its station: a probe turn (Kind 3, bProbe, ranked last, never moved up) planned after
+  every self-driving train, with all their bookings in scope and invisible to them; its bookings are replaced by the
+  train's own standing/predicted turn next cycle, which comes before the self-driving trains. ExternalGetPlannedArrival
+  for docked trains returned the old leg's PlanArrival (0): now PredictedArrival from the predicted-leg result.

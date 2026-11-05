@@ -12,6 +12,7 @@
 - **Better stay estimates for "fully load/unload" stops with a time.** With "or", a train stays at most that long; with
   "and", at least that long. Before, the time was left out, so trains that waited the whole time made others plan
   with a far too short stay.
+- **Fixed: two trains facing each other on a single track could wait for good.** Each one's plan found no way past the other without naming it, so the deadlock was never found and never passed through. A train held up with no train named now waits for the first train standing in its way, so such a pair counts as a deadlock.
 - Fewer false "stands though told to go" reports and less needless hill help: a train standing right at the point it
   has to stop at no longer counts.
 - Other mods can now ask Auto Trains what a train waits for, when it will arrive, how long a trip takes, which trains

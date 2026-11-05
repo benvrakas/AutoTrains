@@ -490,6 +490,16 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 	UpdatePlannedTraffic(DeltaSeconds);
 	for (FATTrafficTrain* State : Managed)
 	{
+		// Held up with no train named: the first train standing in its way ahead is the one it waits for.
+		if (!State->BlockedReason.IsEmpty() && !State->BlockedBy.IsValid())
+		{
+			FString Where;
+			if (const FATTrafficTrain* InWay = FindTrainInWay(*State, Where))
+			{
+				State->BlockedBy = InWay->Train;
+				State->BlockedReason += FString::Printf(TEXT("; %s stands in its way on %s"), *TrainName(InWay->Train.Get()), *Where);
+			}
+		}
 		if (LogKey(State) != PreviousReasons.FindRef(State) && !State->BlockedReason.IsEmpty())
 		{
 			UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s: %s"), *TrainName(State->Train.Get()), *State->BlockedReason);
@@ -701,6 +711,29 @@ void AATTrafficSubsystem::ReadTrain(FATTrafficTrain& State, AFGTrain* Train) con
 		State.bCatchArmed = false;
 		State.bHasPlan = false;
 	}
+}
+
+const FATTrafficTrain* AATTrafficSubsystem::FindTrainInWay(const FATTrafficTrain& State, FString& OutWhere) const
+{
+	for (int32 Index = 1; Index < State.Route.Num(); ++Index)
+	{
+		const FATRouteStep& Step = State.Route[Index];
+		if (State.Occupied.Contains(Step.Track))
+		{
+			continue;
+		}
+		const int32 Joint = GetJoint(State.Route[Index - 1].Exit);
+		for (const TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Pair : mTrains)
+		{
+			const FATTrafficTrain& Other = Pair.Value;
+			if (&Other != &State && Other.Train.IsValid() && (Other.Occupied.Contains(Step.Track) || (Joint != INDEX_NONE && Other.OccupiedJoints.Contains(Joint))))
+			{
+				OutWhere = TrackName(Step.Track);
+				return &Other;
+			}
+		}
+	}
+	return nullptr;
 }
 
 bool AATTrafficSubsystem::HasToLeaveThrough(const FATTrafficTrain& Other, const UFGRailroadTrackConnectionComponent* Exit, float Within) const

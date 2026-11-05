@@ -72,6 +72,16 @@ namespace
 			: GetNameSafe(Track).Replace(TEXT("Build_RailroadTrack_C_"), TEXT("track "));
 	}
 
+	// Name of a resource of the network copy for the log.
+	FString CycleResourceName(const FATSippGraph& Graph, int32 Resource)
+	{
+		return Graph.Length.IsValidIndex(Resource) ? ResourceName(Graph.Tracks[Resource], INDEX_NONE)
+			: Graph.IsJoint(Resource) ? ResourceName(nullptr, Resource - Graph.Length.Num()) : ResourceName(nullptr, INDEX_NONE, Resource - Graph.CrossingResource(0));
+	}
+
+	// A leg check nobody asked for again within this long is dropped. [s]
+	constexpr double LegCheckForgetSeconds = 60.0;
+
 	FString SecondsText(double Seconds)
 	{
 		return IsOpen(Seconds) ? FString(TEXT("an unknown time")) : FString::Printf(TEXT("%.0f s"), FMath::Max(Seconds, 0.0));
@@ -452,9 +462,38 @@ void AATTrafficSubsystem::PredictDeparture(FATTrafficTrain& State, double Now)
 	{
 		return;
 	}
-	// The game's pathfinder from each locomotive facing its own way; the train leaves with the one of the shortest path.
 	TArray<FATRouteStep> Best;
 	float BestLength = MAX_flt;
+	bool bLead = false;
+	FindLeg(State, Next, Best, BestLength, bLead);
+	if (Best.Num() == 0)
+	{
+		UE_LOG(LogAutoTrains, Log, TEXT("planner: %s docked at %s: no path found to its next stop %s; it stays booked where it stands"), *NameOf(Train),
+			*StationName(Docked), *StationName(Next));
+		return;
+	}
+	State.PredictedRoute = MoveTemp(Best);
+	State.PredictedFrontAhead = ComputeFrontAhead(State, State.PredictedRoute);
+	State.PredictedStation = Next;
+	State.PredictedStop = NextStop;
+	++mPlanPredictions;
+	UE_LOG(LogAutoTrains, Log, TEXT("planner: %s docked at %s, expected to stay %.0f s; next leg to %s: %d tracks, %.0f m, leaving with %s"), *NameOf(Train),
+		*StationName(Docked), GetExpectedStay(Train, Docked, &State.DockRules, State.DockTransfer), *StationName(Next), State.PredictedRoute.Num(), BestLength / 100.f,
+		bLead ? TEXT("its lead locomotive") : TEXT("another locomotive (the other way)"));
+}
+
+bool AATTrafficSubsystem::FindLeg(const FATTrafficTrain& State, AFGBuildableRailroadStation* To, TArray<FATRouteStep>& OutRoute, float& OutLength, bool& bOutLead) const
+{
+	OutRoute.Reset();
+	OutLength = MAX_flt;
+	bOutLead = false;
+	AFGTrain* Train = State.Train.Get();
+	if (!Train || !To)
+	{
+		return false;
+	}
+	AFGBuildableRailroadStation* Next = To;
+	// The game's pathfinder from each locomotive facing its own way; the train leaves with the one of the shortest path.
 	const AFGLocomotive* BestLocomotive = nullptr;
 	for (AFGRailroadSubsystem::TTrainIterator It(Train->GetFirstVehicle()); It; ++It)
 	{
@@ -483,27 +522,15 @@ void AATTrafficSubsystem::PredictDeparture(FATTrafficTrain& State, double Now)
 			Distance += Index == 0 ? (Track == Position.Track.Get() ? FMath::Abs(Exit->GetTrackPosition().Offset - Position.Offset) : 0.f) : Track->GetLength();
 			Route.Add({Track, Exit, Distance});
 		}
-		if (Route.Num() > 0 && Distance < BestLength)
+		if (Route.Num() > 0 && Distance < OutLength)
 		{
-			BestLength = Distance;
-			Best = MoveTemp(Route);
+			OutLength = Distance;
+			OutRoute = MoveTemp(Route);
 			BestLocomotive = Locomotive;
 		}
 	}
-	if (Best.Num() == 0)
-	{
-		UE_LOG(LogAutoTrains, Log, TEXT("planner: %s docked at %s: no path found to its next stop %s; it stays booked where it stands"), *NameOf(Train),
-			*StationName(Docked), *StationName(Next));
-		return;
-	}
-	State.PredictedRoute = MoveTemp(Best);
-	State.PredictedFrontAhead = ComputeFrontAhead(State, State.PredictedRoute);
-	State.PredictedStation = Next;
-	State.PredictedStop = NextStop;
-	++mPlanPredictions;
-	UE_LOG(LogAutoTrains, Log, TEXT("planner: %s docked at %s, expected to stay %.0f s; next leg to %s: %d tracks, %.0f m, leaving with %s"), *NameOf(Train),
-		*StationName(Docked), GetExpectedStay(Train, Docked, &State.DockRules, State.DockTransfer), *StationName(Next), State.PredictedRoute.Num(), BestLength / 100.f,
-		BestLocomotive == Train->GetMultipleUnitMaster() ? TEXT("its lead locomotive") : TEXT("another locomotive (the other way)"));
+	bOutLead = BestLocomotive == Train->GetMultipleUnitMaster();
+	return OutRoute.Num() > 0;
 }
 
 bool AATTrafficSubsystem::CanEnter(FATTrafficTrain& Self, const FResourceKey& Key, int32 Index, double Enter, bool bLocked, bool bHeldBefore,
@@ -1021,6 +1048,14 @@ void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds, bool bW
 	};
 	TArray<FTurn> Turns;
 	TArray<FATTrafficTrain*> SelfDriving;
+	TArray<FATTrafficTrain*> Probes;
+	for (auto It = mLegChecks.CreateIterator(); It; ++It)
+	{
+		if (!It.Key().IsValid() || Now - It.Value().AskedAt > LegCheckForgetSeconds)
+		{
+			It.RemoveCurrent();
+		}
+	}
 	for (const TPair<const AFGTrain*, FATTrafficTrain*>& Pair : mStateOf)
 	{
 		FATTrafficTrain& State = *Pair.Value;
@@ -1035,6 +1070,12 @@ void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds, bool bW
 				State.MovedAheadOf.Reset();
 			}
 			SelfDriving.Add(&State);
+			continue;
+		}
+		const FLegCheck* Check = mLegChecks.Find(State.Train);
+		if (Check && !Check->bDone)
+		{
+			Probes.Add(&State);
 			continue;
 		}
 		FTurn Turn;
@@ -1062,6 +1103,10 @@ void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds, bool bW
 	for (FATTrafficTrain* State : SelfDriving)
 	{
 		Turns.Add({State, 0.f, 2});
+	}
+	for (FATTrafficTrain* State : Probes)
+	{
+		Turns.Add({State, 0.f, 3});
 	}
 
 	const TSharedRef<FATSippCycle, ESPMode::ThreadSafe> Cycle = MakeShared<FATSippCycle, ESPMode::ThreadSafe>();
@@ -1118,6 +1163,27 @@ void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds, bool bW
 			Out.bSearch = IsSearchDue(State, DeltaSeconds) && Out.Commit < Out.Route.Num() - 2;
 			Out.MinGainSeconds = mSettings.RerouteMinGainSeconds;
 			Out.MinGainPercent = mSettings.RerouteMinGainPercent;
+			continue;
+		}
+		if (Turns[Slot].Kind == 3)
+		{
+			// The leg asked about, from where it stands, after every other train and seen by none of them.
+			const FLegCheck& Check = mLegChecks.FindChecked(State.Train);
+			FATTrafficTrain Leaving = State;
+			Leaving.Route = Check.Route;
+			Leaving.FrontAhead = Check.FrontAhead;
+			Leaving.Speed = 0.f;
+			IndexRoute(Leaving);
+			FillSippTrain(Leaving, Graph, SlotOf, Out);
+			Out.Turn = EATSippTurn::Plan;
+			Out.Kind = EATSippKind::Moving;
+			Out.bRanked = true;
+			Out.bProbe = true;
+			Out.Commit = 0;
+			Out.bSearch = false;
+			const bool bDocked = Train && Train->IsDocked() && State.DockedAt >= 0.0;
+			Out.MinDepart = bDocked ? FMath::Max(State.DockedAt + GetExpectedStay(Train, State.DockStation.Get(), &State.DockRules, State.DockTransfer), Now) : Now;
+			Out.GoalDwell = GetExpectedStay(Train, Check.To.Get(), nullptr, -1);
 			continue;
 		}
 		if (Turns[Slot].Kind == 1)
@@ -1293,6 +1359,27 @@ void AATTrafficSubsystem::ApplyPlanCycle()
 	{
 		const FATSippTrain& Input = Cycle->Trains[Slot];
 		FATTrafficTrain* State = mTrains.Find(Cycle->Owners[Slot]);
+		if (State && Input.bProbe)
+		{
+			if (FLegCheck* Check = mLegChecks.Find(State->Train))
+			{
+				const FATSippResult& Result = Cycle->Results[Slot];
+				Check->bDone = true;
+				Check->Arrival = Result.bPlanned && !Result.bFailed ? Result.Arrival : ATSippNever;
+				Check->Reason = !Result.bPlanned ? FString(TEXT("not planned"))
+					: !Result.bFailed ? FString()
+					: Result.BlockedAt != INDEX_NONE ? FString::Printf(TEXT("no way on past %s for %s"), *CycleResourceName(Graph, Result.BlockedAt), *NameOf(Cycle->Owners.IsValidIndex(Result.BlockedBy) ? Cycle->Owners[Result.BlockedBy].Get() : nullptr))
+					: FString(TEXT("no way to it"));
+				UE_LOG(LogAutoTrains, Log, TEXT("planner: leg check for %s to %s: %s"), *NameOf(State->Train.Get()), *StationName(Check->To.Get()),
+					Check->Reason.IsEmpty() ? *FString::Printf(TEXT("arrives in %.0f s"), Check->Arrival - Cycle->Now) : *Check->Reason);
+			}
+			continue;
+		}
+		if (State && Input.Turn == EATSippTurn::Plan && Input.Kind == EATSippKind::Predicted)
+		{
+			const FATSippResult& Result = Cycle->Results[Slot];
+			State->PredictedArrival = Result.bPlanned && !Result.bFailed ? Result.Arrival : ATSippNever;
+		}
 		if (State && Input.Kind == EATSippKind::Moving)
 		{
 			State->PlanRank = Input.Rank;
@@ -2012,23 +2099,26 @@ float AATTrafficSubsystem::ExternalGetPlannedArrival(AFGTrain* Train, AFGBuildab
 	OutGoal = nullptr;
 	const FATTrafficTrain* State = Train ? mTrains.Find(Train) : nullptr;
 	const UWorld* World = GetWorld();
-	if (!State || !World || State->PlanArrival < 0.0 || IsOpen(State->PlanArrival))
+	if (!State || !World)
 	{
 		return -1.f;
 	}
+	double Arrival = -1.0;
 	if (State->bManaged)
 	{
 		OutGoal = State->GoalStation.Get();
+		Arrival = State->PlanArrival;
 	}
 	else if (Train->IsDocked() && State->PredictedRoute.Num() > 0)
 	{
 		OutGoal = State->PredictedStation.Get();
+		Arrival = State->PredictedArrival;
 	}
-	else
+	if (Arrival < 0.0 || IsOpen(Arrival))
 	{
 		return -1.f;
 	}
-	return FMath::Max(0.f, static_cast<float>(State->PlanArrival - World->GetTimeSeconds()));
+	return FMath::Max(0.f, static_cast<float>(Arrival - World->GetTimeSeconds()));
 }
 
 float AATTrafficSubsystem::ExternalEstimateTravelSeconds(AFGTrain* Train, AFGBuildableRailroadStation* From, AFGBuildableRailroadStation* To)
@@ -2187,6 +2277,51 @@ int32 AATTrafficSubsystem::ExternalGetTroubledTrains(TArray<AFGTrain*>& OutTrain
 		}
 	}
 	return OutTrains.Num();
+}
+
+int32 AATTrafficSubsystem::ExternalCheckLeg(AFGTrain* Train, AFGBuildableRailroadStation* To, float& OutSeconds, FString& OutReason)
+{
+	OutSeconds = -1.f;
+	OutReason.Reset();
+	const FATTrafficTrain* State = Train ? mTrains.Find(Train) : nullptr;
+	const UWorld* World = GetWorld();
+	if (!mEnabled || !State || !To || !World)
+	{
+		OutReason = !mEnabled ? TEXT("traffic control is off") : !To ? TEXT("no station") : TEXT("train not seen yet");
+		return 3;
+	}
+	if (State->bManaged)
+	{
+		OutReason = TEXT("it is driving; ask ExternalGetPlannedArrival");
+		return 3;
+	}
+	const double Now = World->GetTimeSeconds();
+	FLegCheck* Check = mLegChecks.Find(Train);
+	if (Check && Check->To.Get() == To)
+	{
+		if (!Check->bDone)
+		{
+			return 0;
+		}
+		const int32 Answer = IsOpen(Check->Arrival) ? 2 : 1;
+		OutSeconds = Answer == 1 ? FMath::Max(0.f, static_cast<float>(Check->Arrival - Now)) : -1.f;
+		OutReason = Check->Reason;
+		mLegChecks.Remove(Train);
+		return Answer;
+	}
+	FLegCheck New;
+	New.To = To;
+	New.AskedAt = Now;
+	float Length = 0.f;
+	bool bLead = false;
+	if (!FindLeg(*State, To, New.Route, Length, bLead))
+	{
+		OutReason = FString::Printf(TEXT("no path from where it stands to %s"), *StationName(To));
+		return 3;
+	}
+	New.FrontAhead = ComputeFrontAhead(*State, New.Route);
+	mLegChecks.Add(Train, MoveTemp(New));
+	return 0;
 }
 
 void AATTrafficSubsystem::ExternalTimeTableChanged(AFGTrain* Train)

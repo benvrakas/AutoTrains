@@ -175,6 +175,8 @@ struct FATSippTrain
 	bool bStanding = false;
 	double MinDepart = 0.0;
 	double GoalDwell = 0.0;
+	// Only asked about: planned after every other train, never moved up before one.
+	bool bProbe = false;
 	// Route search: whether to look for a faster route beyond route step Commit, and the gain a new one needs. [s] [%]
 	bool bSearch = false;
 	int32 Commit = 0;

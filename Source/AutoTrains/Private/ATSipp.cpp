@@ -1444,7 +1444,7 @@ void ATSipp::Run(FATSippCycle& Cycle)
 			const FATSippTrain& Train = Cycle.Trains[Slot];
 			const FATSippResult& Result = Cycle.Results[Slot];
 			const int32 By = Result.BlockedBy;
-			if (Train.Kind != EATSippKind::Moving || !Result.bFailed || !Result.bBlockedByRank || !Cycle.Trains.IsValidIndex(By)
+			if (Train.Kind != EATSippKind::Moving || Train.bProbe || !Result.bFailed || !Result.bBlockedByRank || !Cycle.Trains.IsValidIndex(By)
 				|| Cycle.Trains[By].Kind != EATSippKind::Moving || Train.First.Contains(By) || Cycle.Trains[By].MovedAheadOf.Contains(Slot))
 			{
 				continue;

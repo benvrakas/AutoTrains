@@ -1969,12 +1969,13 @@ void AATTrafficSubsystem::UpdateHillHelp(FATTrafficTrain& State, double Now) con
 	const AFGTrain* Train = State.Train.Get();
 	const float Pull = GravityAcceleration * State.Grade * State.Mass;
 	const bool bOn = mSettings.bHillHelp && Train && Train->IsSelfDrivingEnabled() && State.bManaged && State.FullTraction > 0.f;
-	// Braking with the throttle shut: more traction can't move it. Held up by its plan, it doesn't count as wanting to go.
+	// Braking with the throttle shut: more traction can't move it. Held up by its plan, braking or not on a climb, it
+	// doesn't count as wanting to go.
 	const AFGLocomotive* Master = Train ? Train->GetMultipleUnitMaster() : nullptr;
 	const UFGLocomotiveMovementComponent* Movement = Master ? Master->GetLocomotiveMovementComponent() : nullptr;
 	const bool bBraking = Movement && Movement->GetThrottle() <= 0.f && Movement->GetAirBrake() + Movement->GetDynamicBrake() > 0.f;
 	const bool bWants = bOn && Train->mAtcData.TargetSpeed > State.Speed + HillWantMargin && !State.bFullBrake && State.Room >= HillStallRoom
-		&& !(bBraking && !State.BlockedReason.IsEmpty());
+		&& !(!State.BlockedReason.IsEmpty() && (bBraking || Pull <= State.FullTraction * HillStallShare));
 	if (!bWants || State.Speed >= HillStandSpeed || State.StandSince < 0.0)
 	{
 		State.StandSince = Now;

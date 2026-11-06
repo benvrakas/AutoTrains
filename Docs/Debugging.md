@@ -845,3 +845,9 @@ train, then a row per train every 0.2 s:
   (authority) passed HillStallRoom while the plan held it. Fix: bWants is false for a braking train (throttle <= 0, any
   brake) with a BlockedReason; a braking train without one gets no stall steps (STALLED still reported once).
   Baseline unchanged: ~1.8 "can't stop short" per minute (190 in 105 min, 39 trains), 7 deadlocks passed through.
+- 1.4.1 detailed-log session (server 05:05-05:16 UTC, 45 trains): 0 deadlocks, STUCK, STALLED, LOST or crossing
+  entries; 7 "can't stop short". 13 hill help lines: held trains creeping up to their stop in a queue (2 km/h, throttle
+  0.04-0.07, flat) or braking down a 7-18 % slope, all with a named blocker in telemetry. bWants now also excludes a held
+  train unless the slope pulls over HillStallShare of its traction. Planning cycles 226-497 ms on the worker, 49-99
+  updates a minute waited for one. Telemetry rows are keyed by train name, and SmartTrains names repeat (several
+  "ST: Nitrogen Gas: Jungle Spires Nitrogen SRC (2100) -> RockPow- Nitrogen SNK"), so rows of same-named trains mix.

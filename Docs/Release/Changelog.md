@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.2
+
+- **A train queueing behind another one no longer stops on a switch or crossing.** It stopped right behind the train
+  ahead, wherever that was, so a queue into a busy station could stand across a junction, hold up the line that
+  crosses it and tie itself into a deadlock. Now it waits before the junction until there's room for it past it. A
+  train already too close to stop before the junction goes on as before.
+
 ## 1.4.1
 
 - **Fixed: trains queueing for a station where a train stays longer than expected could block its way out.** A train

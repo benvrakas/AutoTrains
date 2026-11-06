@@ -852,3 +852,11 @@ the AFGTrain object name, unique where names repeat):
   train unless the slope pulls over HillStallShare of its traction. Planning cycles 226-497 ms on the worker, 49-99
   updates a minute waited for one. Telemetry rows are keyed by train name, and SmartTrains names repeat (several
   "ST: Nitrogen Gas: Jungle Spires Nitrogen SRC (2100) -> RockPow- Nitrogen SNK"), so rows of same-named trains mix.
+- 1.4.2 (server log 06:38-08:13 UTC, AT 1.4.1 / ST 0.6.3): 13 deadlocks, 6 passed through, all at track 2147310803 and
+  crossings 167/168 on the way into Aluminum Ingot RSC (13 trips through it in 15 min, at capacity). At 08:09:13 ranks
+  29-41 stood nose to tail through switch 52, each "stays behind" the next 10 m ahead. The follow limit stops a train
+  behind its leader's nearest vehicle wherever that is; the SIPP junction-wait rule doesn't cover it. Fix: in
+  GetFollowLimit, if stopping behind the leader (with its braking when it moves away) would leave the body on a
+  switch's fouling zone (GetJointFoulDistance either side of the joint) or a crossing zone ahead of the front, the limit
+  is that zone's start, if the train can still stop StopDistance short of it. SmartTrains 0.6.4 adds QueueLimitSeconds
+  (rejects trips queueing over 60 s at any stop) and keeps repeats out of queued stations.

@@ -1180,6 +1180,42 @@ float AATTrafficSubsystem::GetFollowLimit(const AFGTrain* Train, const FATTraffi
 		}
 		Limit = Limit < 0.f ? Gap + SoftBrake : FMath::Min(Limit, Gap + SoftBrake);
 	};
+	// The start of the first switch or crossing zone ahead of the front that the train would stand on if it stopped behind
+	// a leader at Limit; -1 if none. [cm]
+	auto JunctionBefore = [this, Train, &State](float Limit)
+	{
+		const float Front = Limit - GetStopDistance();
+		const float Rear = Front - State.Length;
+		for (int32 Index = 0; Index < State.Route.Num(); ++Index)
+		{
+			const FATRouteStep& Step = State.Route[Index];
+			const float Start = GetDistanceToTrackStart(Train, State, Step.Track);
+			if (Start <= TrackNotOnPath || Start >= Front + GetClearance())
+			{
+				break;
+			}
+			const int32 Joint = Index > 0 ? GetJoint(State.Route[Index - 1].Exit) : INDEX_NONE;
+			if (Joint != INDEX_NONE)
+			{
+				const float Foul = GetJointFoulDistance(Joint);
+				if (Start - Foul > 0.f && Start - Foul < Front && Start + Foul > Rear)
+				{
+					return Start - Foul;
+				}
+			}
+			for (const FATZone& Zone : GetZones(Step.Track))
+			{
+				float From = 0.f;
+				float To = 0.f;
+				GetZoneAlong(Zone, Step.Track, Step.Exit, From, To);
+				if (Start + From > 0.f && Start + From < Front && Start + To > Rear)
+				{
+					return Start + From;
+				}
+			}
+		}
+		return -1.f;
+	};
 	for (const TWeakObjectPtr<AFGTrain>& LeaderTrain : State.FollowLeaders)
 	{
 		const FATTrafficTrain* Leader = mTrains.Find(LeaderTrain);
@@ -1208,6 +1244,13 @@ float AATTrafficSubsystem::GetFollowLimit(const AFGTrain* Train, const FATTraffi
 		{
 			const bool bMovesAway = State.LeadersMovingAway.Contains(LeaderTrain);
 			Add(Gap, bMovesAway ? SoftBrake : 0.f, bMovesAway ? HardBrake : 0.f, true);
+			// It doesn't stop on a switch or crossing behind the leader: it waits before it until there's room past it, if it
+			// can still stop there.
+			const float Junction = JunctionBefore(Gap + (bMovesAway ? HardBrake : 0.f));
+			if (Junction >= 0.f && Junction - GetStopDistance() >= GetStoppingDistance(State, State.Speed))
+			{
+				Add(Junction, 0.f, 0.f, true);
+			}
 			continue;
 		}
 		// A leader following this train somewhere holds track there only behind it.

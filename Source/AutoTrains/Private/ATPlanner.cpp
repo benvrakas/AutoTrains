@@ -19,8 +19,10 @@ namespace
 {
 	// An open-ended time: a stay nobody knows the end of, or everything after a wait for one. [s]
 	constexpr double OpenTime = ATSippNever;
-	// A docked train past its expected departure is expected to leave this soon, renewed every update. [s]
+	// A docked train past its expected departure is expected to stay as long again as it has overstayed, at least this
+	// and at most OverdueDepartMaxSeconds more. [s]
 	constexpr double OverdueDepartSeconds = 1.0;
+	constexpr double OverdueDepartMaxSeconds = 600.0;
 	// A departure that couldn't be predicted is tried again after this long. [s]
 	constexpr double PredictRetrySeconds = 10.0;
 	// Trains that waited longer than WaitDumpSeconds are described in the log every WaitDumpInterval. [s]
@@ -1189,7 +1191,8 @@ void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds, bool bW
 		if (Turns[Slot].Kind == 1)
 		{
 			const double Start = State.DockedAt >= 0.0 ? State.DockedAt : Now;
-			const double Depart = FMath::Max(Start + GetExpectedStay(Train, State.DockStation.Get(), &State.DockRules, State.DockTransfer), Now + OverdueDepartSeconds);
+			const double Expected = Start + GetExpectedStay(Train, State.DockStation.Get(), &State.DockRules, State.DockTransfer);
+			const double Depart = Expected >= Now + OverdueDepartSeconds ? Expected : Now + FMath::Clamp(Now - Expected, OverdueDepartSeconds, OverdueDepartMaxSeconds);
 			if (State.PredictedRoute.Num() == 0 && Now - State.PredictedAt > PredictRetrySeconds && Train && Train->IsSelfDrivingEnabled())
 			{
 				PredictDeparture(State, Now);

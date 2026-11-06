@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.1
+
+- **Fixed: trains queueing for a station where a train stays longer than expected could block its way out.** A train
+  still docked after its expected stay counted as leaving within a second, again and again. A train waiting for that
+  station moved up onto the junction in front of it for what looked like a short wait, and when the docked train
+  finally left, its way out was blocked. Trains whose route passed through that station also never took a way around
+  it. A train that has overstayed now counts as staying as long again as it has overstayed (up to 10 minutes), so
+  others wait before the junction or take another route.
+
 ## 1.4.0
 
 - **Change settings on a dedicated server from in game:** `/at settings` lists the server's Auto Trains settings, and

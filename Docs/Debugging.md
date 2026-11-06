@@ -829,3 +829,12 @@ train, then a row per train every 0.2 s:
   the Detailed log setting sets LogAutoTrains to Verbose and starts the telemetry CSV (replacing /at log). Faults,
   hill help, reroutes, full brakes and the 60 s planner summary (which counts failed plans) stay at Log. Non-crossing
   overlaps are only logged at the first rebuild after the setting is on if that pair wasn't seen before.
+- 1.4.1 (IB server log 2026-11-06 04:07-04:10 UTC, via the SmartTrains session): Amuminum Ingot RSC docked at
+  Encased Unranium Cell RSC 1 for 220 s under "fully unload or 120 s" (SmartTrains held it: its leg checks said no way).
+  Train (job 60, goal that station) stood 38 m before switch 578 with its body on crossing 336: its plans said 3 s, as
+  an overdue docked train's departure was Now + OverdueDepartSeconds (1 s) every cycle, under JunctionWaitSeconds.
+  Amuminum's way out crossed 336: DEADLOCK 04:09:15, passed through 04:10:36. Same cause: Motor RSC 1 waited 62-92 s
+  behind Cable RSC docked 227 s at Grass Fields Crater Conc (Rubber SNK), on its route, and never rerouted (a 1-5 s
+  wait never gains RerouteMinGain). Fix: overdue departure = Now + clamp(overdue, 1 s, 600 s). Open: a docked train
+  with no predicted leg (SmartTrains writes the next job only as it leaves) books no way out, so a queue can still
+  stand in it when the stay ends sooner than the overdue estimate.

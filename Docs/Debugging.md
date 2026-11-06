@@ -830,7 +830,8 @@ train, then a row per train every 0.2 s:
   hill help, reroutes, full brakes and the 60 s planner summary (which counts failed plans) stay at Log. Non-crossing
   overlaps are only logged at the first rebuild after the setting is on if that pair wasn't seen before.
 - 1.4.1 (IB server log 2026-11-06 04:07-04:10 UTC, via the SmartTrains session): Amuminum Ingot RSC docked at
-  Encased Unranium Cell RSC 1 for 220 s under "fully unload or 120 s" (SmartTrains held it: its leg checks said no way).
+  Encased Unranium Cell RSC 1 for 220 s under "fully unload or 120 s" (the stop rule, into a nearly full platform: so the "or" time
+  plus docking runs far past the min(stay, 120 s) estimate; SmartTrains' hold only withholds the next trip).
   Train (job 60, goal that station) stood 38 m before switch 578 with its body on crossing 336: its plans said 3 s, as
   an overdue docked train's departure was Now + OverdueDepartSeconds (1 s) every cycle, under JunctionWaitSeconds.
   Amuminum's way out crossed 336: DEADLOCK 04:09:15, passed through 04:10:36. Same cause: Motor RSC 1 waited 62-92 s

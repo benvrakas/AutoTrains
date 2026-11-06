@@ -871,3 +871,16 @@ the AFGTrain object name, unique where names repeat):
   after WaitEndFreeSeconds (3 s) let go without a break, or moving over PlannerWaitSpeed. Open: why the grant flaps
   (the shuttle that waits where it stands books 514 locked; the other is granted 514 on the updates its plan failed).
   The 16:05-16:08 Copper Sheet RSC 2 / R-Plates deadlock at the climb on track 2145780312 passed through after 60 s.
+- 1.4.4 (same server logs): (1) The 16:08 deadlock at the climb (track 2145780312, 38 % with hill help) and the 16:00
+  one by Rotor RSC 1 (tracks 2147216935/2144004608) formed the same way. The R-Plates train, docked at the top with its
+  leg down booked, kept the Copper train at switch 147 until 16:04:48, when its plan failed on a third train (Iron
+  Plate). A failed plan books nothing past where its train stands, so the next cycle the Copper train was granted the
+  single stretch and stopped at the foot of the climb (climb wait), face to face. Also 11:01 and 14:17 in faults.log.
+  Fix: a failed Moving plan adds bReserve bookings (Enter now, Clear never) on the route's tracks past its stand point
+  up to ReserveAheadDistance (1 km), unless a train holds or is locked on one of them the other way. GapAt ignores
+  them for the same exit; CanEnter ignores them for the same exit and for trains ranked before the owner (no mutual
+  block between two failed trains); HoldsUp and FindCommittedConflict ignore them. (2) Switch 514: both water trains
+  stood about 21 m short of it, inside its fouling zone (up to 42 m here: branches under SwitchClearanceMetres apart),
+  so each one's joint pass had EnterAt 0 ("entering now"), was Locked, and was booked from now. Fix: standing
+  (CollectPasses: Speed < StandingSpeed; SIPP: bStanding) with the front short of the switch point, the joint is
+  entered at the switch point; accepted cost: a train through the switch may overlap the standing one's nose.

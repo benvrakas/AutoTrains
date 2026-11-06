@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.4.4
+
+- **Fixed: trains meeting head-on on single track.** Where a pair of one-way tracks narrows to one track used both
+  ways, a train coming the other way could drive in while a train was about to come through, whenever that train's
+  plan had just failed (for instance because a third train stood in its way further on). Both then stood face to face
+  until the deadlock rescue let them pass through each other. A train whose plan fails now keeps the next kilometre
+  of its route reserved against trains the other way, unless one of them is in there already. Trains going its way
+  can still follow it.
+- **Fixed: a train standing close to a switch counted as being on it.** Where branches meet at a shallow angle, the
+  tracks run close together for a while before the switch, and a train standing there counted as already on the
+  switch. Two trains standing on different branches, such as push-pull trains docked at platforms near the switch,
+  then each waited for the other. A train standing short of the switch can now wait there while the other goes
+  through first.
+
 ## 1.4.3
 
 - **Fixed: two trains could wait on each other forever without the deadlock rescue stepping in.** One of them was

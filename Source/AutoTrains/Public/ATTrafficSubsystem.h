@@ -527,6 +527,8 @@ private:
 		// Committed: on the owner's way from what it holds or can't stop short of to the next place it can stand without
 		// holding up a train planned before it; it can't give way inside that stretch.
 		bool bCommitted = false;
+		// Reserved: on the track ahead of an owner whose plan failed; holds off only trains the other way planned after it.
+		bool bReserve = false;
 	};
 	// One resource a train passes on its route: the front position at which it enters it, the one at which its tail
 	// has cleared it [cm along the route from the front], and the route step it belongs to (INDEX_NONE for what the tail

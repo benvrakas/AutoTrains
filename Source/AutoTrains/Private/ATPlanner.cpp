@@ -116,8 +116,9 @@ void AATTrafficSubsystem::CollectPasses(const FATTrafficTrain& State, TArray<FPa
 				Pass.ClearAt = Begin + State.Length + GetJointFoulDistance(Joint);
 				if (Pass.EnterAt <= 0.f && !State.OccupiedJoints.Contains(Joint))
 				{
-					// The front is in the zone already, though no vehicle counts as in it yet: entering now.
-					Pass.EnterAt = 0.f;
+					// The front is in the zone already, though no vehicle counts as in it yet: entering now, unless it stands
+					// short of the switch point, where it can still wait for a train through the switch.
+					Pass.EnterAt = State.Speed < StandingSpeed && Begin > 0.f ? Begin : 0.f;
 				}
 				Out.Add(Pass);
 				JointsOnRoute.Add(Joint);
@@ -565,6 +566,12 @@ bool AATTrafficSubsystem::CanEnter(FATTrafficTrain& Self, const FResourceKey& Ke
 			// A train ahead on this route goes first here, and one behind can't get here before this one has passed. Else
 			// locked bookings go first, then bookings in order of entry; ties by pointer so both trains see the same order.
 			FATTrafficTrain* const* Other = mStateOf.Find(Booking.Owner);
+			// A failed plan's reservation holds off only trains the other way planned after its owner.
+			if (Booking.bReserve && (Booking.Exit == Exit || !Other || (*Other)->PlanRank == INDEX_NONE || Self.PlanRank == INDEX_NONE
+				|| Self.PlanRank < (*Other)->PlanRank))
+			{
+				continue;
+			}
 			const int32 Ahead = Other ? FrontIndexOn(Self, **Other) : INDEX_NONE;
 			const bool bAheadHere = Ahead != INDEX_NONE && Ahead <= Index;
 			if (!bAheadHere && Other && IsBehind(**Other, Self, Key))
@@ -584,7 +591,8 @@ bool AATTrafficSubsystem::CanEnter(FATTrafficTrain& Self, const FResourceKey& Ke
 			}
 			OutBlocker = Other ? *Other : nullptr;
 			OutWhy = FString::Printf(TEXT("booked first on %s (%s, enters in %s, clear in %s)"), *ResourceName(Key.Track, Key.Joint, Key.Crossing),
-				Booking.bLocked ? TEXT("locked") : Booking.bHeld ? TEXT("held") : Booking.bCommitted ? TEXT("committed") : TEXT("planned"), *SecondsText(Booking.Enter - Now), *SecondsText(Booking.Clear - Now));
+				Booking.bLocked ? TEXT("locked") : Booking.bHeld ? TEXT("held") : Booking.bCommitted ? TEXT("committed") : Booking.bReserve ? TEXT("reserved the other way") : TEXT("planned"),
+				*SecondsText(Booking.Enter - Now), *SecondsText(Booking.Clear - Now));
 			return false;
 		}
 	}
@@ -1271,6 +1279,7 @@ void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds, bool bW
 			Copy.bLocked = Booking.bLocked;
 			Copy.bHeld = Booking.bHeld;
 			Copy.bCommitted = Booking.bCommitted;
+			Copy.bReserve = Booking.bReserve;
 			Cycle->Table.Add(Resource, Copy);
 		}
 	}
@@ -1330,6 +1339,7 @@ void AATTrafficSubsystem::ApplyPlanCycle()
 			Copy.bLocked = Booking.bLocked;
 			Copy.bHeld = Booking.bHeld;
 			Copy.bCommitted = Booking.bCommitted;
+			Copy.bReserve = Booking.bReserve;
 			mBookings.FindOrAdd(Key).Add(Copy);
 			FOwnerBookings& Own = mOwnerBookings.FindOrAdd(FObjectKey(Booker));
 			Own.Owner = Booker;

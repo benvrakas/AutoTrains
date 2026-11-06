@@ -89,6 +89,8 @@ struct FATSippBooking
 	bool bLocked = false;
 	bool bHeld = false;
 	bool bCommitted = false;
+	// Reserved by a failed plan on the track ahead of its owner: holds off only trains the other way planned after it.
+	bool bReserve = false;
 };
 
 // Every booking by resource, and the resources each owner has bookings on.

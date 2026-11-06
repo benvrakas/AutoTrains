@@ -246,12 +246,12 @@ FString AATControlSubsystem::SetTelemetry(bool bOn)
 	for (AFGTrain* Train : GetSortedTrains())
 	{
 		const FTrainConsist& Consist = Train->mConsistData;
-		mPendingRows.Add(FString::Printf(TEXT("# consist,%s,length_m=%.1f,mass_t=%.1f,max_speed_kmh=%.0f,tractive_kN=%.1f,air_brake_kN=%.1f,dynamic_brake_kN=%.1f,brake_decel_ms2=%.3f,brake_distance_m=%.0f"),
-			*Train->GetTrainName().ToString(), Consist.Length / 100.f, Consist.Mass / 1000.f, Consist.MaxSpeed * CmPerSecondToKmh,
+		mPendingRows.Add(FString::Printf(TEXT("# consist,%s,%s,length_m=%.1f,mass_t=%.1f,max_speed_kmh=%.0f,tractive_kN=%.1f,air_brake_kN=%.1f,dynamic_brake_kN=%.1f,brake_decel_ms2=%.3f,brake_distance_m=%.0f"),
+			*Train->GetTrainName().ToString().Replace(TEXT(","), TEXT(" ")), *Train->GetName(), Consist.Length / 100.f, Consist.Mass / 1000.f, Consist.MaxSpeed * CmPerSecondToKmh,
 			Consist.MaxTractiveEffort / 100000.f, Consist.MaxAirBrakingEffort / 100000.f, Consist.MaxDynamicBrakingEffort / 100000.f,
 			Consist.MaxBrakeDeceleration / 100.f, Consist.MaxBrakeDistance / 100.f));
 	}
-	mPendingRows.Add(TEXT("time_s,train,self_driving,status,speed_kmh,game_target_kmh,final_target_kmh,accel_ms2,odometer_m,goal_distance_m,restrictive_aspect,restrictive_distance_m,next_signal_aspect,next_signal_distance_m,front_track,front_offset_m,rear_track,rear_offset_m,docking,error,traffic_managed,authority_m,claims,waiting_s,blocked_by,full_brake,catch_armed,plan_brake_ms2,throttle,tractive_kN,brake_kN,resistive_kN,gradient_kN,mass_t"));
+	mPendingRows.Add(TEXT("time_s,train,train_id,self_driving,status,speed_kmh,game_target_kmh,final_target_kmh,accel_ms2,odometer_m,goal_distance_m,restrictive_aspect,restrictive_distance_m,next_signal_aspect,next_signal_distance_m,front_track,front_offset_m,rear_track,rear_offset_m,docking,error,traffic_managed,authority_m,claims,waiting_s,blocked_by,full_brake,catch_armed,plan_brake_ms2,throttle,tractive_kN,brake_kN,resistive_kN,gradient_kN,mass_t"));
 	FlushTelemetry();
 	UE_LOG(LogAutoTrains, Log, TEXT("Telemetry started: %s"), *mTelemetryPath);
 	return FString::Printf(TEXT("writing telemetry to %s"), *mTelemetryPath);
@@ -363,8 +363,8 @@ void AATControlSubsystem::SampleTelemetry(float SampleSeconds)
 		}
 		const FString Forces = FString::Printf(TEXT("%.2f,%.0f,%.0f,%.0f,%.0f,%.1f"), MasterMovement ? MasterMovement->GetThrottle() : -1.f, Simulation.TractiveForce / 100000.f,
 			(Simulation.AirBrakingForce + Simulation.DynamicBrakingForce) / 100000.f, Simulation.ResistiveForce / 100000.f, Simulation.GradientForce / 100000.f, Mass / 1000.f);
-		mPendingRows.Add(FString::Printf(TEXT("%.2f,%s,%d,%s,%.2f,%.2f,%.2f,%.3f,%.2f,%.1f,%s,%.1f,%s,%.1f,%s,%s,%s,%s,%s,%s"),
-			mLogTime, *Train->GetTrainName().ToString(), Train->IsSelfDrivingEnabled() ? 1 : 0, *EnumName(Train->GetTrainStatus()),
+		mPendingRows.Add(FString::Printf(TEXT("%.2f,%s,%s,%d,%s,%.2f,%.2f,%.2f,%.3f,%.2f,%.1f,%s,%.1f,%s,%.1f,%s,%s,%s,%s,%s,%s"),
+			mLogTime, *Train->GetTrainName().ToString().Replace(TEXT(","), TEXT(" ")), *Train->GetName(), Train->IsSelfDrivingEnabled() ? 1 : 0, *EnumName(Train->GetTrainStatus()),
 			Speed * CmPerSecondToKmh, State.GameTargetSpeed * CmPerSecondToKmh,
 			State.FinalTargetSpeed * CmPerSecondToKmh, Acceleration, State.Odometer / 100.f,
 			GoalDistance >= 0.f ? GoalDistance / 100.f : -1.f,

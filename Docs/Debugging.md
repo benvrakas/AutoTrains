@@ -44,7 +44,8 @@ The game log is `%LOCALAPPDATA%\FactoryGame\Saved\Logs\FactoryGame.log`. Filter 
 ## Telemetry
 
 The Detailed log setting (before 1.3.10 `/at log on`) writes `%LOCALAPPDATA%\FactoryGame\Saved\AutoTrains\telemetry-<time>.csv`: one `# consist` line per
-train, then a row per train every 0.2 s:
+train (name, then its object name), then a row per train every 0.2 s (`train` with commas made spaces, `train_id`
+the AFGTrain object name, unique where names repeat):
 
 - `speed_kmh`; `game_target_kmh`, the speed the game's driver wanted; `final_target_kmh`, after this mod's control
 - `accel_ms2`, from the speed change between samples

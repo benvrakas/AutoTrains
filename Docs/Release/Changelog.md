@@ -8,10 +8,12 @@
   finally left, its way out was blocked. Trains whose route passed through that station also never took a way around
   it. A train that has overstayed now counts as staying as long again as it has overstayed (up to 10 minutes), so
   others wait before the junction or take another route.
-- No more hill help for trains that are held up, unless they're on a climb too steep for them: a train waiting for
-  another one (in a deadlock, say, or creeping up to its stop in a queue) was
-  counted as standing though told to go, got up to 4 times its traction and was reported as STALLED. A train braking with
-  its throttle shut that isn't held up is still reported, but no longer gets more traction, which can't move it.
+- **No more hill help for trains that are only held up**, unless they're on a climb too steep for them. A train waiting
+  for another one (in a deadlock, say, or creeping up to its stop in a queue) counted as standing though told to go,
+  got up to 4 times its traction and was reported as STALLED. A train braking with its throttle shut that isn't held
+  up is still reported, but no longer gets more traction, which can't move it.
+- The Detailed log telemetry file names each train by a unique id as well, so trains with the same name are told
+  apart, and commas in train names no longer break its columns.
 
 ## 1.4.0
 

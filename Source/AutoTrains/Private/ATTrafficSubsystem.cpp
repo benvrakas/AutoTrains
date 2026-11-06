@@ -1969,7 +1969,12 @@ void AATTrafficSubsystem::UpdateHillHelp(FATTrafficTrain& State, double Now) con
 	const AFGTrain* Train = State.Train.Get();
 	const float Pull = GravityAcceleration * State.Grade * State.Mass;
 	const bool bOn = mSettings.bHillHelp && Train && Train->IsSelfDrivingEnabled() && State.bManaged && State.FullTraction > 0.f;
-	const bool bWants = bOn && Train->mAtcData.TargetSpeed > State.Speed + HillWantMargin && !State.bFullBrake && State.Room >= HillStallRoom;
+	// Braking with the throttle shut: more traction can't move it. Held up by its plan, it doesn't count as wanting to go.
+	const AFGLocomotive* Master = Train ? Train->GetMultipleUnitMaster() : nullptr;
+	const UFGLocomotiveMovementComponent* Movement = Master ? Master->GetLocomotiveMovementComponent() : nullptr;
+	const bool bBraking = Movement && Movement->GetThrottle() <= 0.f && Movement->GetAirBrake() + Movement->GetDynamicBrake() > 0.f;
+	const bool bWants = bOn && Train->mAtcData.TargetSpeed > State.Speed + HillWantMargin && !State.bFullBrake && State.Room >= HillStallRoom
+		&& !(bBraking && !State.BlockedReason.IsEmpty());
 	if (!bWants || State.Speed >= HillStandSpeed || State.StandSince < 0.0)
 	{
 		State.StandSince = Now;
@@ -1989,7 +1994,7 @@ void AATTrafficSubsystem::UpdateHillHelp(FATTrafficTrain& State, double Now) con
 	// Help starts once it is slow and wants to go on, or stands though told to go on any slope; it is raised, never
 	// lowered, while it lasts.
 	const bool bStalled = Now - State.StandSince >= mSettings.HillStallSeconds;
-	const float Needed = FMath::Min(FMath::Max(Pull * HillHelpHeadroom / State.FullTraction, bStalled ? State.HillBoost * HillStallStep : 0.f), mSettings.HillHelpMax);
+	const float Needed = FMath::Min(FMath::Max(Pull * HillHelpHeadroom / State.FullTraction, bStalled && !bBraking ? State.HillBoost * HillStallStep : 0.f), mSettings.HillHelpMax);
 	if (State.HillBoost == 1.f && !bStalled && !(bWants && State.Speed < HillHelpSpeed && Pull > State.FullTraction * HillStallShare))
 	{
 		return;

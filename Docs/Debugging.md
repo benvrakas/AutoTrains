@@ -839,3 +839,9 @@ train, then a row per train every 0.2 s:
   wait never gains RerouteMinGain). Fix: overdue departure = Now + clamp(overdue, 1 s, 600 s). Open: a docked train
   with no predicted leg (SmartTrains writes the next job only as it leaves) books no way out, so a queue can still
   stand in it when the stay ends sooner than the overdue estimate.
+- 1.4.1 (same server log, 03:11-04:57 UTC): 3 STALLED and ~40 "stands though told to go" lines, all with throttle 0
+  and air or dynamic brake on, mostly on flat track (target 10-16 km/h, 6-16 target points). The 04:29 Train was a member of
+  the 3-train deadlock reported a second before ("waits for Motor RSC 1 before the switch ..., 42 m ahead"), so Room
+  (authority) passed HillStallRoom while the plan held it. Fix: bWants is false for a braking train (throttle <= 0, any
+  brake) with a BlockedReason; a braking train without one gets no stall steps (STALLED still reported once).
+  Baseline unchanged: ~1.8 "can't stop short" per minute (190 in 105 min, 39 trains), 7 deadlocks passed through.

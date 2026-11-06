@@ -8,6 +8,9 @@
   finally left, its way out was blocked. Trains whose route passed through that station also never took a way around
   it. A train that has overstayed now counts as staying as long again as it has overstayed (up to 10 minutes), so
   others wait before the junction or take another route.
+- No more hill help for trains that are held up and braking: a train waiting for another one (in a deadlock, say) was
+  counted as standing though told to go, got up to 4 times its traction and was reported as STALLED. A train braking with
+  its throttle shut that isn't held up is still reported, but no longer gets more traction, which can't move it.
 
 ## 1.4.0
 

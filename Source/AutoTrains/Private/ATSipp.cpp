@@ -1057,9 +1057,11 @@ namespace
 						Pass.Resource = Graph.JointResource(Joint);
 						Pass.Exit = Node;
 						Pass.Via = Previous;
-						// The front already in the zone: entering now, unless it stands short of the switch point.
+						// The front already in the zone: entering now, unless it stands short of the switch point and no
+						// vehicle counts as on the switch (not locked there).
 						const float ZoneAt = From - Graph.FoulOf[Previous];
-						Pass.EnterAt = ZoneAt > 0.f ? ZoneAt : Train.bStanding && From > 0.f ? From : 0.f;
+						const bool bWaitsShort = Train.bStanding && From > 0.f && !Train.Locked.Contains(Pass.Resource);
+						Pass.EnterAt = ZoneAt > 0.f ? ZoneAt : bWaitsShort ? From : 0.f;
 						Pass.ClearAt = From + Train.Length + Graph.JointFoul[Joint];
 						Pass.Step = Step;
 						Out.Passes.Add(Pass);

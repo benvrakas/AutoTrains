@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.5
+
+- **Fixed: a train that stopped on a switch could block it forever.** When a train had to brake hard and came to a
+  stop on a switch, short of the track it was waiting for, the planner still counted it as waiting before the switch
+  and let a train on the other branch go through first. That train couldn't get past it, so both stood still for
+  good and the queue behind them grew. A train that stands on a switch now keeps it until it has driven on. A train
+  standing near a switch without being on it can still wait there, as in 1.4.4.
+
 ## 1.4.4
 
 - **Fixed: trains meeting head-on on single track.** Where a pair of one-way tracks narrows to one track used both

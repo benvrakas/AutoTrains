@@ -884,3 +884,16 @@ the AFGTrain object name, unique where names repeat):
   so each one's joint pass had EnterAt 0 ("entering now"), was Locked, and was booked from now. Fix: standing
   (CollectPasses: Speed < StandingSpeed; SIPP: bStanding) with the front short of the switch point, the joint is
   entered at the switch point; accepted cost: a train through the switch may overlap the standing one's nose.
+- 1.4.5 (server run 2026-11-06 21:30-23:34 UTC, AT 1.4.4 / ST 0.6.6): from 23:08:17 the Iron Ingot SRC C train
+  (BP_Train_C_2147262886) stood 1 m short of switch 188's point (front on track 2145993630, 2.35 m), and a Coal
+  train (BP_Train_C_2147143945) on the other branch 22 m short of it, for 25+ min with 10 trains queued behind. The
+  Iron Ingot train's grant flapped every second (about 450 m / 25 claims, then 20-100 m); the last cut came at 32 km/h
+  and forced braking stopped it inside the fouling zone. Its vehicle counted as on 188 (OccupiedJoints), so
+  CollectPasses kept the joint pass at EnterAt <= 0 and Locked; but SIPP's Output still applied the 1.4.4 standing
+  rule (bStanding, front short of the switch point) and put the joint at the switch point, which its failed plan
+  never reached, so it booked nothing on 188. The Coal train's plan then took 188 and track 2146765859 first
+  (committed), while CanEnter's holder check ("stands on switch 188") kept the Coal train back: the Iron Ingot train
+  waited for the Coal train's booking, the Coal train for the Iron Ingot train standing there. The Iron Ingot train
+  waited for "?", so no deadlock was found (STUCK warnings only). Fix: the standing rule applies only when the joint
+  isn't in Train.Locked. Open: why the grant flapped; a lock on the joint doesn't lock the track after it.
+  The water trains cycled normally (switch 514), and there were no head-on deadlocks or LogDeadlocks.

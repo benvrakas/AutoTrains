@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.3
+
+- **Fixed: two trains could wait on each other forever without the deadlock rescue stepping in.** One of them was
+  let go and held up again many times a second without ever moving off, and each moment it was let go counted as
+  the end of its wait, so it never looked stuck. Seen with two push-pull trains sharing a switch, standing for over
+  15 minutes. A wait now only ends once the train actually moves off or is let go for 3 seconds, so such a pair is
+  passed through like any other deadlock.
+
 ## 1.4.2
 
 - **A train queueing behind another one no longer stops on a switch or crossing.** It stopped right behind the train

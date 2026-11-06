@@ -75,6 +75,8 @@ namespace
 	constexpr double DeadlockForgetSeconds = 10.0;
 	// A blocked train slower than this counts as waiting. [cm/s]
 	constexpr float PlannerWaitSpeed = 300.f;
+	// A wait ends once the train is let go for this long without a break, or once it moves faster than PlannerWaitSpeed. [s]
+	constexpr float WaitEndFreeSeconds = 3.f;
 
 	// Learning how a train drives: per update, its cruising speed moves this share towards a higher speed and this share
 	// towards a lower one; its acceleration this share towards each sample. Plans use at least these. [cm/s] [cm/s^2]
@@ -512,9 +514,13 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 			UE_LOG(LogAutoTrains, Verbose, TEXT("traffic: %s: %s"), *TrainName(State->Train.Get()), *State->BlockedReason);
 		}
 
-		// Held up, even while it rolls slowly up to its stop; with or without a train to wait for.
-		State->WaitingSeconds = !State->BlockedReason.IsEmpty() && State->Speed < PlannerWaitSpeed ? State->WaitingSeconds + DeltaSeconds : 0.f;
-		State->UnnamedWaitSeconds = State->WaitingSeconds > 0.f && !State->BlockedBy.IsValid() ? State->UnnamedWaitSeconds + DeltaSeconds : 0.f;
+		// Held up, even while it rolls slowly up to its stop; with or without a train to wait for. Let go for moments
+		// without moving off, it is still waiting.
+		const bool bHeldUp = !State->BlockedReason.IsEmpty();
+		State->FreeSeconds = bHeldUp ? 0.f : State->FreeSeconds + DeltaSeconds;
+		const bool bWaitGoesOn = bHeldUp || (State->WaitingSeconds > 0.f && State->FreeSeconds < WaitEndFreeSeconds);
+		State->WaitingSeconds = bWaitGoesOn && State->Speed < PlannerWaitSpeed ? State->WaitingSeconds + DeltaSeconds : 0.f;
+		State->UnnamedWaitSeconds = bHeldUp && State->WaitingSeconds > 0.f && !State->BlockedBy.IsValid() ? State->UnnamedWaitSeconds + DeltaSeconds : 0.f;
 	}
 	LogDeadlocks();
 }

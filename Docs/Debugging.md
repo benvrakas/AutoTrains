@@ -860,3 +860,14 @@ the AFGTrain object name, unique where names repeat):
   switch's fouling zone (GetJointFoulDistance either side of the joint) or a crossing zone ahead of the front, the limit
   is that zone's start, if the train can still stop StopDistance short of it. SmartTrains 0.6.4 adds QueueLimitSeconds
   (rejects trips queueing over 60 s at any stop) and keeps repeats out of queued stations.
+- 1.4.3 (server log 16:04-18:07 UTC, AT 1.4.2 / ST 0.6.4, telemetry with train_id): the two push-pull water shuttles
+  (both named "Train": BP_Train_C_2146978540 Water SRC A <-> SNK A, BP_Train_C_2147084676 Water SRC B <-> SNK B, 10
+  tracks / 245 m legs sharing switch 514 and track 2147100206) stood each other off from 17:50 for 17+ min with no
+  DEADLOCK line. One waited "where it stands" for the other (its plans alternated between "no way on past switch 514"
+  and a locked booking on 514); the other, 21 m before 514, flapped every update between 2 claims (blocked: "booked
+  first on switch 514 (locked)") and 10 claims (authority to its goal, empty BlockedReason), never moving off
+  (0-1 km/h, 3 m in 13 min). The empty reason on alternate updates reset WaitingSeconds (waiting_s 0.0/0.3), so it
+  never reached DeadlockWaitSeconds and LogDeadlocks never ran the chain or ghosted it through. Fix: a wait ends only
+  after WaitEndFreeSeconds (3 s) let go without a break, or moving over PlannerWaitSpeed. Open: why the grant flaps
+  (the shuttle that waits where it stands books 514 locked; the other is granted 514 on the updates its plan failed).
+  The 16:05-16:08 Copper Sheet RSC 2 / R-Plates deadlock at the climb on track 2145780312 passed through after 60 s.

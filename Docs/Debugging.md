@@ -897,3 +897,15 @@ the AFGTrain object name, unique where names repeat):
   waited for "?", so no deadlock was found (STUCK warnings only). Fix: the standing rule applies only when the joint
   isn't in Train.Locked. Open: why the grant flapped; a lock on the joint doesn't lock the track after it.
   The water trains cycled normally (switch 514), and there were no head-on deadlocks or LogDeadlocks.
+- 1.4.6 (server run 2026-11-07 00:52-01:47 UTC, AT 1.4.5 / ST 0.6.8, Detailed log): the switch 188 standoff was there
+  from load to the end (Iron Ingot SRC C train "waits for ? before track 2146765859, 1 m ahead", 9-12 behind it).
+  Rank 0 or not, the train had no booking on switch 188: the whole Coal queue booked 188 and 2146765859 from 3 s on.
+  Cause: Build makes passes only over Out.Route = RouteTo(Final), and a failed plan's route ends at the step it
+  stands on, so the joint after it (in Train.Locked: its vehicle counts as on it) never got a pass or a booking. The
+  1.4.5 change (standing rule only when the joint isn't locked) never ran here; it stays, since it keeps a locked
+  joint entered now once the plan's route reaches it. The same gap made 1.4.4's reservations a no-op: they took
+  passes with Enter never, and a failed plan has none past its stand point (0 "reserved the other way" in 55 min of
+  Detailed log, 28 trains). Fix: past a failed plan's route, Build adds the route steps whose joint or track is in
+  Train.Locked (contiguous from the stand point) and makes passes there only for locked resources, entered now and
+  clear never. The reservations (bReserve, ReserveAheadDistance) are removed. Also this run: 3 DEADLOCK cycles by
+  Coated Plates RSC SNK (tracks 2147238907 / 2146785416), passed through.

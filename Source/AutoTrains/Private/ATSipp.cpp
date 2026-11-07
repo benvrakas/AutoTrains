@@ -42,8 +42,6 @@ namespace
 	constexpr int32 MaxShifts = 24;
 	// A wait shorter than this isn't one. [s]
 	constexpr double MinWaitSeconds = 0.5;
-	// How far ahead of where it stands a train whose plan failed reserves its tracks against trains the other way. [cm]
-	constexpr float ReserveAheadDistance = 100000.f;
 	// A move shorter than this is none, and a train slower than this at a track end stops there instead. [cm] [cm/s]
 	constexpr float MinMove = 1.f;
 	constexpr float MinPassSpeed = 50.f;
@@ -394,7 +392,7 @@ namespace
 			const bool bHeld = Train.Held.Contains(Resource);
 			for (const FATSippBooking& Booking : Table.ByResource[Resource])
 			{
-				if (Booking.Owner == Slot || IsBehind(Booking.Owner, Resource) || (Booking.bReserve && (Exit == INDEX_NONE || Booking.Exit == Exit)))
+				if (Booking.Owner == Slot || IsBehind(Booking.Owner, Resource))
 				{
 					continue;
 				}
@@ -1031,25 +1029,54 @@ namespace
 				return bReached && !IsNever(Train.GoalDwell) ? Last.Arrive + Train.GoalDwell + RestTime(Pos - Last.Pos, Top, Accel) : ATSippNever;
 			};
 			Out.Route = RouteTo(Final);
-			// Where the front is at the end of each route step.
-			TArray<float> StepEnd;
-			for (int32 Step = 0; Step < Out.Route.Num(); ++Step)
+			// The steps passes are made for: the plan's route, and past where a plan that fails stands, the route steps
+			// on whose switch or track the train is locked (its body in a switch's zone ahead of its front, or what it
+			// can't stop short of), from the first on without a break.
+			TArray<int32> PassRoute = Out.Route;
+			const int32 Planned = PassRoute.Num();
+			bool bOnRoute = Route && Route->Num() > Planned;
+			for (int32 Step = 0; bOnRoute && Step < Planned; ++Step)
 			{
-				StepEnd.Add(Step == 0 ? FMath::Max(Train.FirstEnd, MinMove) : StepEnd.Last() + Graph.Length[Graph.TrackOf[Out.Route[Step]]]);
+				bOnRoute = (*Route)[Step] == PassRoute[Step];
 			}
+			for (int32 Step = Planned; !bReached && bOnRoute && Step < Route->Num(); ++Step)
+			{
+				const int32 Node = (*Route)[Step];
+				const int32 Joint = Step > 0 ? Graph.JointOf[(*Route)[Step - 1]] : INDEX_NONE;
+				const bool bJointLocked = Joint != INDEX_NONE && Train.Locked.Contains(Graph.JointResource(Joint));
+				if (!bJointLocked && !Train.Locked.Contains(Graph.TrackOf[Node]))
+				{
+					break;
+				}
+				PassRoute.Add(Node);
+			}
+			// Where the front is at the end of each step.
+			TArray<float> StepEnd;
+			for (int32 Step = 0; Step < PassRoute.Num(); ++Step)
+			{
+				StepEnd.Add(Step == 0 ? FMath::Max(Train.FirstEnd, MinMove) : StepEnd.Last() + Graph.Length[Graph.TrackOf[PassRoute[Step]]]);
+			}
+			// Past the plan's route only what the train is locked on.
+			auto AddPass = [&](const FATSippPass& Pass)
+			{
+				if (Pass.Step < Planned || Train.Locked.Contains(Pass.Resource))
+				{
+					Out.Passes.Add(Pass);
+				}
+			};
 			for (const FATSippPass& Tail : Train.Tail)
 			{
 				FATSippPass Pass = Tail;
 				Pass.bLocked = true;
 				Out.Passes.Add(Pass);
 			}
-			for (int32 Step = 0; Step < Out.Route.Num(); ++Step)
+			for (int32 Step = 0; Step < PassRoute.Num(); ++Step)
 			{
-				const int32 Node = Out.Route[Step];
+				const int32 Node = PassRoute[Step];
 				const float From = Step > 0 ? StepEnd[Step - 1] : 0.f;
 				if (Step > 0)
 				{
-					const int32 Previous = Out.Route[Step - 1];
+					const int32 Previous = PassRoute[Step - 1];
 					const int32 Joint = Graph.JointOf[Previous];
 					if (Joint != INDEX_NONE)
 					{
@@ -1064,7 +1091,7 @@ namespace
 						Pass.EnterAt = ZoneAt > 0.f ? ZoneAt : bWaitsShort ? From : 0.f;
 						Pass.ClearAt = From + Train.Length + Graph.JointFoul[Joint];
 						Pass.Step = Step;
-						Out.Passes.Add(Pass);
+						AddPass(Pass);
 					}
 				}
 				FATSippPass Pass;
@@ -1073,7 +1100,7 @@ namespace
 				Pass.EnterAt = Step == 0 ? -1.f : From;
 				Pass.ClearAt = StepEnd[Step] + Train.Length;
 				Pass.Step = Step;
-				Out.Passes.Add(Pass);
+				AddPass(Pass);
 				for (const FATSippZone& Zone : Graph.ZonesOf[Graph.TrackOf[Node]])
 				{
 					float ZoneFrom = 0.f;
@@ -1088,7 +1115,7 @@ namespace
 					Crossing.Step = Step;
 					if (Crossing.ClearAt > 0.f)
 					{
-						Out.Passes.Add(Crossing);
+						AddPass(Crossing);
 					}
 				}
 			}
@@ -1099,7 +1126,8 @@ namespace
 					Pass.bLocked = Train.Locked.Contains(Pass.Resource);
 					Pass.bHeld = !Pass.bLocked && Train.Held.Contains(Pass.Resource);
 				}
-				Pass.Enter = Pass.EnterAt <= 0.f ? Cycle.Now : TimeAt(Pass.EnterAt);
+				// Past the plan's route: from now on, as it is locked there.
+				Pass.Enter = Pass.EnterAt <= 0.f || Pass.Step >= Planned ? Cycle.Now : TimeAt(Pass.EnterAt);
 				Pass.Clear = TimeAt(Pass.ClearAt);
 			}
 			// At a dead end: held from the last switch on until it has backed out past that.
@@ -1210,7 +1238,7 @@ namespace
 					{
 						// Trains not driven plan nothing, ones planned after this one keep clear of it, and ones the same
 						// way queue behind it.
-						if (bHolds || Booking.Owner == Slot || Booking.Kind == EATSippKind::Standing || Booking.bReserve || Booking.Clear + Headway <= Arrive
+						if (bHolds || Booking.Owner == Slot || Booking.Kind == EATSippKind::Standing || Booking.Clear + Headway <= Arrive
 							|| (Booking.Kind == EATSippKind::Moving && PlansAfter(Booking.Owner))
 							|| (Pass.Exit != INDEX_NONE && Booking.Exit == Pass.Exit && Booking.Via == Pass.Via)
 							|| IsBehind(Booking.Owner, Pass.Resource))
@@ -1253,7 +1281,7 @@ namespace
 				}
 				for (const FATSippBooking& Booking : Table.ByResource[Pass.Resource])
 				{
-					if (Out.CommittedWith != INDEX_NONE || Booking.Owner == Slot || Booking.bReserve || IsBehind(Booking.Owner, Pass.Resource)
+					if (Out.CommittedWith != INDEX_NONE || Booking.Owner == Slot || IsBehind(Booking.Owner, Pass.Resource)
 						|| !(Booking.bLocked || Train.First.Contains(Booking.Owner)))
 					{
 						continue;
@@ -1414,42 +1442,6 @@ void ATSipp::Run(FATSippCycle& Cycle)
 			Booking.bHeld = Pass.bHeld;
 			Booking.bCommitted = Pass.bCommitted;
 			Cycle.Table.Add(Pass.Resource, Booking);
-		}
-		// A self-driving train whose plan fails keeps the tracks ahead of where it stands, up to ReserveAheadDistance,
-		// from trains coming the other way, so none drives in where the two can't pass. Nothing is reserved while a train
-		// the other way holds one of them already.
-		if (Result.bFailed && Train.Kind == EATSippKind::Moving && !Train.bProbe)
-		{
-			const FATSippGraph& Graph = *Cycle.Graph;
-			TArray<const FATSippPass*, TInlineAllocator<32>> Ahead;
-			bool bOncomingHolds = false;
-			for (const FATSippPass& Pass : Result.Passes)
-			{
-				if (Pass.Step == INDEX_NONE || !Graph.Length.IsValidIndex(Pass.Resource) || !IsNever(Pass.Enter) || Pass.EnterAt > ReserveAheadDistance)
-				{
-					continue;
-				}
-				for (const FATSippBooking& Booking : Cycle.Table.ByResource[Pass.Resource])
-				{
-					bOncomingHolds = bOncomingHolds || (Booking.Owner != Slot && (Booking.bLocked || Booking.bHeld) && Booking.Exit != Pass.Exit);
-				}
-				Ahead.Add(&Pass);
-			}
-			if (bOncomingHolds)
-			{
-				Ahead.Reset();
-			}
-			for (const FATSippPass* Pass : Ahead)
-			{
-				FATSippBooking Booking;
-				Booking.Owner = Slot;
-				Booking.Enter = Cycle.Now;
-				Booking.Clear = ATSippNever;
-				Booking.Exit = Pass->Exit;
-				Booking.Kind = Train.Kind;
-				Booking.bReserve = true;
-				Cycle.Table.Add(Pass->Resource, Booking);
-			}
 		}
 	};
 

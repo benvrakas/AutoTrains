@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.4.6
+
+- **Fixed: a train stopped on a switch could block it forever (for real this time).** 1.4.5 didn't fix this: the
+  jam it was meant for came back right after the server restarted. A train whose way ahead was blocked counted only
+  the track it stood on as its own, not the switch its nose had stopped on, so trains on the other branch kept being
+  sent through that switch, where they then waited for it. A held-up train now keeps everything it can't get off: the
+  switch it has stopped on, and what it is too close to stop before.
+- **Removed: 1.4.4's track reservations for trains coming the other way.** They never took effect, because of the
+  same fault, so nothing changes in how trains drive.
+
 ## 1.4.5
 
 - **Fixed: a train that stopped on a switch could block it forever.** When a train had to brake hard and came to a

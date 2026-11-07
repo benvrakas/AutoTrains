@@ -634,6 +634,9 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 	State.BlockedBy = nullptr;
 	State.BlockedReason.Reset();
 	State.BlockedKey.Reset();
+	State.BlockedAtTrack = nullptr;
+	State.BlockedAtJoint = INDEX_NONE;
+	State.BlockedAtCrossing = INDEX_NONE;
 	State.AuthorityCut = -1.f;
 	// Enough to stop from the speed it is heading for, so it can speed up.
 	const float Heading = FMath::Max(State.Speed, GetRouteSpeed(State).Cruise);
@@ -703,6 +706,7 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 			State.BlockedReason = FString::Printf(TEXT("waits for %s where it stands: its plan moves off in %s"), *NameOf(State.PlanWaitFor.Get()),
 				*SecondsText(State.PlanDepart - Now));
 			State.BlockedKey = NameOf(State.PlanWaitFor.Get()) + TEXT("|plan|here");
+			State.BlockedAtTrack = Step.Track;
 			bBlocked = true;
 			break;
 		}
@@ -805,6 +809,7 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 			State.BlockedReason = FString::Printf(TEXT("waits for %s at the end of %s: its plan moves off in %s"), *NameOf(State.PlanWaitFor.Get()),
 				*ResourceName(Step.Track, INDEX_NONE), *SecondsText(State.PlanDepart - Now));
 			State.BlockedKey = NameOf(State.PlanWaitFor.Get()) + TEXT("|plan|") + ResourceName(Step.Track, INDEX_NONE);
+			State.BlockedAtTrack = Step.Track;
 			bBlocked = true;
 			break;
 		}
@@ -944,8 +949,8 @@ void AATTrafficSubsystem::FillSippTrain(const FATTrafficTrain& State, const FATS
 	Out.RearZAt = State.RearZAt;
 	Out.bStanding = State.Speed < StandingSpeed;
 	// Held: what the train holds from its last grant (route steps it holds from its front on, and the switches between
-	// them). Locked: what it stands on, can't stop short of, or holds within its full-brake stopping distance plus the
-	// stop distance; only what it holds or can't avoid, never a resource ahead it merely stands close to.
+	// them). Locked: what it stands on, can't stop short of, or, moving, holds within its full-brake stopping distance plus
+	// the stop distance; only what it holds or can't avoid, never a resource ahead it merely stands close to.
 	TArray<FPass> Passes;
 	CollectPasses(State, Passes);
 	const float Committed = GetStoppingDistance(State, State.Speed);
@@ -964,7 +969,7 @@ void AATTrafficSubsystem::FillSippTrain(const FATTrafficTrain& State, const FATS
 		}
 		const bool bHolds = Pass.RouteIndex != INDEX_NONE && Pass.RouteIndex <= HeldIndex
 			&& (Pass.Key.Crossing == INDEX_NONE || State.ClaimedCrossings.Contains(Pass.Key.Crossing));
-		if (Pass.RouteIndex == INDEX_NONE || Pass.EnterAt <= 0.f || Pass.EnterAt <= Committed || (bHolds && Pass.EnterAt <= LockedWithin))
+		if (Pass.RouteIndex == INDEX_NONE || Pass.EnterAt <= 0.f || Pass.EnterAt <= Committed || (bHolds && !Out.bStanding && Pass.EnterAt <= LockedWithin))
 		{
 			Out.Locked.Add(Resource);
 		}

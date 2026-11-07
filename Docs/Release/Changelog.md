@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.4.7
+
+- **Fixed: two trains side by side before a merge could block each other for good.** A train standing short of a
+  switch counted as unable to stop before it whenever it had been given the track behind it, so it kept the switch
+  while waiting for the other train, which waited for it.
+- **Fixed: passing through a deadlock could strand a train.** All trains in the deadlock passed through at once, so at
+  a merge both ran for the same switch; it can only be set for one, and the other went down the wrong branch and stood
+  there for good. Now one train passes through at a time, preferring one whose way is actually clear.
+- The log describes a deadlock in more detail when it starts.
+
 ## 1.4.6
 
 - **Fixed: a train stopped on a switch could block it forever (for real this time).** 1.4.5 didn't fix this: the

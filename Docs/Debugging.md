@@ -909,3 +909,17 @@ the AFGTrain object name, unique where names repeat):
   Train.Locked (contiguous from the stand point) and makes passes there only for locked resources, entered now and
   clear never. The reservations (bReserve, ReserveAheadDistance) are removed. Also this run: 3 DEADLOCK cycles by
   Coated Plates RSC SNK (tracks 2147238907 / 2146785416), passed through.
+- 1.4.7 (server run 2026-11-07 from 07:09 UTC, AT 1.4.6 / ST 0.6.8, Detailed log off until 07:14:55): the two water
+  push-pull shuttles (BP_Train_C_2146978540 SNK B <-> SRC B, BP_Train_C_2147084676 SNK A <-> SRC A) share only track
+  2147100206 and the merge switches at its ends; each has its own platforms. Both stood side by side at the SRC end,
+  20 m from the merge (switch 531), after load. 07:13:12 DEADLOCK: rank 14 waited at switch 531 for rank 15's booking
+  there (locked, enters in 10 s); rank 15 waited at track 2147100206 for rank 14's earlier planned booking. Rank 15's
+  531 booking was locked though it stood 20 m short (SIPP enter time 10 s, so its front wasn't in the zone): the only
+  rule left is CollectPasses' "held and within LockedWithin" (its booking on 2147100206 was held). A standing train
+  can wait anywhere, so that rule now applies to moving trains only. 07:14:14 the deadlock was passed through with
+  both trains ghosting at once: both ran onto 2147100206 together, the far merge switch was set for 2146978540
+  (WRONG SWITCH 07:14:26), 2147084676 followed onto SNK B's branch, the game gave it SDLE_StationUnreachable (07:14:48
+  LOST), it went unmanaged and 2146978540 waited behind it for good (not a cycle, so never passed through again).
+  GhostThrough now ghosts one train per deadlock: the first whose blocker neither stands on nor holds the place it
+  waits at (IsWayTaken), else the first. BlockedAt* are reset each grant and set for plan waits, so they're current.
+  A new DEADLOCK now also logs each member's WAIT dump and whether its blocker stands on or holds the place.

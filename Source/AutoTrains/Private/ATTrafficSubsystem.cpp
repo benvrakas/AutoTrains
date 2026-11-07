@@ -1391,21 +1391,45 @@ void AATTrafficSubsystem::GhostThrough(const TArray<const FATTrafficTrain*>& Cha
 	{
 		return;
 	}
+	// One train at a time, so no two run onto the same switch together: the first whose way is free of the train it
+	// waits for, else the first.
+	const FATTrafficTrain* const* Free = Chain.FindByPredicate([this](const FATTrafficTrain* Member) { return !IsWayTaken(*Member); });
+	const FATTrafficTrain* Picked = Free ? *Free : Chain[0];
+	FATTrafficTrain* Stuck = mTrains.Find(Picked->Train);
+	if (!Stuck)
+	{
+		return;
+	}
+	Stuck->GhostUntil = Now + mSettings.GhostMaxSeconds;
+	Stuck->GhostLeft = Stuck->Length + mSettings.GhostDistanceMetres * 100.f;
 	TArray<FString> Lines;
 	for (const FATTrafficTrain* Member : Chain)
 	{
-		if (FATTrafficTrain* Stuck = mTrains.Find(Member->Train))
-		{
-			Stuck->GhostUntil = Now + mSettings.GhostMaxSeconds;
-			Stuck->GhostLeft = Stuck->Length + mSettings.GhostDistanceMetres * 100.f;
-			Lines.Add(FString::Printf(TEXT("%s: %s"), *TrainName(Stuck->Train.Get()), *Stuck->BlockedReason));
-		}
+		Lines.Add(FString::Printf(TEXT("%s%s: %s"), Member == Picked ? TEXT("passes through: ") : TEXT(""), *TrainName(Member->Train.Get()), *Member->BlockedReason));
 	}
 	GGhosting = true;
 	const FString Fault = FString::Printf(TEXT("%s deadlock of %d trains passed through after %.0f s:\n  %s\n"), *FDateTime::Now().ToString(TEXT("%Y-%m-%d %H:%M:%S")), Chain.Num(),
 		Seconds, *FString::Join(Lines, TEXT("\n  ")));
 	UE_LOG(LogAutoTrains, Warning, TEXT("traffic: DEADLOCK passed through: %s"), *Fault);
 	WriteFault(Fault);
+}
+
+bool AATTrafficSubsystem::IsWayTaken(const FATTrafficTrain& State) const
+{
+	const FATTrafficTrain* Blocker = mTrains.Find(State.BlockedBy);
+	if (!Blocker)
+	{
+		return true;
+	}
+	if (State.BlockedAtJoint != INDEX_NONE)
+	{
+		return HoldsJoint(*Blocker, State.BlockedAtJoint);
+	}
+	if (State.BlockedAtCrossing != INDEX_NONE)
+	{
+		return HoldsCrossing(*Blocker, State.BlockedAtCrossing);
+	}
+	return !State.BlockedAtTrack || HoldsTrack(*Blocker, State.BlockedAtTrack);
 }
 
 void AATTrafficSubsystem::LogDeadlocks()
@@ -1472,7 +1496,9 @@ void AATTrafficSubsystem::LogDeadlocks()
 		UE_LOG(LogAutoTrains, Warning, TEXT("traffic: DEADLOCK: %s -> %s"), *FString::Join(Names, TEXT(" -> ")), *Names[0]);
 		for (const FATTrafficTrain* Member : Chain)
 		{
-			UE_LOG(LogAutoTrains, Warning, TEXT("traffic: DEADLOCK:   %s: %s"), *TrainName(Member->Train.Get()), *Member->BlockedReason);
+			UE_LOG(LogAutoTrains, Warning, TEXT("traffic: DEADLOCK:   %s: %s; that train %s the place"), *TrainName(Member->Train.Get()), *Member->BlockedReason,
+				IsWayTaken(*Member) ? TEXT("stands on or holds") : TEXT("neither stands on nor holds"));
+			LogWaitDump(*Member, Now);
 			// Every train in the cycle looks for another way at once; a train waiting for it counts as impassable.
 			if (FATTrafficTrain* Stuck = mTrains.Find(Member->Train))
 			{

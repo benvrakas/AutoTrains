@@ -377,8 +377,10 @@ private:
 	void UpdateAuthority(FATTrafficTrain& State) const;
 	void RefreshClaimedJoints(FATTrafficTrain& State) const;
 	void LogDeadlocks();
-	// Lets the trains of a deadlock that lasted Seconds pass through each other, and records the fault.
+	// Lets one train of a deadlock that lasted Seconds pass through the others, and records the fault.
 	void GhostThrough(const TArray<const FATTrafficTrain*>& Chain, double Seconds);
+	// Whether the train it waits for stands on or holds the place it waits at (true if either is unknown).
+	bool IsWayTaken(const FATTrafficTrain& State) const;
 	// Logs what a long-waiting train waits for: its booking and every booking at that resource, with their trains.
 	void LogWaitDump(const FATTrafficTrain& State, double Now) const;
 	// Logs each crossing zone a driven train has come to stand on without holding it. WasOn: the zones it stood on before.

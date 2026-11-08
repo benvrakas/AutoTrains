@@ -5,9 +5,13 @@
 #include "ATSipp.h"
 #include "Algo/AnyOf.h"
 #include "AutoTrains.h"
+#include "Buildables/FGBuildableRailroadSignal.h"
 #include "Buildables/FGBuildableRailroadStation.h"
 #include "Buildables/FGBuildableRailroadTrack.h"
 #include "EngineUtils.h"
+#include "FGRailroadTimeTable.h"
+#include "FGTrainStationIdentifier.h"
+#include "RailroadNavigation.h"
 #include "Curves/CurveFloat.h"
 #include "FGLocomotive.h"
 #include "FGLocomotiveMovementComponent.h"
@@ -176,6 +180,59 @@ namespace
 		return Train ? Train->GetTrainName().ToString() : TEXT("?");
 	}
 
+	// The signals the train would pass from behind on its shortest path to its timetable's current stop with signals
+	// ignored (the game's pathfinder doesn't leave a track end that has only a signal facing the other way), for the log.
+	FString DescribeSignalsInWay(AFGTrain* Train)
+	{
+		const AFGRailroadTimeTable* TimeTable = Train ? Train->GetTimeTable() : nullptr;
+		TArray<FTimeTableStop> Stops;
+		if (TimeTable)
+		{
+			TimeTable->GetStops(Stops);
+		}
+		const FTimeTableStop* Stop = Stops.IsValidIndex(TimeTable ? TimeTable->GetCurrentStop() : INDEX_NONE) ? &Stops[TimeTable->GetCurrentStop()] : nullptr;
+		AFGBuildableRailroadStation* Station = Stop && Stop->Station ? Stop->Station->GetStation() : nullptr;
+		if (!Station)
+		{
+			return TEXT("no next stop to check");
+		}
+		FRailroadGraphAStarFilter Filter;
+		Filter.IgnoreSignals = true;
+		TArray<FString> Best;
+		int32 BestPoints = MAX_int32;
+		for (AFGRailroadSubsystem::TTrainIterator It(Train->GetFirstVehicle()); It; ++It)
+		{
+			AFGLocomotive* Locomotive = Cast<AFGLocomotive>(*It);
+			if (!Locomotive)
+			{
+				continue;
+			}
+			const FRailroadPathFindingResult Result = FRailroadNavigation::FindPathSync(Locomotive, Station, Filter);
+			if (Result.Result != ERailroadPathFindingResult::RPFR_Success || !Result.Path.IsValid() || Result.Path->PathPoints.Num() >= BestPoints)
+			{
+				continue;
+			}
+			BestPoints = Result.Path->PathPoints.Num();
+			Best.Reset();
+			for (const FRailroadPathPoint& Point : Result.Path->PathPoints)
+			{
+				const UFGRailroadTrackConnectionComponent* Connection = Point.TrackConnection.Get();
+				const AFGBuildableRailroadSignal* Signal = Connection && !Connection->GetFacingSignal() ? Connection->GetTrailingSignal() : nullptr;
+				if (Signal)
+				{
+					const FVector Location = Signal->GetActorLocation();
+					Best.Add(FString::Printf(TEXT("%s at the end of %s (%.0f, %.0f, %.0f)"), *GetNameSafe(Signal), *TrackName(Connection->GetTrack()),
+						Location.X / 100.f, Location.Y / 100.f, Location.Z / 100.f));
+				}
+			}
+		}
+		const FString StationText = Stop->Station->GetStationName().ToString();
+		if (BestPoints == MAX_int32)
+		{
+			return FString::Printf(TEXT("no path to %s even with signals ignored"), *StationText);
+		}
+		return FString::Printf(TEXT("to %s it would pass %d signal(s) from behind: %s"), *StationText, Best.Num(), *FString::Join(Best, TEXT("; ")));
+	}
 }
 
 AATTrafficSubsystem::AATTrafficSubsystem()
@@ -396,7 +453,7 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 		TrackDocking(State, Train, WorldNow);
 		UpdateHillHelp(State, WorldNow);
 		WatchLostPath(State, WorldNow);
-		ApplyLocomotivePower(Train, Train->IsSelfDrivingEnabled() ? GAccelerationScale * State.HillBoost : 1.f, Train->IsSelfDrivingEnabled() ? GTopSpeed * 0.036f : 0.f);
+		ApplyLocomotivePower(Train, (Train->IsSelfDrivingEnabled() ? GAccelerationScale : 1.f) * State.HillBoost, Train->IsSelfDrivingEnabled() ? GTopSpeed * 0.036f : 0.f);
 
 		// Measure full-brake deceleration per speed band between updates with full brake on at both; a catch ends at
 		// standstill, and docking catches and crashes are far above 20 m/s^2.
@@ -861,8 +918,10 @@ void AATTrafficSubsystem::WatchLostPath(FATTrafficTrain& State, double Now) cons
 	}
 	State.bLostReported = true;
 	const FString Where = State.Vehicles.Num() > 0 ? TrackName(State.Vehicles[0].Track) : TEXT("no track");
-	const FString Fault = FString::Printf(TEXT("%s %s has had no path for %.0f s (on %s, %.0f km/h): %s\n"), *FDateTime::Now().ToString(TEXT("%Y-%m-%d %H:%M:%S")), *TrainName(Train),
-		Now - State.LostSince, *Where, State.Speed * 0.036f, *DescribeDrive(*Train));
+	const bool bSignals = Train->GetSelfDrivingError() == ESelfDrivingLocomotiveError::SDLE_StationUnreachableWithSignals;
+	const FString Fault = FString::Printf(TEXT("%s %s has had no path for %.0f s (on %s, %.0f km/h): %s%s%s\n"), *FDateTime::Now().ToString(TEXT("%Y-%m-%d %H:%M:%S")), *TrainName(Train),
+		Now - State.LostSince, *Where, State.Speed * 0.036f, *DescribeDrive(*Train), bSignals ? TEXT("; ") : TEXT(""),
+		bSignals ? *DescribeSignalsInWay(const_cast<AFGTrain*>(Train)) : TEXT(""));
 	UE_LOG(LogAutoTrains, Warning, TEXT("traffic: LOST: %s"), *Fault.TrimEnd());
 	WriteFault(Fault);
 }
@@ -2056,7 +2115,9 @@ void AATTrafficSubsystem::UpdateHillHelp(FATTrafficTrain& State, double Now) con
 		State.StandSince = Now;
 		State.bStallReported = false;
 	}
-	if (State.HillBoost > 1.f && (!bOn || (Pull < State.FullTraction * HillHelpEndShare && (State.Speed >= HillHelpSpeed || !bWants))))
+	// Help ends over the climb, or when switched off; not when a player takes over on the climb.
+	const bool bCanHelp = mSettings.bHillHelp && Train && State.FullTraction > 0.f;
+	if (State.HillBoost > 1.f && (!bCanHelp || (Pull < State.FullTraction * HillHelpEndShare && (State.Speed >= HillHelpSpeed || !bWants))))
 	{
 		UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s is over the climb at %.0f km/h (slope %.1f %%); its own traction again after %.0f s of hill help"), *TrainName(Train),
 			State.Speed * 0.036f, State.Grade * 100.f, Now - State.HillSince);

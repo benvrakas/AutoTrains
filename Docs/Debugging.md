@@ -923,3 +923,18 @@ the AFGTrain object name, unique where names repeat):
   GhostThrough now ghosts one train per deadlock: the first whose blocker neither stands on nor holds the place it
   waits at (IsWayTaken), else the first. BlockedAt* are reset each grant and set for plan waits, so they're current.
   A new DEADLOCK now also logs each member's WAIT dump and whether its blocker stands on or holds the place.
+- 1.4.8 (server run 2026-11-08 from 22:06 UTC, AT 1.4.7 / ST 0.7.5, Detailed log): "ST: Sulfur: Crater Lake Sulfur
+  SRC (1200) -> RockPow- Sulfur SNK" stalled at 14 km/h on a 33.4 % climb (22:34:38, hill help x1.49), then stood 1 m
+  short of track 2147217081 with "its plan has no slot there yet" (STUCK 22:35:07, a Coal train queued behind). The
+  SIPP search uses Train.StartClimb (traction x HillHelpMax) only for the first move from standing (Step < 0, Pos <
+  MinMove); every later move on the climb used Train.Climb (own traction), which can't climb 33 %, so every move up
+  was a RejectedClimb and the plan failed. Fix: Out.Climb = StartClimb while HillBoost > 1 or the slope under the
+  body pulls more than HillStartShare of its own traction (help lasts until over the climb). 22:36:11 a player sat in
+  and switched autopilot off; UpdateHillHelp ended the help because bOn needs self-driving, and ApplyLocomotivePower
+  applied the boost only to self-driving trains, so at x1.00 (2000 kN against 2240 kN of slope) it rolled back
+  through the Coal and an Iron Plate train. Help now ends only over the climb or when switched off, and the boost
+  applies whoever drives. Also: "ST: to Depot Sink 1/2" LOST with SDLE_StationUnreachableWithSignals. Disassembly of
+  FRailroadGraphAStarFilter::IsTraversalAllowed (PDB public at section 1 + 0xb602f0): allowed if IgnoreSignals, or the
+  connection has a facing signal, or it has no trailing signal; block validation isn't checked. So these are
+  direction blocks. The LOST report now reruns FindPathSync with IgnoreSignals and lists the trailing-only signals on
+  the path.

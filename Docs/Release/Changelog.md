@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.4.8
+
+- **Fixed: a train stopped part way up a steep climb could stay there for good.** The planner counted on the hill help
+  only for the first metre of a start, so from the middle of a climb steeper than the train's own traction it found
+  no way on. While the train has hill help, or stands on such a climb, it now plans the whole way with it.
+- **Fixed: taking over a train by hand on a climb took its hill help away.** The help now stays until the train is over
+  the climb, also when a player drives it, so it doesn't roll back.
+- When a train finds no path because of signals, the log now names each signal it would have to pass from behind,
+  with its track and position, so you can turn or remove it. The game only blocks paths by a signal's direction: a
+  track end with a signal facing against the train and none facing its way.
+
 ## 1.4.7
 
 - **Fixed: two trains side by side before a merge could block each other for good.** A train standing short of a

@@ -941,6 +941,12 @@ void AATTrafficSubsystem::FillSippTrain(const FATTrafficTrain& State, const FATS
 	{
 		Out.Climb = State.FullTraction / FMath::Max(State.Mass, 1.f);
 		Out.StartClimb = Out.Climb * (mSettings.bHillHelp ? mSettings.HillHelpMax : 1.f);
+		// Helped now, or on a climb too steep for its own traction: the hill help lasts until it is over the climb, so
+		// the whole plan counts on it.
+		if (mSettings.bHillHelp && (State.HillBoost > 1.f || ClimbGravity * State.Grade * State.Mass > State.FullTraction * HillStartShare))
+		{
+			Out.Climb = Out.StartClimb;
+		}
 	}
 	Out.Speed = State.Speed;
 	Out.FrontZ = State.FrontZ;

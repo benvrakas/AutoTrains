@@ -2229,8 +2229,12 @@ float AATTrafficSubsystem::GetAuthorityDistance(const AFGTrain* Train) const
 		return 0.f;
 	}
 	// On the path the route was read from, the authority is at a known segment; a route can pass its track twice.
-	const int32 AuthoritySegment = Atc.Path.Get() == State->AuthorityPath ? State->AuthoritySegment : INDEX_NONE;
+	const bool bSamePath = Atc.Path.Get() == State->AuthorityPath;
+	const int32 AuthoritySegment = bSamePath ? State->AuthoritySegment : INDEX_NONE;
 	float Distance = Atc.CurrentConnectionDistance;
+	// Where the run of tracks this train holds along the path ends, from the track it is on.
+	float HeldEnd = 0.f;
+	bool bHeldRun = true;
 	for (int32 Index = Atc.CurrentPathSegment; Index < Atc.Path->PathPoints.Num(); ++Index)
 	{
 		const UFGRailroadTrackConnectionComponent* Exit = Atc.Path->PathPoints[Index].TrackConnection.Get();
@@ -2247,8 +2251,16 @@ float AATTrafficSubsystem::GetAuthorityDistance(const AFGTrain* Train) const
 		{
 			return FMath::Max(0.f, Distance - State->FrontAhead);
 		}
+		bHeldRun = bHeldRun && HoldsTrack(*State, Track);
+		if (bHeldRun)
+		{
+			HeldEnd = Distance;
+		}
 	}
-	return 0.f;
+	// The game replaced the path (a new timetable stop, a reroute) and the authority isn't on it: until the next update
+	// plans the new route, the train may still drive on the tracks it holds along the new path. Stopping it at 0 m
+	// full-braked trains at speed whenever another mod rewrote their timetable mid-drive.
+	return bSamePath ? 0.f : FMath::Max(0.f, HeldEnd - State->FrontAhead);
 }
 
 void AATTrafficSubsystem::ApplyAuthority(AFGTrain* Train, float DeltaSeconds)

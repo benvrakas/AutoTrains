@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.13
+
+- **Fixed: a train whose path changed while driving could full-brake from speed.** When the game replaced a train's
+  path (a mod such as SmartTrains rewriting its timetable mid-drive, or a reroute), the end of the track the train had
+  been given was no longer on the new path, and the train was treated as having 0 m left until the next update planned
+  its new route. Until then it now drives on along the tracks it already holds on the new path.
+
 ## 1.4.11
 
 - **Fixed: two trains waiting at the same switch could take turns starting for a minute or more.** The planner lets

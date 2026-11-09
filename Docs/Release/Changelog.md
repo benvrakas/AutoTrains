@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.9
+
+- **Find what the log names:** `/at where` tells you where you are, in the log's metres. `/at where <place>` says how
+  far and which way a place is (e.g. `320 m north-east, 15 m above you; 35 degrees to your right`) and puts your
+  marker on it, shown on the compass. A place is `x y z`, a name from the log such as a signal, or a train.
+  `/at where clear` removes the marker. Anyone can use it.
+- `/at tp <place>` moves you there, and `/at tp back` returns you. Host or server admin only.
+
 ## 1.4.8
 
 - **Fixed: a train stopped part way up a steep climb could stay there for good.** The planner counted on the hill help

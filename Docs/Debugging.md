@@ -938,3 +938,10 @@ the AFGTrain object name, unique where names repeat):
   connection has a facing signal, or it has no trailing signal; block validation isn't checked. So these are
   direction blocks. The LOST report now reruns FindPathSync with IgnoreSignals and lists the trailing-only signals on
   the path.
+- 1.4.9: /at where and /at tp, so players can find what the log names (Satisfactory shows no coordinates). Compass:
+  DefaultGame.ini [FGMapCompassSettings] mCompassCardinalDirections puts North at (0, -1) and East at (1, 0), so
+  bearing = atan2(dx, -dy), and view yaw 0 (+X) is bearing 90. The marker is one per player, found again by its name
+  "AT <player>" so it survives restarts without saved state. Its icon is copied from any existing map marker, else
+  mDefaultStampIconID (656): the map marker icon IDs live in the cooked icon library, so this is a guess to check in
+  game. /at tp uses ACharacter::TeleportTo on the server (encroachment check, 3 m above the place); untested on the
+  dedicated server.

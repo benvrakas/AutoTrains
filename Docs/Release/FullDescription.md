@@ -228,6 +228,8 @@ Type them in the game chat. A `<train>` is its number from `/at list`, or part o
 | `/at list` | Every train with its number, speed, length and distance to its goal. |
 | `/at traffic status` | Every moving self-driving train, how far it may drive and what it is waiting for. The first place to look when a train seems stuck. |
 | `/at settings` | Every Auto Trains setting on the host or server, with its key and range. Settings changed from their default are marked `*`. |
+| `/at where` | Where you are, in metres as in the Auto Trains log, and which way you face. |
+| `/at where <place>` | How far and which way a place is from you, e.g. `320 m north-east, 15 m above you; 35 degrees to your right`, and puts your marker on it, shown on the compass and map. A place is `x y z` in metres (pasted straight from the log is fine), a name from the log such as a signal (`Build_RailroadBlockSignal_C_2147163402`, or just `2147163402`), or a train. Run it again on the way. `/at where clear` removes your marker. |
 
 **Switch things on and off** (host or server admin)
 
@@ -244,6 +246,7 @@ Type them in the game chat. A `<train>` is its number from `/at list`, or part o
 | Command | What it does |
 |---|---|
 | `/at removesignals confirm` | Dismantles every block and path signal in the world, with no refund and no undo. Without `confirm` it only explains what it would do. |
+| `/at tp <place>` / `back` | Moves you on foot to a place (3 m above it), or back to where your last `/at tp` started. Mind passing trains. |
 
 In multiplayer only the host or a server admin can change anything. A server admin is a player signed in to the
 dedicated server with its admin password. On a dedicated server, `/at set` is the way to change settings in game:

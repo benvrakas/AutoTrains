@@ -229,9 +229,10 @@ namespace
 		const FString StationText = Stop->Station->GetStationName().ToString();
 		if (BestPoints == MAX_int32)
 		{
-			return FString::Printf(TEXT("no path to %s even with signals ignored"), *StationText);
+			return FString::Printf(TEXT("no path to %s even with signals ignored (trains don't reverse: check the station faces the way trains arrive, and that a track leads in from its back end)"), *StationText);
 		}
-		return FString::Printf(TEXT("to %s it would pass %d signal(s) from behind: %s"), *StationText, Best.Num(), *FString::Join(Best, TEXT("; ")));
+		return FString::Printf(TEXT("to %s it would pass %d signal(s) from behind: %s. If those signals are right, the station may face the wrong way: a train must arrive driving the way the station faces"),
+			*StationText, Best.Num(), *FString::Join(Best, TEXT("; ")));
 	}
 }
 

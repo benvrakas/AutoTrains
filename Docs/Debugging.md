@@ -945,3 +945,7 @@ the AFGTrain object name, unique where names repeat):
   mDefaultStampIconID (656): the map marker icon IDs live in the cooked icon library, so this is a guess to check in
   game. /at tp uses ACharacter::TeleportTo on the server (encroachment check, 3 m above the place); untested on the
   dedicated server.
+- 1.4.10: the Depot Sink 1/2 LOST was not a wrong signal: both depot station platforms were built backwards (the
+  user found it, 2026-11-08). Arriving in the station's direction meant driving the main line against a correct
+  one-way signal, so the game reported SDLE_StationUnreachableWithSignals and the signals-ignored search named that
+  signal. The LOST text now names the backwards-station cause too.

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.10
+
+- When a train finds no path because of signals, the log now also says the station may face the wrong way. A
+  backwards station looks the same to the game as a one-way signal in the way: the only way to arrive facing the
+  station's direction runs against a signal that is itself correct.
+
 ## 1.4.9
 
 - **Find what the log names:** `/at where` tells you where you are, in the log's metres. `/at where <place>` says how

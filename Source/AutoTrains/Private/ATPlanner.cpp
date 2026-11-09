@@ -572,6 +572,12 @@ bool AATTrafficSubsystem::CanEnter(FATTrafficTrain& Self, const FResourceKey& Ke
 			{
 				continue;
 			}
+			// Held from its last grant: kept against a booking that isn't locked and isn't of a train ahead on this route,
+			// as its plan keeps it.
+			if (bHeldBefore && !Booking.bLocked && !bAheadHere)
+			{
+				continue;
+			}
 			const bool bEarlier = Booking.Enter < Enter || (Booking.Enter == Enter && Booking.Owner < SelfTrain);
 			const bool bFirst = bAheadHere || (Booking.bLocked != bLocked ? Booking.bLocked : bEarlier);
 			if (!bFirst)

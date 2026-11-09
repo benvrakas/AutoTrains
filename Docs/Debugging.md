@@ -949,3 +949,15 @@ the AFGTrain object name, unique where names repeat):
   user found it, 2026-11-08). Arriving in the station's direction meant driving the main line against a correct
   one-way signal, so the game reported SDLE_StationUnreachableWithSignals and the signals-ignored search named that
   signal. The LOST text now names the backwards-station cause too.
+- 1.4.11 (server telemetry-20261109-031621.csv, AT 1.4.9, Detailed log): the user saw trains take far too long to
+  start again after waiting at a switch. Telemetry: once a train's blocker clears (blocked_by '?'), it reaches 5 km/h
+  in about 1.6 s (median), so starting itself is fine. The delay was before that. The water shuttles (two "Train"s,
+  BP_Train_C_2146978540 and _2147084676) stood 8 m before switch 545 at their two SRC platforms for 60+ s, each
+  getting authority -1 and throttle ~0.2 for about a second, then authority 20 m again, roughly every planning round.
+  The log repeats per round: one "waits for Train before the switch...: booked first on switch 545 (planned, enters
+  in 2 s, clear in 9 s)", the other "...: holds switch 545", then "no way on past switch 545". Cause: rule mismatch.
+  SIPP GapAt lets a train keep a resource it holds from its last grant (skips bookings unless locked or ahead on the
+  route), and a train planned earlier doesn't see a later train's hold, so both plans go. CanEnter kept a held
+  resource only if locked or unplanned, otherwise bookings in Enter order decided. So the holder lost the switch at
+  grant time, the other then got it, and the next plan saw the roles swapped. Fix: CanEnter skips, for a resource held
+  before, bookings that aren't locked and aren't of a train ahead on the route, as GapAt does.

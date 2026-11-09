@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.11
+
+- **Fixed: two trains waiting at the same switch could take turns starting for a minute or more.** The planner lets
+  a train keep a switch it already holds, but the step that gives trains their way ahead every quarter second gave
+  the switch to whichever train was booked to enter it sooner. With two trains standing at a merge (two platforms
+  side by side, say) the switch went back and forth every second, and neither got going. A train now keeps what it
+  holds there too, unless the other train can't stop any more or is ahead of it on the same line.
+
 ## 1.4.10
 
 - When a train finds no path because of signals, the log now also says the station may face the wrong way. A

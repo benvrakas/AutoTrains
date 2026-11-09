@@ -60,7 +60,7 @@ namespace
 
 	FString NameOf(const AFGTrain* Train)
 	{
-		return Train ? Train->GetTrainName().ToString() : TEXT("?");
+		return ATTrainName(Train);
 	}
 
 	FString StationName(const AFGBuildableRailroadStation* Station)

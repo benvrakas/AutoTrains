@@ -7,6 +7,10 @@
   been given was no longer on the new path, and the train was treated as having 0 m left until the next update planned
   its new route. Until then it now drives on along the tracks it already holds on the new path.
 
+- **Trains with the same name are told apart in the log.** Trains sharing a name (every train nobody named is
+  "Train") get the end of their actor name, as in `Train #5678`. The number is kept in the save, and SmartTrains 0.9.4
+  uses the same one.
+
 ## 1.4.11
 
 - **Fixed: two trains waiting at the same switch could take turns starting for a minute or more.** The planner lets

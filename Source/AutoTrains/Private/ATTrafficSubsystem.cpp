@@ -177,7 +177,7 @@ namespace
 
 	FString TrainName(const AFGTrain* Train)
 	{
-		return Train ? Train->GetTrainName().ToString() : TEXT("?");
+		return ATTrainName(Train);
 	}
 
 	// The signals the train would pass from behind on its shortest path to its timetable's current stop with signals

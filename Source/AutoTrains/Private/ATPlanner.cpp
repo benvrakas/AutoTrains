@@ -2,6 +2,7 @@
 #include "ATRouter.h"
 #include "ATSipp.h"
 #include "AutoTrains.h"
+#include "Algo/AnyOf.h"
 #include "Buildables/FGBuildableRailroadStation.h"
 #include "Buildables/FGBuildableRailroadTrack.h"
 #include "Buildables/FGBuildableTrainPlatformCargo.h"
@@ -2258,6 +2259,129 @@ float AATTrafficSubsystem::ExternalGetStationQueue(AFGBuildableRailroadStation* 
 		OutTrains.Add(Train.Value);
 	}
 	return bUnknown ? -1.f : static_cast<float>(Free - Now);
+}
+
+float AATTrafficSubsystem::ExternalGetTrackLoad(AFGBuildableRailroadStation* Station, float HorizonSeconds, float ApproachMetres, TArray<AFGTrain*>& OutTrains,
+	float& OutWaitingSeconds)
+{
+	OutTrains.Reset();
+	OutWaitingSeconds = 0.f;
+	const UWorld* World = GetWorld();
+	const AFGBuildableRailroadTrack* StationTrack = Station ? Station->GetTrackPosition().Track.Get() : nullptr;
+	if (!mEnabled || !World || !StationTrack)
+	{
+		return -1.f;
+	}
+	// The tracks within reach, nearest first, walking out of both ends of the station's track.
+	constexpr int32 MaxTracks = 2000;
+	const float Reach = FMath::Max(ApproachMetres, 0.f) * 100.f;
+	TSet<const AFGBuildableRailroadTrack*> Tracks;
+	TSet<int32> Joints;
+	TSet<int32> Crossings;
+	Tracks.Add(StationTrack);
+	TArray<TPair<float, const UFGRailroadTrackConnectionComponent*>> Open;
+	const auto Less = [](const TPair<float, const UFGRailroadTrackConnectionComponent*>& A, const TPair<float, const UFGRailroadTrackConnectionComponent*>& B) { return A.Key < B.Key; };
+	for (int32 End = 0; End < 2; ++End)
+	{
+		if (const UFGRailroadTrackConnectionComponent* Connection = StationTrack->GetConnection(End))
+		{
+			Open.HeapPush({0.f, Connection}, Less);
+		}
+	}
+	while (Open.Num() > 0 && Tracks.Num() < MaxTracks)
+	{
+		TPair<float, const UFGRailroadTrackConnectionComponent*> Item;
+		Open.HeapPop(Item, Less);
+		const int32 Joint = GetJoint(Item.Value);
+		if (Joint != INDEX_NONE)
+		{
+			Joints.Add(Joint);
+		}
+		if (Item.Key >= Reach)
+		{
+			continue;
+		}
+		for (const UFGRailroadTrackConnectionComponent* Other : Item.Value->GetConnections())
+		{
+			const AFGBuildableRailroadTrack* Track = Other ? Other->GetTrack() : nullptr;
+			if (!Track || Tracks.Contains(Track))
+			{
+				continue;
+			}
+			Tracks.Add(Track);
+			if (const UFGRailroadTrackConnectionComponent* Far = Other->GetOpposite())
+			{
+				Open.HeapPush({Item.Key + Track->GetLength(), Far}, Less);
+			}
+		}
+	}
+	for (const AFGBuildableRailroadTrack* Track : Tracks)
+	{
+		for (const FATZone& Zone : GetZones(Track))
+		{
+			Crossings.Add(Zone.Crossing);
+		}
+	}
+
+	// The busiest switch or crossing: booked time in the horizon over the horizon.
+	const double Now = World->GetTimeSeconds();
+	const double Horizon = FMath::Max(HorizonSeconds, 1.f);
+	float Busiest = 0.f;
+	TSet<const AFGTrain*> Booked;
+	auto AddLoad = [&](const FResourceKey& Key)
+	{
+		const TArray<FBooking>* Bookings = mBookings.Find(Key);
+		if (!Bookings)
+		{
+			return;
+		}
+		double Used = 0.0;
+		for (const FBooking& Booking : *Bookings)
+		{
+			const double From = FMath::Max(Booking.Enter, Now);
+			const double To = IsOpen(Booking.Clear) ? Now + Horizon : FMath::Min(Booking.Clear, Now + Horizon);
+			if (To > From)
+			{
+				Used += To - From;
+				Booked.Add(Booking.Owner);
+			}
+		}
+		Busiest = FMath::Max(Busiest, static_cast<float>(Used / Horizon));
+	};
+	for (const int32 Joint : Joints)
+	{
+		FResourceKey Key;
+		Key.Joint = Joint;
+		AddLoad(Key);
+	}
+	for (const int32 Crossing : Crossings)
+	{
+		FResourceKey Key;
+		Key.Crossing = Crossing;
+		AddLoad(Key);
+	}
+
+	for (const TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Pair : mTrains)
+	{
+		const FATTrafficTrain& State = Pair.Value;
+		AFGTrain* Train = State.Train.Get();
+		if (!Train)
+		{
+			continue;
+		}
+		if (Booked.Contains(Train))
+		{
+			OutTrains.Add(Train);
+		}
+		const bool bHeldUpHere = State.WaitingSeconds > 0.f && !State.BlockedReason.IsEmpty()
+			&& ((State.BlockedAtTrack && Tracks.Contains(State.BlockedAtTrack)) || Joints.Contains(State.BlockedAtJoint) || Crossings.Contains(State.BlockedAtCrossing)
+				|| Algo::AnyOf(State.Occupied, [&Tracks](const AFGBuildableRailroadTrack* Track) { return Tracks.Contains(Track); }));
+		if (bHeldUpHere)
+		{
+			OutWaitingSeconds += State.WaitingSeconds;
+		}
+	}
+	return Busiest;
 }
 
 int32 AATTrafficSubsystem::ExternalGetTroubledTrains(TArray<AFGTrain*>& OutTrains, TArray<FString>& OutKinds, TArray<float>& OutSeconds)

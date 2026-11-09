@@ -331,6 +331,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Auto Trains")
 	float ExternalGetStationQueue(AFGBuildableRailroadStation* Station, TArray<AFGTrain*>& OutTrains);
 
+	// How busy the way into Station is: the switches and track crossings within ApproachMetres of its track over the
+	// network, either way. Returns the share of the next HorizonSeconds that the busiest of them is booked, summed over
+	// trains (0 when none is booked or there are none; 1 booked the whole time; -1 if traffic control is off or Station
+	// has no track). OutTrains: the trains with a booking on one of them in that time; OutWaitingSeconds: how long the
+	// trains held up before one of them, or on the tracks there, have waited so far, added up.
+	UFUNCTION(BlueprintCallable, Category = "Auto Trains")
+	float ExternalGetTrackLoad(AFGBuildableRailroadStation* Station, float HorizonSeconds, float ApproachMetres, TArray<AFGTrain*>& OutTrains, float& OutWaitingSeconds);
+
 	// The trains in trouble now, each with its kind and for how long [s]: "Deadlock" (in a cycle of trains waiting for
 	// each other), "Stuck" (held up with no train to wait for), "Lost" (self-driving without a path) and "Stalled"
 	// (standing at the full hill help though told to go). Returns how many.

@@ -11,6 +11,11 @@
   so for a moment the train neither held nor stood on the crossing, and the next car "came onto" it. The tracks the
   front just left now count too.
 
+- **Fixed: a train waiting where its plan waits could stop with its nose on a crossing.** When the plan's waiting
+  place was right at the start of a crossing zone the train wasn't given (on its track or just past the joint), it
+  stopped exactly there, and the last centimetres of braking put it onto the crossing. It now stops the stop distance
+  short of such a zone, as it already did before a crossing it can't have.
+
 ## 1.4.13
 
 - **Fixed: a train whose timetable changed while driving was stopped dead from full speed.** When a timetable is

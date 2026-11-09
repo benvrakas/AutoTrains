@@ -811,7 +811,32 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 		// No further than where its plan waits: that's a place it can stand without blocking anyone.
 		if (bPlanWaits && Step.EndDistance - State.FrontAhead - GetStopMargin(Step.Exit) >= State.PlanWaitAt - 100.f)
 		{
-			State.AuthorityCut = End - State.PlanWaitAt;
+			// The plan may wait right at the start of a crossing zone it wasn't given; stop the stop distance short of it,
+			// as before a zone it can't have, or the last centimetres of braking put the front on the crossing.
+			float StopAt = State.PlanWaitAt;
+			for (const TPair<float, int32>& Zone : Zones)
+			{
+				if (Zone.Key > State.PlanWaitAt && !State.OccupiedCrossings.Contains(Zone.Value))
+				{
+					StopAt = FMath::Min(StopAt, Zone.Key - GetStopDistance());
+				}
+			}
+			// Zones just past the track's end, on the route's next track.
+			if (State.Route.IsValidIndex(Index + 1))
+			{
+				const FATRouteStep& Next = State.Route[Index + 1];
+				for (const FATZone& Zone : GetZones(Next.Track))
+				{
+					float From = 0.f;
+					float To = 0.f;
+					GetZoneAlong(Zone, Next.Track, Next.Exit, From, To);
+					if (End + From > State.PlanWaitAt && !State.OccupiedCrossings.Contains(Zone.Crossing))
+					{
+						StopAt = FMath::Min(StopAt, End + From - GetStopDistance());
+					}
+				}
+			}
+			State.AuthorityCut = End - StopAt;
 			State.BlockedBy = State.PlanWaitFor;
 			State.BlockedReason = FString::Printf(TEXT("waits for %s at the end of %s: its plan moves off in %s"), *NameOf(State.PlanWaitFor.Get()),
 				*ResourceName(Step.Track, INDEX_NONE), *SecondsText(State.PlanDepart - Now));

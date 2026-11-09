@@ -67,6 +67,10 @@ namespace
 	constexpr float OverspeedTolerance = 100.f;
 	constexpr float TargetLeadSeconds = 0.5f;
 	constexpr double ConflictRebuildMinSeconds = 2.0;
+	// How long a train without a path (the game finding a new one) keeps the authority distance it had; and the speed
+	// above which a train with no room ahead is logged (detailed log). [s] [cm/s]
+	constexpr float NoPathGraceSeconds = 2.f;
+	constexpr float NoRoomLogSpeed = 1000.f;
 
 	// How far along its path a follower looks for the vehicles of the trains it follows. [cm]
 	constexpr float GapSearchDistance = 300000.f;
@@ -2215,7 +2219,7 @@ float AATTrafficSubsystem::GetAcceleration(const FATTrafficTrain& State, float S
 	return FMath::Clamp(Tractive / FMath::Max(State.Mass, 1.f) * Share, 20.f, 1200.f);
 }
 
-float AATTrafficSubsystem::GetAuthorityDistance(const AFGTrain* Train) const
+float AATTrafficSubsystem::GetAuthorityDistance(const AFGTrain* Train, const TCHAR** OutWhy) const
 {
 	const FATTrafficTrain* State = mTrains.Find(Train);
 	if (!State || !State->bManaged || State->bAuthorityToGoal)
@@ -2224,8 +2228,27 @@ float AATTrafficSubsystem::GetAuthorityDistance(const AFGTrain* Train) const
 	}
 	const AFGBuildableRailroadTrack* Authority = State->AuthorityTrack.Get();
 	const FTrainAtcData& Atc = Train->mAtcData;
-	if (!Authority || !Atc.Path.IsValid() || !Atc.Path->PathPoints.IsValidIndex(Atc.CurrentPathSegment))
+	if (!Authority)
 	{
+		if (OutWhy)
+		{
+			*OutWhy = TEXT("it holds no track ahead");
+		}
+		return 0.f;
+	}
+	if (!Atc.Path.IsValid() || !Atc.Path->PathPoints.IsValidIndex(Atc.CurrentPathSegment))
+	{
+		// The game is finding a new path (its timetable changed): the track it holds ahead hasn't changed, so the
+		// distance from the last tick with a path, less what it drove since, holds for a moment. Stopping it at 0 m
+		// force-braked trains from full speed whenever another mod rewrote their timetable.
+		if (State->LastAuthorityDistance >= 0.f && State->NoPathSeconds <= NoPathGraceSeconds)
+		{
+			return State->LastAuthorityDistance;
+		}
+		if (OutWhy)
+		{
+			*OutWhy = TEXT("the game has no path for it");
+		}
 		return 0.f;
 	}
 	// On the path the route was read from, the authority is at a known segment; a route can pass its track twice.
@@ -2260,6 +2283,10 @@ float AATTrafficSubsystem::GetAuthorityDistance(const AFGTrain* Train) const
 	// The game replaced the path (a new timetable stop, a reroute) and the authority isn't on it: until the next update
 	// plans the new route, the train may still drive on the tracks it holds along the new path. Stopping it at 0 m
 	// full-braked trains at speed whenever another mod rewrote their timetable mid-drive.
+	if (OutWhy && (bSamePath || HeldEnd <= State->FrontAhead))
+	{
+		*OutWhy = bSamePath ? TEXT("its last held track isn't ahead on its path") : TEXT("its path left the track it holds");
+	}
 	return bSamePath ? 0.f : FMath::Max(0.f, HeldEnd - State->FrontAhead);
 }
 
@@ -2272,7 +2299,33 @@ void AATTrafficSubsystem::ApplyAuthority(AFGTrain* Train, float DeltaSeconds)
 	}
 	AATControlSubsystem::IgnoreSignalStops(Train);
 	State->DrivenAt = GetWorld()->GetTimeSeconds();
-	const float Distance = GetAuthorityDistance(Train);
+	// Without a path (the game finding a new one), the last authority distance runs down with the distance driven.
+	const FTrainAtcData& PathData = Train->mAtcData;
+	const bool bHasPath = PathData.Path.IsValid() && PathData.Path->PathPoints.IsValidIndex(PathData.CurrentPathSegment);
+	if (bHasPath)
+	{
+		State->NoPathSeconds = 0.f;
+	}
+	else
+	{
+		State->NoPathSeconds += DeltaSeconds;
+		if (State->LastAuthorityDistance >= 0.f)
+		{
+			State->LastAuthorityDistance = FMath::Max(0.f, State->LastAuthorityDistance - FMath::Abs(Train->mSimulationData.Velocity) * DeltaSeconds);
+		}
+	}
+	const TCHAR* NoRoomWhy = nullptr;
+	const float Distance = GetAuthorityDistance(Train, &NoRoomWhy);
+	if (bHasPath)
+	{
+		State->LastAuthorityDistance = Distance;
+	}
+	if (NoRoomWhy && FMath::Abs(Train->mSimulationData.Velocity) > NoRoomLogSpeed && GetWorld()->GetTimeSeconds() - State->NoRoomLoggedAt > 5.0)
+	{
+		State->NoRoomLoggedAt = GetWorld()->GetTimeSeconds();
+		UE_LOG(LogAutoTrains, Verbose, TEXT("traffic: %s has no room ahead at %.0f km/h: %s (%.1f s without a path)"), *TrainName(Train),
+			FMath::Abs(Train->mSimulationData.Velocity) * 0.036f, NoRoomWhy, State->NoPathSeconds);
+	}
 	// Behind a leader on shared track: keep able to stop where the leader could stop.
 	float HardFollowLimit = -1.f;
 	FATFollowInfo FollowInfo;

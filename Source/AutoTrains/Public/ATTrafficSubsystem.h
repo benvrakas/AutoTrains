@@ -178,6 +178,13 @@ struct FATTrafficTrain
 	float ForcedSpeed = 0.f;
 	// Seconds the train has stood still.
 	float StoppedSeconds = 0.f;
+	// The authority distance at the last tick the game had a path for the train, run down by the distance driven since,
+	// and how long it has had none: the game drops the path when the timetable changes and finds a new one a moment
+	// later. [cm] [s]
+	float LastAuthorityDistance = -1.f;
+	float NoPathSeconds = 0.f;
+	// When "no room ahead" was last logged for it (detailed log). [s]
+	double NoRoomLoggedAt = -1e9;
 	// Whether the game's catch is set to hold the train at its stop point.
 	bool bCatchArmed = false;
 	// Seconds until this train's route is next checked for congestion, and how often it was rerouted.
@@ -357,7 +364,8 @@ public:
 	void ExternalTimeTableChanged(AFGTrain* Train);
 
 	// Returns the distance from Train's front to the end of its authority track, or -1 for no limit. [cm]
-	float GetAuthorityDistance(const AFGTrain* Train) const;
+	// OutWhy, when given, says why the distance is 0 when it is ("no path", ...), else stays null.
+	float GetAuthorityDistance(const AFGTrain* Train, const TCHAR** OutWhy = nullptr) const;
 
 	// Returns a one-line traffic summary of Train for telemetry.
 	FString DescribeForTelemetry(const AFGTrain* Train) const;

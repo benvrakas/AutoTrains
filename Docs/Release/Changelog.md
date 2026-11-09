@@ -2,10 +2,13 @@
 
 ## 1.4.13
 
-- **Fixed: a train whose path changed while driving could full-brake from speed.** When the game replaced a train's
-  path (a mod such as SmartTrains rewriting its timetable mid-drive, or a reroute), the end of the track the train had
-  been given was no longer on the new path, and the train was treated as having 0 m left until the next update planned
-  its new route. Until then it now drives on along the tracks it already holds on the new path.
+- **Fixed: a train whose timetable changed while driving was stopped dead from full speed.** When a timetable is
+  rewritten (SmartTrains does this when it gives a moving train a new job), the game drops the train's path and finds a
+  new one a moment later. In that moment Auto Trains saw no track ahead and stopped the train almost at once, from
+  110-125 km/h in the IB save's test runs (about one train every two minutes). It now keeps the room the train had,
+  less what it drives, for up to 2 s until the new path is there, and once it is, lets the train drive on along the
+  track it already holds even where the new path leaves its old route. With the detailed log on, a fast train left
+  with no room ahead is logged with the reason.
 
 - **Trains with the same name are told apart in the log.** Trains sharing a name (every train nobody named is
   "Train") get the end of their actor name, as in `Train #5678`. The number is kept in the save, and SmartTrains 0.9.4

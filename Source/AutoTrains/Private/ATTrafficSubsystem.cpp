@@ -70,6 +70,8 @@ namespace
 	// How long a train without a path (the game finding a new one) keeps the authority distance it had; and the speed
 	// above which a train with no room ahead is logged (detailed log). [s] [cm/s]
 	constexpr float NoPathGraceSeconds = 2.f;
+	// How many tracks the front left lately a train remembers (its body may still be over them).
+	constexpr int32 FrontTrailTracks = 12;
 	constexpr float NoRoomLogSpeed = 1000.f;
 
 	// How far along its path a follower looks for the vehicles of the trains it follows. [cm]
@@ -592,6 +594,7 @@ void AATTrafficSubsystem::ReadTrain(FATTrafficTrain& State, AFGTrain* Train) con
 	State.Train = Train;
 	State.Length = Train->mConsistData.Length;
 	State.Speed = FMath::Abs(Train->mSimulationData.Velocity);
+	AFGBuildableRailroadTrack* OldFrontTrack = State.Route.Num() > 0 ? State.Route[0].Track : nullptr;
 	State.Route.Reset();
 	State.Occupied.Reset();
 	State.Vehicles.Reset();
@@ -625,6 +628,14 @@ void AATTrafficSubsystem::ReadTrain(FATTrafficTrain& State, AFGTrain* Train) con
 				Distance += Track->GetLength();
 			}
 			State.Route.Add({Track, Exit, Distance});
+		}
+	}
+	if (OldFrontTrack && (State.Route.Num() == 0 || State.Route[0].Track != OldFrontTrack))
+	{
+		State.FrontTrail.Add(OldFrontTrack);
+		if (State.FrontTrail.Num() > FrontTrailTracks)
+		{
+			State.FrontTrail.RemoveAt(0);
 		}
 	}
 
@@ -694,12 +705,15 @@ void AATTrafficSubsystem::ReadTrain(FATTrafficTrain& State, AFGTrain* Train) con
 	}
 
 	// A vehicle reaching past a track end overhangs onto the track it moves on to there: the only one attached, else (a
-	// switch) the one the train's route or another of its vehicles is on; the switch's fouling zone covers the rest.
+	// switch) the one the train's route, its front lately or another of its vehicles is on; the switch's fouling zone
+	// covers the rest. Without the front's trail, a short track behind the front with no vehicle centred on it lost its
+	// crossing zones under the body, and the next car "came onto" a crossing the train no longer held.
 	const TSet<AFGBuildableRailroadTrack*> VehicleTracks = State.Occupied;
 	const auto MovesOnTo = [&State, &VehicleTracks](const TArray<UFGRailroadTrackConnectionComponent*>& Attached, AFGBuildableRailroadTrack* Track)
 	{
 		return Track && (Attached.Num() == 1 || VehicleTracks.Contains(Track)
-			|| State.Route.ContainsByPredicate([Track](const FATRouteStep& Step) { return Step.Track == Track; }));
+			|| State.Route.ContainsByPredicate([Track](const FATRouteStep& Step) { return Step.Track == Track; })
+			|| State.FrontTrail.ContainsByPredicate([Track](const TWeakObjectPtr<AFGBuildableRailroadTrack>& Each) { return Each.Get() == Track; }));
 	};
 	for (const UFGRailroadTrackConnectionComponent* Connection : Overhangs)
 	{

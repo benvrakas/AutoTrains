@@ -87,6 +87,8 @@ struct FATTrafficTrain
 	// Self-driving, not docked, following a path: this mod drives it.
 	bool bManaged = false;
 	TArray<FATRouteStep> Route;
+	// Tracks the front was on lately, oldest first: the body still runs over them after they left the route.
+	TArray<TWeakObjectPtr<AFGBuildableRailroadTrack>> FrontTrail;
 	TSet<AFGBuildableRailroadTrack*> Occupied;
 	TArray<FATVehicleSpot> Vehicles;
 	// Switch joints with a vehicle of this train within their fouling zone, and crossing zones with one on them.

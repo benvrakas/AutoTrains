@@ -1356,7 +1356,8 @@ void AATTrafficSubsystem::ApplyPlanCycle()
 			Own.Keys.Add(Key);
 		}
 	}
-	// Trains moved up after a failed plan stay before the train in their way for the rest of their leg.
+	// Trains moved up after a failed plan, or one that couldn't stop short of the other's booking, stay before the train
+	// in their way for the rest of their leg.
 	for (const TPair<int32, int32>& Move : Cycle->Reordered)
 	{
 		FATTrafficTrain* Moved = mTrains.Find(Cycle->Owners[Move.Key]);
@@ -1368,7 +1369,7 @@ void AATTrafficSubsystem::ApplyPlanCycle()
 		Moved->LegStart = FMath::Min(Moved->LegStart, Passed->LegStart - 0.001);
 		Moved->MovedAheadOf.Add(Passed->Train);
 		++mPlanReorders;
-		UE_LOG(LogAutoTrains, Verbose, TEXT("planner: %s is planned before %s from now on: its plan found no way past %s's booking"), *NameOf(Moved->Train.Get()),
+		UE_LOG(LogAutoTrains, Verbose, TEXT("planner: %s is planned before %s from now on: its plan found no way past %s's booking, or couldn't stop short of it"), *NameOf(Moved->Train.Get()),
 			*NameOf(Passed->Train.Get()), *NameOf(Passed->Train.Get()));
 	}
 	const FString Limited = Cycle->Owners.IsValidIndex(Cycle->RetryLimited) ? NameOf(Cycle->Owners[Cycle->RetryLimited].Get()) : FString();
@@ -1780,7 +1781,7 @@ void AATTrafficSubsystem::UpdatePlannedTraffic(float DeltaSeconds)
 		{
 			Bookings += Pair.Value.Num();
 		}
-		UE_LOG(LogAutoTrains, Log, TEXT("planner: last %.0f s: %d trains (%d driving), %d bookings now, %.2f ms per update; %d cycles, %.1f ms each on a worker, %d updates waited for one, %d trains moved up after a failed plan; %d plans, %d with a wait, %d failed, %d committed conflicts, %d reroutes, %d departures predicted"),
+		UE_LOG(LogAutoTrains, Log, TEXT("planner: last %.0f s: %d trains (%d driving), %d bookings now, %.2f ms per update; %d cycles, %.1f ms each on a worker, %d updates waited for one, %d trains moved up after a failed plan or one that couldn't stop short; %d plans, %d with a wait, %d failed, %d committed conflicts, %d reroutes, %d departures predicted"),
 			PlanSummarySeconds, mStateOf.Num(), Driving.Num(), Bookings, mPlanUpdates > 0 ? mPlanSeconds * 1000.0 / mPlanUpdates : 0.0, mCycles,
 			mCycles > 0 ? mCycleMilliseconds / mCycles : 0.0, mCyclesLate, mPlanReorders, mPlans, mPlanWaits, mPlanFailures, mPlanCommitted, mPlanReroutes, mPlanPredictions);
 		mPlans = mPlanWaits = mPlanFailures = mPlanCommitted = mPlanReroutes = mPlanPredictions = mPlanUpdates = mCycles = mCyclesLate = mPlanReorders = 0;

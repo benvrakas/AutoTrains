@@ -1446,8 +1446,8 @@ void ATSipp::Run(FATSippCycle& Cycle)
 	};
 
 	// The turns in order; a self-driving train whose plan fails on the booking of one planned before it, which counts
-	// only because that one plans first, goes before it and the turns are planned again (paper sec. 6, priority
-	// adjustment), up to MaxRetries times and RetrySeconds. A train is never put before one ahead of it on its route, nor
+	// only because that one plans first, or that can't stop short any more of such a booking, goes before it and the
+	// turns are planned again (paper sec. 6, priority adjustment), up to MaxRetries times and RetrySeconds. A train is never put before one ahead of it on its route, nor
 	// back before one that went before it this leg.
 	const FATSippTable Initial = Cycle.Table;
 	Cycle.Order.Reset();
@@ -1478,8 +1478,12 @@ void ATSipp::Run(FATSippCycle& Cycle)
 			const int32 Slot = Cycle.Order[Position];
 			const FATSippTrain& Train = Cycle.Trains[Slot];
 			const FATSippResult& Result = Cycle.Results[Slot];
-			const int32 By = Result.BlockedBy;
-			if (Train.Kind != EATSippKind::Moving || Train.bProbe || !Result.bFailed || !Result.bBlockedByRank || !Cycle.Trains.IsValidIndex(By)
+			// A train that can't stop short any more of something a train planned before it booked at the same time goes
+			// before that train too: it can't keep clear, the other one still can (the IB save's "can't stop short"
+			// conflicts came after the other train's timetable changed and it was planned again first).
+			const bool bFailedByRank = Result.bFailed && Result.bBlockedByRank;
+			const int32 By = bFailedByRank ? Result.BlockedBy : Result.CommittedWith;
+			if (Train.Kind != EATSippKind::Moving || Train.bProbe || (!bFailedByRank && Result.CommittedWith == INDEX_NONE) || !Cycle.Trains.IsValidIndex(By)
 				|| Cycle.Trains[By].Kind != EATSippKind::Moving || Train.First.Contains(By) || Cycle.Trains[By].MovedAheadOf.Contains(Slot))
 			{
 				continue;

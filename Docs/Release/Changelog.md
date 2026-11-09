@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.4.14
+
+- **Fewer "can't stop short" conflicts.** A train that can no longer stop short of a switch, crossing or track that a
+  train planned before it has booked at the same time now goes before that train, and the turn is planned again, the
+  way a train whose plan fails on such a booking already did. On the IB save these came just after the other train's
+  timetable changed and it was planned again ahead of a train already committed to its way.
+- **Fixed: a fast train's crossing could look free under its own body.** A car reaching over the end of a short track
+  behind the front (past a switch, with no car centred on it) didn't count as standing on that track's crossing zones,
+  so for a moment the train neither held nor stood on the crossing, and the next car "came onto" it. The tracks the
+  front just left now count too.
+
 ## 1.4.13
 
 - **Fixed: a train whose timetable changed while driving was stopped dead from full speed.** When a timetable is

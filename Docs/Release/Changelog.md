@@ -30,6 +30,12 @@
   "Train") get the end of their actor name, as in `Train #5678`. The number is kept in the save, and SmartTrains 0.9.4
   uses the same one.
 
+## 1.4.12
+
+- **For other mods: how busy the way into a station is.** Mods such as SmartTrains can now ask Auto Trains how much
+  of the next while the switches and crossings near a station are booked, which trains hold those bookings and how long
+  trains held up there have waited. Nothing changes in how trains drive.
+
 ## 1.4.11
 
 - **Fixed: two trains waiting at the same switch could take turns starting for a minute or more.** The planner lets

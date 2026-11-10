@@ -200,7 +200,8 @@ side of the track (back to back) allows both ways.
   handle, and sends trains from where items pile up to where they're needed. Auto Trains drives them. Before a
   train leaves a station, SmartTrains asks Auto Trains whether its first leg can be driven now, around every other
   train, including trains coming the other way on a single track; if not, the train waits in the station. Station
-  queues and travel times feed its trip timing, and its monitor shows trains that are stuck or deadlocked.
+  queues and travel times feed its trip timing, how busy the way into a station is helps it pick between stations,
+  and its monitor shows trains that are stuck or deadlocked.
 - **[Freight Car Control](https://ficsit.app/mod/FreightCarControl)** sets each freight car to load, unload or skip
   at every stop, so one train can fill car 1 at one station and car 2 at the next. Stations, docking and timetables
   work as usual.

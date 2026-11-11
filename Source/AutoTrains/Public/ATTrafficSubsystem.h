@@ -162,6 +162,11 @@ struct FATTrafficTrain
 	bool bHadPath = false;
 	double LostSince = -1.0;
 	bool bLostReported = false;
+	// The track end another mod sent it to with ExternalDriveTo, the drive's state (0 none, 1 under way, 2 arrived, 3 no
+	// way) and when its path to there was last set. [world s]
+	TWeakObjectPtr<UFGRailroadTrackConnectionComponent> DriveGoal;
+	int32 DriveState = 0;
+	double DriveSetAt = -1.0;
 	// Room ahead to where it has to stop as last driven, MAX_flt with nothing to stop for. [cm]
 	float Room = MAX_flt;
 	// Whether it was in a deadlock at the last update.
@@ -365,6 +370,23 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Auto Trains")
 	void ExternalTimeTableChanged(AFGTrain* Train);
 
+	// Sends the self-driving Train to Goal, a track end connection that isn't a station: it is planned and driven there
+	// like any leg and stops its front the stop distance short of Goal, then stands there. Its timetable is emptied
+	// (the game follows a path without a station only then). Returns false if Goal can't be reached driving forward from
+	// the train's front, the signals' directions respected, or the train isn't self-driving.
+	UFUNCTION(BlueprintCallable, Category = "Auto Trains")
+	bool ExternalDriveTo(AFGTrain* Train, UFGRailroadTrackConnectionComponent* Goal);
+
+	// The state of Train's ExternalDriveTo: 0 none, 1 under way, 2 arrived (standing at the goal), 3 no way (the log
+	// says why). Not kept in the save.
+	UFUNCTION(BlueprintCallable, Category = "Auto Trains")
+	int32 ExternalGetDriveState(AFGTrain* Train);
+
+	// Ends Train's ExternalDriveTo; a train still under way stops where it can. Giving it a timetable with stops ends
+	// the drive by itself.
+	UFUNCTION(BlueprintCallable, Category = "Auto Trains")
+	void ExternalCancelDrive(AFGTrain* Train);
+
 	// Returns the distance from Train's front to the end of its authority track, or -1 for no limit. [cm]
 	// OutWhy, when given, says why the distance is 0 when it is ("no path", ...), else stays null.
 	float GetAuthorityDistance(const AFGTrain* Train, const TCHAR** OutWhy = nullptr) const;
@@ -391,6 +413,14 @@ private:
 	void ThrowSwitches(float DeltaSeconds);
 	// Reports a self-driving train that had a path and has been without one for the deadlock wait time.
 	void WatchLostPath(FATTrafficTrain& State, double Now) const;
+	// Fills OutRoute with the connections Train leaves each track through from its front to Goal, the signals'
+	// directions respected; returns false with OutWhy set if there is none.
+	bool FindDriveRoute(AFGTrain* Train, const UFGRailroadTrackConnectionComponent* Goal, TArray<UFGRailroadTrackConnectionComponent*>& OutRoute, FString& OutWhy) const;
+	// Gives Train its path to its drive goal and has the game follow it; returns false (drive state 3) if there is no way.
+	bool StartDrive(FATTrafficTrain& State, AFGTrain* Train, double Now);
+	// Moves a drive on: starts it once the train can go, notes arrival, restarts a dropped path, ends it when the train
+	// got timetable stops.
+	void UpdateDrive(FATTrafficTrain& State, AFGTrain* Train, double Now);
 
 	void UpdateAuthority(FATTrafficTrain& State) const;
 	void RefreshClaimedJoints(FATTrafficTrain& State) const;

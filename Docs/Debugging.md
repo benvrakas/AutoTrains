@@ -961,3 +961,18 @@ the AFGTrain object name, unique where names repeat):
   resource only if locked or unplanned, otherwise bookings in Enter order decided. So the holder lost the switch at
   grant time, the other then got it, and the next plan saw the roles swapped. Fix: CanEnter skips, for a resource held
   before, bookings that aren't locked and aren't of a train ahead on the route, as GapAt does.
+- 1.4.15 (from the SmartTrains session, IB server 2026-11-11 07:12-08:10 UTC, AT 1.4.14 + ST 0.21.1,
+  telemetry-20261111-071326.csv): ST parked idle trains on depot sidings by emptying the timetable and calling
+  mAtcData.SetPath to a track connection. 27 sent, 2 arrived; the rest moved 21 % of the time with traffic_managed 0
+  and the network fell to 11-25 % moving with 11 DEADLOCKs. RE (shipping DLL + PDB, AFGTrain::TickSelfDriving):
+  mSelfDrivingData.State picks Idle/FollowPath/Docking/DockingCompleted. TickSelfDriving_Idle: no MU master power ->
+  NoPower; timetable null or 0 stops -> NoTimeTable and returns; it goes to FollowPath only when it has a path, and finds
+  one only for a timetable stop. So a set path with an empty timetable is never followed from Idle. FollowPath: with a
+  timetable that has stops, a path whose Station differs from the stop's is cleared (back to Idle); with no stops it
+  is followed as is. At the path's end it keeps following (no station, nothing stops it), so AT has to stop it.
+  ExternalDriveTo: AT empties the timetable, routes from GetMultipleUnitMaster()->GetTrackPosition().GetForwardConnection()
+  over the search graph (OneWay respected), FATRouter::BuildPath(route, nullptr) + ApplyPath, then
+  GotoSelfDrivingState(SDLS_FollowPath) (private, exported; AATTrafficSubsystem is AFGTrain's friend).
+  GetAuthorityDistance no longer returns -1 for authority to the goal when the goal is a drive goal, so the train
+  stops the stop margin short of it. Planner: GoalDwell = never, no route search. UpdateDrive marks arrival (on the
+  goal path, standing, within the stop margin + 10 m) and gives the path again every 5 s if the game dropped it.

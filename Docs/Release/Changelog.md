@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.15
+
+- **For other mods: drive a train to a spot that isn't a station.** `ExternalDriveTo` sends a self-driving train to a
+  track end (a depot siding, before a signal) and plans and drives it there like any other leg, around the other
+  trains; it then stands there. `ExternalGetDriveState` says whether it is under way, there, or has no way, and
+  `ExternalCancelDrive` ends it. SmartTrains uses this to park idle trains. Before, a train sent to such a spot
+  without a timetable was not driven by Auto Trains at all and mostly stood on the main line, holding up others.
+
 ## 1.4.14
 
 - **Fewer "can't stop short" conflicts.** A train that can no longer stop short of a switch, crossing or track that a

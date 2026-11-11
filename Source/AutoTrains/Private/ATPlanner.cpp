@@ -34,6 +34,10 @@ namespace
 	constexpr float FollowStuckDistance = 3000.f;
 	// A train slower than this plans from standing. [cm/s]
 	constexpr float StandingSpeed = 50.f;
+	// A driven-to goal counts as reached by a standing train whose front is this much past its stop point or short of it. [cm]
+	constexpr float ArrivedSlackDistance = 1000.f;
+	// A drive whose path the train doesn't follow gets its path again at most this often. [s]
+	constexpr double DriveRetrySeconds = 5.0;
 	// A plan's wait this close to its end doesn't hold back the grant. [s]
 	constexpr double PlanWaitGraceSeconds = 0.5;
 	// Planner counters are logged this often. [s]
@@ -1205,9 +1209,11 @@ void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds, bool bW
 			Out.MinDepart = Now;
 			FTrainDockingRuleSet Rules;
 			const AFGRailroadTimeTable* TimeTable = Train ? Train->GetTimeTable() : nullptr;
-			Out.GoalDwell = GetExpectedStay(Train, State.GoalStation.Get(), GetStopRules(Train, TimeTable ? TimeTable->GetCurrentStop() : INDEX_NONE, State.GoalStation.Get(), Rules), -1);
+			// A driven-to goal: it stands there until it is sent on, and its route there isn't searched again.
+			const bool bDrive = State.DriveGoal.IsValid();
+			Out.GoalDwell = bDrive ? ATSippNever : GetExpectedStay(Train, State.GoalStation.Get(), GetStopRules(Train, TimeTable ? TimeTable->GetCurrentStop() : INDEX_NONE, State.GoalStation.Get(), Rules), -1);
 			Out.Commit = GetRouteCommit(State);
-			Out.bSearch = IsSearchDue(State, DeltaSeconds) && Out.Commit < Out.Route.Num() - 2;
+			Out.bSearch = !bDrive && IsSearchDue(State, DeltaSeconds) && Out.Commit < Out.Route.Num() - 2;
 			Out.MinGainSeconds = mSettings.RerouteMinGainSeconds;
 			Out.MinGainPercent = mSettings.RerouteMinGainPercent;
 			continue;
@@ -2507,4 +2513,217 @@ void AATTrafficSubsystem::ExternalTimeTableChanged(AFGTrain* Train)
 	State->PredictedStation = nullptr;
 	State->PredictedAt = -1e9;
 	UE_LOG(LogAutoTrains, Verbose, TEXT("planner: %s's timetable changed; its next leg is predicted again"), *NameOf(Train));
+	const AFGRailroadTimeTable* TimeTable = Train->GetTimeTable();
+	if (State->DriveState != 0 && TimeTable && TimeTable->GetNumStops() > 0)
+	{
+		UE_LOG(LogAutoTrains, Log, TEXT("drive: %s got timetable stops; its drive to %s ends"), *NameOf(Train), *ResourceName(State->DriveGoal.IsValid() ? State->DriveGoal->GetTrack() : nullptr, INDEX_NONE));
+		State->DriveGoal = nullptr;
+		State->DriveState = 0;
+	}
+}
+
+bool AATTrafficSubsystem::ExternalDriveTo(AFGTrain* Train, UFGRailroadTrackConnectionComponent* Goal)
+{
+	FATTrafficTrain* State = Train ? mTrains.Find(Train) : nullptr;
+	const UWorld* World = GetWorld();
+	FString Why = !mEnabled ? TEXT("traffic control is off") : !State || !World ? TEXT("the train isn't known yet")
+		: !Goal || !Goal->GetTrack() ? TEXT("the goal isn't a track end") : !Train->IsSelfDrivingEnabled() ? TEXT("it isn't self-driving") : TEXT("");
+	TArray<UFGRailroadTrackConnectionComponent*> Route;
+	if (Why.IsEmpty())
+	{
+		FindDriveRoute(Train, Goal, Route, Why);
+	}
+	if (!Why.IsEmpty())
+	{
+		UE_LOG(LogAutoTrains, Warning, TEXT("drive: %s can't be sent to %s: %s"), *NameOf(Train), *ResourceName(Goal ? Goal->GetTrack() : nullptr, INDEX_NONE), *Why);
+		if (State)
+		{
+			State->DriveGoal = Goal;
+			State->DriveState = 3;
+		}
+		return false;
+	}
+	// The game follows a path without a station only while the timetable has no stops.
+	if (AFGRailroadTimeTable* TimeTable = Train->GetTimeTable(); TimeTable && TimeTable->GetNumStops() > 0)
+	{
+		UE_LOG(LogAutoTrains, Log, TEXT("drive: %s's timetable (%d stops) is emptied for its drive"), *NameOf(Train), TimeTable->GetNumStops());
+		TimeTable->SetStops(TArray<FTimeTableStop>());
+	}
+	State->DriveGoal = Goal;
+	State->DriveState = 1;
+	State->DriveSetAt = -1.0;
+	State->LegStart = -1.0;
+	UE_LOG(LogAutoTrains, Log, TEXT("drive: %s is sent to the end of %s, %d tracks ahead"), *NameOf(Train), *ResourceName(Goal->GetTrack(), INDEX_NONE), Route.Num());
+	UpdateDrive(*State, Train, World->GetTimeSeconds());
+	return State->DriveState != 3;
+}
+
+int32 AATTrafficSubsystem::ExternalGetDriveState(AFGTrain* Train)
+{
+	const FATTrafficTrain* State = Train ? mTrains.Find(Train) : nullptr;
+	return State ? State->DriveState : 0;
+}
+
+void AATTrafficSubsystem::ExternalCancelDrive(AFGTrain* Train)
+{
+	FATTrafficTrain* State = Train ? mTrains.Find(Train) : nullptr;
+	if (!State || State->DriveState == 0)
+	{
+		return;
+	}
+	UE_LOG(LogAutoTrains, Log, TEXT("drive: %s's drive to %s is cancelled (it was %s)"), *NameOf(Train), *ResourceName(State->DriveGoal.IsValid() ? State->DriveGoal->GetTrack() : nullptr, INDEX_NONE),
+		State->DriveState == 1 ? TEXT("under way") : State->DriveState == 2 ? TEXT("there") : TEXT("without a way"));
+	// Still on its station-less path: dropped, or the game would drive on past the goal once nothing stops it there.
+	const FTrainAtcData& Atc = Train->mAtcData;
+	if (State->DriveState == 1 && Atc.Path.IsValid() && !Atc.Path->Station.IsValid())
+	{
+		Train->mAtcData.ClearPath();
+		Train->GotoSelfDrivingState(ESelfDrivingLocomotiveState::SDLS_Idle);
+	}
+	State->DriveGoal = nullptr;
+	State->DriveState = 0;
+}
+
+bool AATTrafficSubsystem::FindDriveRoute(AFGTrain* Train, const UFGRailroadTrackConnectionComponent* Goal, TArray<UFGRailroadTrackConnectionComponent*>& OutRoute, FString& OutWhy) const
+{
+	OutRoute.Reset();
+	const FATSippGraph* Graph = mSearchGraph.Get();
+	const AFGLocomotive* Master = Train ? Train->GetMultipleUnitMaster() : nullptr;
+	const UFGRailroadTrackConnectionComponent* Start = Master ? Master->GetTrackPosition().GetForwardConnection() : nullptr;
+	const int32* StartNode = Graph && Start ? Graph->ConnectionIndex.Find(Start) : nullptr;
+	const int32* GoalNode = Graph && Goal ? Graph->ConnectionIndex.Find(Goal) : nullptr;
+	if (!Graph || !StartNode || !GoalNode)
+	{
+		OutWhy = !Graph ? TEXT("the network isn't read yet") : !Start ? TEXT("its front isn't on a track") : TEXT("the goal isn't in the network yet");
+		return false;
+	}
+	// Shortest way from the connection ahead of the front, never leaving a track past a signal seen from behind.
+	TArray<float> Best;
+	Best.Init(MAX_flt, Graph->TrackOf.Num());
+	TArray<int32> From;
+	From.Init(INDEX_NONE, Graph->TrackOf.Num());
+	TArray<TPair<float, int32>> Open;
+	const auto Less = [](const TPair<float, int32>& A, const TPair<float, int32>& B) { return A.Key < B.Key; };
+	Best[*StartNode] = 0.f;
+	Open.HeapPush({0.f, *StartNode}, Less);
+	bool bFound = false;
+	while (Open.Num() > 0)
+	{
+		TPair<float, int32> Item;
+		Open.HeapPop(Item, Less);
+		if (Item.Key > Best[Item.Value])
+		{
+			continue;
+		}
+		if (Item.Value == *GoalNode)
+		{
+			bFound = true;
+			break;
+		}
+		if (Graph->OneWay[Item.Value])
+		{
+			continue;
+		}
+		for (const int32 Entry : Graph->Attached[Item.Value])
+		{
+			const int32 Next = Graph->OppositeOf.IsValidIndex(Entry) ? Graph->OppositeOf[Entry] : INDEX_NONE;
+			if (Next == INDEX_NONE)
+			{
+				continue;
+			}
+			const float Cost = Item.Key + Graph->Length[Graph->TrackOf[Next]];
+			if (Cost < Best[Next])
+			{
+				Best[Next] = Cost;
+				From[Next] = Item.Value;
+				Open.HeapPush({Cost, Next}, Less);
+			}
+		}
+	}
+	if (!bFound)
+	{
+		OutWhy = FString::Printf(TEXT("no way from %s, driving forward, that passes no signal from behind"), *ResourceName(Start->GetTrack(), INDEX_NONE));
+		return false;
+	}
+	for (int32 Node = *GoalNode; Node != INDEX_NONE; Node = From[Node])
+	{
+		UFGRailroadTrackConnectionComponent* Connection = Graph->Connections[Node].Get();
+		if (!Connection)
+		{
+			OutWhy = TEXT("a track on the way was dismantled");
+			OutRoute.Reset();
+			return false;
+		}
+		OutRoute.Insert(Connection, 0);
+	}
+	return true;
+}
+
+bool AATTrafficSubsystem::StartDrive(FATTrafficTrain& State, AFGTrain* Train, double Now)
+{
+	UFGRailroadTrackConnectionComponent* Goal = State.DriveGoal.Get();
+	TArray<UFGRailroadTrackConnectionComponent*> Route;
+	FString Why = Goal ? TEXT("") : TEXT("the goal was dismantled");
+	if (Goal)
+	{
+		FindDriveRoute(Train, Goal, Route, Why);
+	}
+	if (Why.IsEmpty() && !FATRouter::ApplyPath(Train, FATRouter::BuildPath(Route, nullptr), Goal))
+	{
+		Why = TEXT("the game refused the path");
+	}
+	State.DriveSetAt = Now;
+	if (!Why.IsEmpty())
+	{
+		UE_LOG(LogAutoTrains, Warning, TEXT("drive: NO WAY: %s can't drive to %s: %s"), *NameOf(Train), *ResourceName(Goal ? Goal->GetTrack() : nullptr, INDEX_NONE), *Why);
+		State.DriveState = 3;
+		return false;
+	}
+	// Idle, the game only looks for a timetable stop; it follows a path it is given only in this state.
+	Train->GotoSelfDrivingState(ESelfDrivingLocomotiveState::SDLS_FollowPath);
+	UE_LOG(LogAutoTrains, Log, TEXT("drive: %s drives to the end of %s (%d tracks)"), *NameOf(Train), *ResourceName(Goal->GetTrack(), INDEX_NONE), Route.Num());
+	return true;
+}
+
+void AATTrafficSubsystem::UpdateDrive(FATTrafficTrain& State, AFGTrain* Train, double Now)
+{
+	if (State.DriveState == 0 || State.DriveState == 3)
+	{
+		return;
+	}
+	const UFGRailroadTrackConnectionComponent* Goal = State.DriveGoal.Get();
+	if (!Goal)
+	{
+		UE_LOG(LogAutoTrains, Warning, TEXT("drive: NO WAY: %s's goal was dismantled"), *NameOf(Train));
+		State.DriveState = 3;
+		return;
+	}
+	const AFGRailroadTimeTable* TimeTable = Train->GetTimeTable();
+	if (TimeTable && TimeTable->GetNumStops() > 0)
+	{
+		UE_LOG(LogAutoTrains, Log, TEXT("drive: %s got timetable stops; its drive to %s ends"), *NameOf(Train), *ResourceName(Goal->GetTrack(), INDEX_NONE));
+		State.DriveGoal = nullptr;
+		State.DriveState = 0;
+		return;
+	}
+	if (State.DriveState == 2 || !Train->IsSelfDrivingEnabled() || Train->IsDocked())
+	{
+		return;
+	}
+	// Arrived: standing with its front at the goal, the stop distance short of it give or take.
+	const bool bOnGoalPath = State.bManaged && State.Route.Num() > 0 && State.Route.Last().Exit == Goal;
+	const float Left = bOnGoalPath ? State.Route.Last().EndDistance - State.FrontAhead : MAX_flt;
+	if (bOnGoalPath && Left <= GetStopMargin(Goal) + ArrivedSlackDistance && State.Speed < StandingSpeed)
+	{
+		State.DriveState = 2;
+		UE_LOG(LogAutoTrains, Log, TEXT("drive: %s has arrived at the end of %s (%.0f m short)"), *NameOf(Train), *ResourceName(Goal->GetTrack(), INDEX_NONE), Left / 100.f);
+		return;
+	}
+	// Not on its path to the goal (not given yet, or the game dropped it): given again, at most this often.
+	const bool bFollowing = Train->mSelfDrivingData.State == ESelfDrivingLocomotiveState::SDLS_FollowPath && Train->mAtcData.HasPath() && Train->mAtcData.Path->PathPoints.Num() > 0
+		&& Train->mAtcData.Path->PathPoints.Last().TrackConnection.Get() == Goal;
+	if (!bFollowing && (State.DriveSetAt < 0.0 || Now - State.DriveSetAt >= DriveRetrySeconds))
+	{
+		StartDrive(State, Train, Now);
+	}
 }

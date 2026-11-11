@@ -458,6 +458,7 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 			LogCrossingEntries(State, WasOnCrossings, WorldNow);
 		}
 		TrackDocking(State, Train, WorldNow);
+		UpdateDrive(State, Train, WorldNow);
 		UpdateHillHelp(State, WorldNow);
 		WatchLostPath(State, WorldNow);
 		ApplyLocomotivePower(Train, (Train->IsSelfDrivingEnabled() ? GAccelerationScale : 1.f) * State.HillBoost, Train->IsSelfDrivingEnabled() ? GTopSpeed * 0.036f : 0.f);
@@ -2236,7 +2237,8 @@ float AATTrafficSubsystem::GetAcceleration(const FATTrafficTrain& State, float S
 float AATTrafficSubsystem::GetAuthorityDistance(const AFGTrain* Train, const TCHAR** OutWhy) const
 {
 	const FATTrafficTrain* State = mTrains.Find(Train);
-	if (!State || !State->bManaged || State->bAuthorityToGoal)
+	// To a station the game stops it at the dock; a driven-to goal is a plain track end, stopped at like any other.
+	if (!State || !State->bManaged || (State->bAuthorityToGoal && !State->DriveGoal.IsValid()))
 	{
 		return -1.f;
 	}

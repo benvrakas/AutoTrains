@@ -371,7 +371,7 @@ public:
 	void ExternalTimeTableChanged(AFGTrain* Train);
 
 	// Sends the self-driving Train to Goal, a track end connection that isn't a station: it is planned and driven there
-	// like any leg and stops its front a metre short of Goal (clear of the switch if Goal is at one), then stands there. Its timetable is emptied
+	// like any leg and stops its front at Goal (clear of the switch if Goal is at one), then stands there. Its timetable is emptied
 	// (the game follows a path without a station only then). Returns false if Goal can't be reached driving forward from
 	// the train's front, the signals' directions respected, or the train isn't self-driving.
 	UFUNCTION(BlueprintCallable, Category = "Auto Trains")
@@ -486,7 +486,7 @@ private:
 
 	// Stop margin before a track end leaving through Exit. [cm]
 	float GetStopMargin(const UFGRailroadTrackConnectionComponent* Exit) const;
-	// How far short of an ExternalDriveTo goal the front stops: a metre, plus the fouling zone at a switch. [cm]
+	// How far short of an ExternalDriveTo goal the front stops: at it, or clear of the fouling zone at a switch. [cm]
 	float GetDriveStopMargin(const UFGRailroadTrackConnectionComponent* Goal) const;
 
 	// Rebuilds the conflict model for every track in the world: switch joints (three or more tracks meeting) and the

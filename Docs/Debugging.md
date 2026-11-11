@@ -980,3 +980,5 @@ the AFGTrain object name, unique where names repeat):
   end of track 2147332497 (10 m short)"; the user wants them at the depot signal. UpdateAuthority uses
   GetDriveStopMargin (1 m, plus the foul distance at a switch) instead of GetStopMargin when the authority reaches the
   drive goal; arrival is within that margin + 5 m. The SIPP plan already stops at the goal node with no margin.
+- 1.4.17: the user wants the front exactly at the depot signal: DriveGoalStopDistance 0 (foul distance kept at a
+  switch). Braking ends within about a metre either way, so the front may stand slightly past the joint.

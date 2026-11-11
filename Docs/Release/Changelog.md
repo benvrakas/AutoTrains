@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.17
+
+- **A train sent to a depot spot stops right at it,** with its front at the depot signal as at any signal (1.4.16:
+  a metre short). At a switch it still stops just clear of the switch.
+
 ## 1.4.16
 
 - **A train sent to a depot spot stops at it.** A train sent with `ExternalDriveTo` (SmartTrains' depot signals)

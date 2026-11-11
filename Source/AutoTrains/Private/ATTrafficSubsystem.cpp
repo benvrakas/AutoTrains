@@ -57,8 +57,8 @@ namespace
 	// Seconds the brakes take to build up, counted as travel at the starting speed; about 1 s in the measurements.
 	constexpr float BrakeLagSeconds = 0.75f;
 	constexpr float MinPlanDeceleration = 50.f;
-	// How far short of an ExternalDriveTo goal (a depot signal, a siding's end) the front stops. [cm]
-	constexpr float DriveGoalStopDistance = 100.f;
+	// How far short of an ExternalDriveTo goal (a depot signal, a siding's end) the front stops, away from a switch. [cm]
+	constexpr float DriveGoalStopDistance = 0.f;
 	// Forced braking plans the stop with at least this distance left, so the last tick doesn't divide by nothing. [cm]
 	constexpr float ForcedBrakeMinDistance = 100.f;
 	// A brake sample counts for at most this multiple of the consist's rating; stronger ones came from catches or

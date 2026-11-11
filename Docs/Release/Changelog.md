@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.16
+
+- **A train sent to a depot spot stops at it.** A train sent with `ExternalDriveTo` (SmartTrains' depot signals)
+  stopped the general stop distance (10 m by default) short of its goal. It now stops with its front a metre short of
+  it, or just clear of the switch when the goal is at one. Other stops keep the stop distance.
+
 ## 1.4.15
 
 - **For other mods: drive a train to a spot that isn't a station.** `ExternalDriveTo` sends a self-driving train to a

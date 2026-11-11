@@ -34,8 +34,8 @@ namespace
 	constexpr float FollowStuckDistance = 3000.f;
 	// A train slower than this plans from standing. [cm/s]
 	constexpr float StandingSpeed = 50.f;
-	// A driven-to goal counts as reached by a standing train whose front is this much past its stop point or short of it. [cm]
-	constexpr float ArrivedSlackDistance = 1000.f;
+	// A driven-to goal counts as reached by a standing train whose front is no more than this short of its stop point. [cm]
+	constexpr float ArrivedSlackDistance = 500.f;
 	// A drive whose path the train doesn't follow gets its path again at most this often. [s]
 	constexpr double DriveRetrySeconds = 5.0;
 	// A plan's wait this close to its end doesn't hold back the grant. [s]
@@ -2713,7 +2713,7 @@ void AATTrafficSubsystem::UpdateDrive(FATTrafficTrain& State, AFGTrain* Train, d
 	// Arrived: standing with its front at the goal, the stop distance short of it give or take.
 	const bool bOnGoalPath = State.bManaged && State.Route.Num() > 0 && State.Route.Last().Exit == Goal;
 	const float Left = bOnGoalPath ? State.Route.Last().EndDistance - State.FrontAhead : MAX_flt;
-	if (bOnGoalPath && Left <= GetStopMargin(Goal) + ArrivedSlackDistance && State.Speed < StandingSpeed)
+	if (bOnGoalPath && Left <= GetDriveStopMargin(Goal) + ArrivedSlackDistance && State.Speed < StandingSpeed)
 	{
 		State.DriveState = 2;
 		UE_LOG(LogAutoTrains, Log, TEXT("drive: %s has arrived at the end of %s (%.0f m short)"), *NameOf(Train), *ResourceName(Goal->GetTrack(), INDEX_NONE), Left / 100.f);

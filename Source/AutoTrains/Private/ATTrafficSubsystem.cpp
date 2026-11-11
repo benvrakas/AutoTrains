@@ -57,6 +57,8 @@ namespace
 	// Seconds the brakes take to build up, counted as travel at the starting speed; about 1 s in the measurements.
 	constexpr float BrakeLagSeconds = 0.75f;
 	constexpr float MinPlanDeceleration = 50.f;
+	// How far short of an ExternalDriveTo goal (a depot signal, a siding's end) the front stops. [cm]
+	constexpr float DriveGoalStopDistance = 100.f;
 	// Forced braking plans the stop with at least this distance left, so the last tick doesn't divide by nothing. [cm]
 	constexpr float ForcedBrakeMinDistance = 100.f;
 	// A brake sample counts for at most this multiple of the consist's rating; stronger ones came from catches or
@@ -1027,7 +1029,9 @@ void AATTrafficSubsystem::UpdateAuthority(FATTrafficTrain& State) const
 		State.AuthorityPath = State.RoutePath;
 		State.AuthoritySegment = State.RouteFirstSegment + Last;
 		State.bAuthorityToGoal = Last == State.Route.Num() - 1;
-		State.StopMargin = FMath::Max(GetStopMargin(State.Route[Last].Exit), State.AuthorityCut);
+		const UFGRailroadTrackConnectionComponent* Exit = State.Route[Last].Exit;
+		const bool bAtDriveGoal = State.bAuthorityToGoal && State.DriveGoal.IsValid() && State.DriveGoal.Get() == Exit;
+		State.StopMargin = FMath::Max(bAtDriveGoal ? GetDriveStopMargin(Exit) : GetStopMargin(Exit), State.AuthorityCut);
 	}
 	RefreshClaimedJoints(State);
 }
@@ -2019,6 +2023,11 @@ int32 AATTrafficSubsystem::GetJoint(const UFGRailroadTrackConnectionComponent* C
 float AATTrafficSubsystem::GetStopMargin(const UFGRailroadTrackConnectionComponent* Exit) const
 {
 	return GetJoint(Exit) != INDEX_NONE ? GetFoulDistance(Exit) + GetStopDistance() : GetStopDistance();
+}
+
+float AATTrafficSubsystem::GetDriveStopMargin(const UFGRailroadTrackConnectionComponent* Goal) const
+{
+	return GetJoint(Goal) != INDEX_NONE ? GetFoulDistance(Goal) + DriveGoalStopDistance : DriveGoalStopDistance;
 }
 
 bool AATTrafficSubsystem::HoldsTrack(const FATTrafficTrain& State, const AFGBuildableRailroadTrack* Track) const

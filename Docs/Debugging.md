@@ -976,3 +976,7 @@ the AFGTrain object name, unique where names repeat):
   GetAuthorityDistance no longer returns -1 for authority to the goal when the goal is a drive goal, so the train
   stops the stop margin short of it. Planner: GoalDwell = never, no route search. UpdateDrive marks arrival (on the
   goal path, standing, within the stop margin + 10 m) and gives the path again every 5 s if the game dropped it.
+- 1.4.16: depot drives worked on the IB server (1.4.15 + ST 0.22.0), e.g. "drive: ST: idle #3945 has arrived at the
+  end of track 2147332497 (10 m short)"; the user wants them at the depot signal. UpdateAuthority uses
+  GetDriveStopMargin (1 m, plus the foul distance at a switch) instead of GetStopMargin when the authority reaches the
+  drive goal; arrival is within that margin + 5 m. The SIPP plan already stops at the goal node with no margin.

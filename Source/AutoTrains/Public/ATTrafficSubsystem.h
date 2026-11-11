@@ -169,8 +169,10 @@ struct FATTrafficTrain
 	double DriveSetAt = -1.0;
 	// Room ahead to where it has to stop as last driven, MAX_flt with nothing to stop for. [cm]
 	float Room = MAX_flt;
-	// Whether it was in a deadlock at the last update.
+	// Whether it was in a deadlock at the last update, and whether it has waited the deadlock wait time for a train
+	// nobody drives (parked, or driven by hand).
 	bool bInDeadlock = false;
+	bool bWaitsForParked = false;
 	// The last switch reported as set for another train as it reached it.
 	const UFGRailroadTrackConnectionComponent* WrongSwitch = nullptr;
 	// Blocked key of the last wait before a climb, so each is logged once.
@@ -354,8 +356,9 @@ public:
 	float ExternalGetTrackLoad(AFGBuildableRailroadStation* Station, float HorizonSeconds, float ApproachMetres, TArray<AFGTrain*>& OutTrains, float& OutWaitingSeconds);
 
 	// The trains in trouble now, each with its kind and for how long [s]: "Deadlock" (in a cycle of trains waiting for
-	// each other), "Stuck" (held up with no train to wait for), "Lost" (self-driving without a path) and "Stalled"
-	// (standing at the full hill help though told to go). Returns how many.
+	// each other), "Stuck" (held up with no train to wait for), "Blocked" (waiting for a train nobody drives: parked,
+	// or driven by hand), "Lost" (self-driving without a path) and "Stalled" (standing at the full hill help though
+	// told to go). Returns how many.
 	UFUNCTION(BlueprintCallable, Category = "Auto Trains")
 	int32 ExternalGetTroubledTrains(TArray<AFGTrain*>& OutTrains, TArray<FString>& OutKinds, TArray<float>& OutSeconds);
 
@@ -458,6 +461,9 @@ private:
 	// with the strongest braking a sample counts for; -1 if it follows none. OutHardLimit is the same with the
 	// leaders' planning braking, for full brake. [cm]
 	float GetFollowLimit(const AFGTrain* Train, const FATTrafficTrain& State, float& OutHardLimit, FATFollowInfo* OutInfo = nullptr) const;
+	// Returns true if State stands close behind a leader on its route that stands there for good (not driven, or its plan
+	// stands it where it is with no departure); OutLeader is that train.
+	bool IsHeldForGood(const FATTrafficTrain& State, TWeakObjectPtr<AFGTrain>& OutLeader) const;
 
 	// Returns Braking, but no further than Leader may still travel: the end of its authority or its goal. [cm]
 	float GetLeaderTravel(const FATTrafficTrain& Leader, float Braking) const;

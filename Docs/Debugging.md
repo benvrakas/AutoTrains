@@ -982,3 +982,19 @@ the AFGTrain object name, unique where names repeat):
   drive goal; arrival is within that margin + 5 m. The SIPP plan already stops at the goal node with no margin.
 - 1.4.17: the user wants the front exactly at the depot signal: DriveGoalStopDistance 0 (foul distance kept at a
   switch). Braking ends within about a metre either way, so the front may stand slightly past the joint.
+- 1.4.18 (IB 2026-11-11, AT 1.4.17 + ST 0.22.0, gridlock from ~14:00 UTC; logs in sfmod-b6's scratchpad, handoff from
+  sfmod-b6). The WAIT dumps' "waits for ?" was misleading: LogWaitDump runs inside UpdatePlannedTraffic, before
+  UpdateTraffic names the train standing in the way (FindTrainInWay), which is why there was never a STUCK report.
+  Real chains: Sulfur -> Caterium (plan wait "5 s") -> Nitric Acid (booked first on switch 213, locked, "clear in
+  1-2 s" for 5 h) -> Copper/Caterium 10 m ahead of it -> "ST: parked at Southern Forest Nitric Acid In 1" (not
+  driven, standing in the station). The Nitric Acid train's plan drove its front to the end of the track the leader
+  stood on (same-way following onto a never-clearing booking is allowed in GapAt, and nothing stops a plan inside its
+  own front track), so its tail booking on switch 213 cleared in seconds; the Caterium/Sulfur pair kept replanning
+  and their cycle came and went (>10 s gaps), so GhostThrough never reached GhostAfterSeconds. Fixes: IsHeldForGood
+  (standing within FollowStuckDistance of a leader that is not driven and not docked, or whose plan stands it where it
+  is with an open departure) -> MinDepart = never (SIPP Expand returns for a never departure; no route search); the
+  grant names that leader when nothing else is named; StayFits notes LoBy (a same-way train at the goal for longer than
+  the stay); LogDeadlocks reports BLOCKED (waiting >= DeadlockWaitSeconds for a train that is not driven, not docked,
+  not self-driving). The 13:59 Crater Lakes pass-through came from a parked (not driven) train standing on a track the
+  coal train couldn't stop short of any more; the collision itself can't be planned away once a train stops being
+  driven in the way of a committed one (SmartTrains must not switch autopilot off before arrival).

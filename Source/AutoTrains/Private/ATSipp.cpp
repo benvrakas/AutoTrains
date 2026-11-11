@@ -584,6 +584,11 @@ namespace
 				{
 					NoteBlock(Index, Open.Gap.HiBy, Open.Resource, Open.Gap.bHiByRank);
 				}
+				// A train ahead the same way that is there longer than this one could stay (one standing at the goal for good).
+				else if (bFits && Clear < Open.Gap.ClearLo)
+				{
+					NoteBlock(Index, Open.Gap.LoBy, Open.Resource, false);
+				}
 				bFits = bFits && Clear <= Open.Gap.ClearHi && Clear >= Open.Gap.ClearLo;
 			});
 			return bFits;
@@ -863,6 +868,11 @@ namespace
 			}
 			const bool bCanWait = State.bStopped;
 			const double Earliest = State.Step < 0 ? FMath::Max(State.Arrive, Train.MinDepart) : State.Arrive;
+			// Not moving off at all: it stands where it is.
+			if (IsNever(Earliest))
+			{
+				return;
+			}
 			double Leave = Earliest;
 			int32 Cause = INDEX_NONE;
 			int32 Windows = 0;

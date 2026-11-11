@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.4.18
+
+- **Fixed: a train stuck behind one that stands for good made other trains wait for nothing.** A train standing close
+  behind a train that won't move (parked, or with no way on) was still planned as if it could drive up to the end of
+  that train's track, so its tail looked about to clear the switch behind it. Trains waiting for that switch planned
+  to go "in 5 s" for hours and, waiting for each other through it, showed up as a deadlock that never got passed
+  through. Such a train is now planned as standing where it is, so the others see the switch stays taken.
+- **Waits for a train nobody drives are reported.** A train held up for the deadlock wait time by a train that isn't
+  self-driving (parked, or driven by hand) is logged once as BLOCKED, with the trains waiting behind it, and written
+  to faults.log. `ExternalGetTroubledTrains` lists it as "Blocked". Before, such a chain was never reported.
+- The log names the train a held-up train waits for in more cases: the train standing for good in its goal station,
+  or the one it stands right behind, instead of "?".
+
 ## 1.4.17
 
 - **A train sent to a depot spot stops right at it,** with its front at the depot signal as at any signal (1.4.16:

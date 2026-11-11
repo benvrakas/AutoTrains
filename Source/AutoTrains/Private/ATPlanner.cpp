@@ -34,6 +34,8 @@ namespace
 	constexpr float FollowStuckDistance = 3000.f;
 	// A train slower than this plans from standing. [cm/s]
 	constexpr float StandingSpeed = 50.f;
+	// A plan's wait at most this far ahead of the front stands the train where it is. [cm]
+	constexpr float StandHereDistance = 100.f;
 	// A driven-to goal counts as reached by a standing train whose front is no more than this short of its stop point. [cm]
 	constexpr float ArrivedSlackDistance = 500.f;
 	// A drive whose path the train doesn't follow gets its path again at most this often. [s]
@@ -871,6 +873,13 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 	}
 	UpdateAuthority(State);
 	UpdateFollowLeaders(State);
+	// Held up with no train named, close behind a train that stands for good: that one.
+	TWeakObjectPtr<AFGTrain> HeldBehind;
+	if (bBlocked && !State.BlockedBy.IsValid() && IsHeldForGood(State, HeldBehind))
+	{
+		State.BlockedBy = HeldBehind;
+		State.BlockedReason += FString::Printf(TEXT("; stays behind %s, which stands there for good"), *NameOf(HeldBehind.Get()));
+	}
 	// Standing behind a train in its way that holds it there: named, so a cycle of such trains shows as a deadlock.
 	if (!bBlocked && State.Speed < FollowStuckSpeed)
 	{
@@ -887,6 +896,35 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 			}
 		}
 	}
+}
+
+bool AATTrafficSubsystem::IsHeldForGood(const FATTrafficTrain& State, TWeakObjectPtr<AFGTrain>& OutLeader) const
+{
+	OutLeader = nullptr;
+	const AFGTrain* Train = State.Train.Get();
+	if (!Train || State.Speed >= FollowStuckSpeed)
+	{
+		return false;
+	}
+	float HardLimit = -1.f;
+	FATFollowInfo Info;
+	GetFollowLimit(Train, State, HardLimit, &Info);
+	const AFGTrain* LeaderTrain = Info.Leader.Get();
+	const FATTrafficTrain* Leader = LeaderTrain ? mTrains.Find(LeaderTrain) : nullptr;
+	if (HardLimit < 0.f || HardLimit >= FollowStuckDistance || !Leader || Leader->Speed >= StandingSpeed)
+	{
+		return false;
+	}
+	// Not driven and not docked: nothing moves it on; driven: its plan stands it where it is with no time to move off.
+	const bool bParked = !Leader->bManaged && !LeaderTrain->IsDocked() && !LeaderTrain->IsSelfDrivingEnabled();
+	const bool bStuck = Leader->bManaged && Leader->bHasPlan && Leader->PlanDepart >= 0.0 && IsOpen(Leader->PlanDepart)
+		&& (Leader->bPlanWaitHere || (Leader->PlanWaitAt >= 0.f && Leader->PlanWaitAt <= StandHereDistance));
+	if (!bParked && !bStuck)
+	{
+		return false;
+	}
+	OutLeader = Info.Leader;
+	return true;
 }
 
 int32 AATTrafficSubsystem::GetRouteCommit(const FATTrafficTrain& State) const
@@ -1206,14 +1244,16 @@ void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds, bool bW
 			Out.Turn = EATSippTurn::Plan;
 			Out.Kind = EATSippKind::Moving;
 			Out.bRanked = true;
-			Out.MinDepart = Now;
+			// Close behind a train that stands there for good it can't move on either, whatever its route ahead holds.
+			TWeakObjectPtr<AFGTrain> HeldBehind;
+			Out.MinDepart = IsHeldForGood(State, HeldBehind) ? ATSippNever : Now;
 			FTrainDockingRuleSet Rules;
 			const AFGRailroadTimeTable* TimeTable = Train ? Train->GetTimeTable() : nullptr;
 			// A driven-to goal: it stands there until it is sent on, and its route there isn't searched again.
 			const bool bDrive = State.DriveGoal.IsValid();
 			Out.GoalDwell = bDrive ? ATSippNever : GetExpectedStay(Train, State.GoalStation.Get(), GetStopRules(Train, TimeTable ? TimeTable->GetCurrentStop() : INDEX_NONE, State.GoalStation.Get(), Rules), -1);
 			Out.Commit = GetRouteCommit(State);
-			Out.bSearch = !bDrive && IsSearchDue(State, DeltaSeconds) && Out.Commit < Out.Route.Num() - 2;
+			Out.bSearch = !bDrive && !HeldBehind.IsValid() && IsSearchDue(State, DeltaSeconds) && Out.Commit < Out.Route.Num() - 2;
 			Out.MinGainSeconds = mSettings.RerouteMinGainSeconds;
 			Out.MinGainPercent = mSettings.RerouteMinGainPercent;
 			continue;
@@ -2444,6 +2484,10 @@ int32 AATTrafficSubsystem::ExternalGetTroubledTrains(TArray<AFGTrain*>& OutTrain
 		else if (State.bManaged && State.UnnamedWaitSeconds >= mSettings.DeadlockWaitSeconds)
 		{
 			Add(TEXT("Stuck"), State.UnnamedWaitSeconds);
+		}
+		else if (State.bWaitsForParked)
+		{
+			Add(TEXT("Blocked"), State.WaitingSeconds);
 		}
 		if (State.bLostReported)
 		{

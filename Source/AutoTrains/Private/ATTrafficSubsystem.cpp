@@ -1637,6 +1637,51 @@ void AATTrafficSubsystem::LogDeadlocks()
 		Root.RerouteCooldown = 0.f;
 		Root.RerouteTimer = 0.f;
 	}
+	// A train held up for long by a train nobody drives (parked, or driven by hand): it won't move on until someone
+	// moves that one. Logged when it first shows up, with the trains whose chain of waits ends at it.
+	for (TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Pair : mTrains)
+	{
+		FATTrafficTrain& Root = Pair.Value;
+		const FATTrafficTrain* By = mTrains.Find(Root.BlockedBy);
+		const AFGTrain* ByTrain = By ? By->Train.Get() : nullptr;
+		Root.bWaitsForParked = IsWaiting(&Root) && ByTrain && !By->bManaged && !ByTrain->IsDocked() && !ByTrain->IsSelfDrivingEnabled() && !InCycle.Contains(&Root);
+		if (!Root.bWaitsForParked)
+		{
+			continue;
+		}
+		const FString Signature = TEXT("parked|") + TrainName(Root.Train.Get()) + TEXT("|") + TrainName(ByTrain);
+		FDeadlockSeen* Seen = mDeadlocks.Find(Signature);
+		const bool bNew = !Seen;
+		if (bNew)
+		{
+			Seen = &mDeadlocks.Add(Signature, {Now, Now});
+		}
+		Seen->Last = Now;
+		if (!bNew)
+		{
+			continue;
+		}
+		TArray<FString> Behind;
+		for (const TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Other : mTrains)
+		{
+			const FATTrafficTrain* Current = &Other.Value;
+			for (int32 Steps = 0; Current != &Root && IsWaiting(Current) && Steps < 64; ++Steps)
+			{
+				Current = mTrains.Find(Current->BlockedBy);
+			}
+			if (Current == &Root && &Other.Value != &Root)
+			{
+				Behind.Add(TrainName(Other.Value.Train.Get()));
+			}
+		}
+		Behind.Sort();
+		const FString Where = By->Vehicles.Num() > 0 ? TrackName(By->Vehicles[0].Track) : TEXT("no track");
+		const FString Fault = FString::Printf(TEXT("%s %s has waited %.0f s for %s, which nobody drives (parked, or driven by hand) on %s: %s; %d waiting behind it%s%s\n"),
+			*FDateTime::Now().ToString(TEXT("%Y-%m-%d %H:%M:%S")), *TrainName(Root.Train.Get()), Root.WaitingSeconds, *TrainName(ByTrain), *Where, *Root.BlockedReason,
+			Behind.Num(), Behind.Num() > 0 ? TEXT(": ") : TEXT(""), *FString::Join(Behind, TEXT(", ")));
+		UE_LOG(LogAutoTrains, Warning, TEXT("traffic: BLOCKED: %s"), *Fault.TrimEnd());
+		WriteFault(Fault);
+	}
 	for (auto It = mDeadlocks.CreateIterator(); It; ++It)
 	{
 		if (Now - It.Value().Last > DeadlockForgetSeconds)

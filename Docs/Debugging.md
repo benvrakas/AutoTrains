@@ -1075,3 +1075,9 @@ the AFGTrain object name, unique where names repeat):
   in this save: run 9's crossing 320 on Steel Ingot's route at step 14 after passing it; run 11's 20-min gridlock had
   #4534 waiting before crossing 329 with its booking there "missing" and its body on crossing 320, with every plan
   behind it failing at crossing 320. Now the first pass per place wins, open or not (unproven as the gridlock's cause).
+- 1.6.7 (runs 11 and 14 jammed, 9/10/12/13 didn't): both jams start at one train stuck 20+ min before a switch or
+  crossing nobody books ("its plan has no slot there yet", booking "missing"), its plan failing "no way to its
+  goal" with no blocker and no rejected moves, up to 27 trains behind it, not a cycle. Run 14: switch 553 before track
+  2136230838, after another train passed through it at 23:28 UTC. The 2136... tracks are in the network copy (trains
+  drive them in every run). The failure line now says which case it is (MinDepart never from IsHeldForGood, route past
+  the network copy, search limit, or the route step it got no further than).

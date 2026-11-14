@@ -1647,8 +1647,14 @@ void AATTrafficSubsystem::ApplyPlan(FATTrafficTrain& State, const FATSippCycle& 
 	FString Failure;
 	if (Result.bFailed)
 	{
+		// With no train in the way named: why the search ended.
+		const FATSippTrain& Input = Cycle.Trains[Slot];
+		const FString Why = IsOpen(Input.MinDepart) ? FString(TEXT("it may not move off (held behind a train that stands for good)"))
+			: !Input.bGoal ? FString(TEXT("its route runs past the network copy"))
+			: Result.States >= Cycle.MaxStates ? FString::Printf(TEXT("the search stopped at its limit of %d states"), Cycle.MaxStates)
+			: FString::Printf(TEXT("no move on from route step %d"), Result.StandStep);
 		Failure = Result.BlockedAt != INDEX_NONE ? FString::Printf(TEXT("no way on past %s for %s"), *Name(Result.BlockedAt), *NameOf(TrainOf(Result.BlockedBy)))
-			: FString(TEXT("no way to its goal"));
+			: FString::Printf(TEXT("no way to its goal: %s"), *Why);
 	}
 	if (Failure != State.PlanFailure)
 	{

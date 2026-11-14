@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.6.7
+
+- Log only: a plan that finds no way to its goal without a train in the way now says why: the train may not move off,
+  its route runs past what the planner knows of the network, the search hit its limit, or from which route step no
+  move was possible. No change to how trains drive.
+
 ## 1.6.6
 
 - **Fixed: a train whose route goes over the same crossing, switch or track twice** (a loop that crosses itself)

@@ -147,6 +147,9 @@ struct FATSippTrain
 	TArray<int32> Route;
 	float FirstEnd = 0.f;
 	bool bGoal = true;
+	// Where its front stops behind the nearest vehicle of a standing train ahead on its route, -1 if none. [cm from the
+	// front now]
+	float BehindAt = -1.f;
 	// What its tail holds behind the route (entered, locked), and which route resources are locked or held.
 	TArray<FATSippPass> Tail;
 	TSet<int32> Locked;
@@ -212,7 +215,7 @@ struct FATSippResult
 	// A train booked first on a resource this one can't stop short of any more, and that resource.
 	int32 CommittedWith = INDEX_NONE;
 	int32 CommittedAt = INDEX_NONE;
-	// The two passes' times and states there, for the log.
+	// Its pass's times there and the gap the bookings leave, for the log.
 	FString CommittedDetail;
 	// Rerouted: the arrival on the route it had, and the route search's effort.
 	bool bRerouted = false;

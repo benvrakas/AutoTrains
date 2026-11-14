@@ -1131,6 +1131,7 @@ void AATTrafficSubsystem::FillSippTrain(const FATTrafficTrain& State, const FATS
 	}
 	// Along one line the order is fixed: a train ahead on this route comes first wherever its bookings meet this
 	// route, and one behind has to pass this train before it gets to the tracks both routes share from here on.
+	Out.BehindAt = -1.f;
 	for (const TPair<const AFGTrain*, FATTrafficTrain*>& Pair : mStateOf)
 	{
 		const FATTrafficTrain& Other = *Pair.Value;
@@ -1142,6 +1143,13 @@ void AATTrafficSubsystem::FillSippTrain(const FATTrafficTrain& State, const FATS
 		if (FrontIndexOn(State, Other) != INDEX_NONE)
 		{
 			Out.First.Add(*OtherSlot);
+			// A standing train ahead: the plan may stop this one behind it, on track both share.
+			const float Gap = Other.Speed < StandingSpeed ? GetGapToVehicles(State.Train.Get(), State, Other) : -1.f;
+			const float At = Gap - GetStopDistance();
+			if (Gap >= 0.f && At > 0.f && (Out.BehindAt < 0.f || At < Out.BehindAt))
+			{
+				Out.BehindAt = At;
+			}
 			continue;
 		}
 		if (State.MovedAheadOf.Contains(Other.Train))

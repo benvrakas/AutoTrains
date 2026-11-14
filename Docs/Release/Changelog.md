@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.6.0
+
+- **Plans no longer pass a train ahead on the same track.** A train following another could share the track behind
+  it, but its plan didn't see the leader there, so it planned to be through and gone before the leader had left. Its
+  arrival times were too early, which also misled SmartTrains' timing. Plans now check track a train already owns
+  the same way as any other, and can stop a train right behind a standing one (a queue at a station) instead of only
+  at the end of a track.
+- The planner's CHECK FAILED warning uses the same rule as the plans, so it no longer reports bookings that don't
+  overlap.
+
 ## 1.5.1
 
 - Log only: the planner's CHECK FAILED warning now also gives both trains' times on the place, whether they go the same

@@ -1016,3 +1016,20 @@ the AFGTrain object name, unique where names repeat):
   FrontIndexOn; ShortestWay serves FindDriveRoute and ExternalEstimateTravelSeconds. Not changed (candidates): the
   follow-leader layer beside the bookings, the planner's track-end-only positions (queues inside a track), and the
   several junction/climb rules.
+- 1.6.0 (joint VM runs 1-3, 2026-11-14, IB save of 03:57 UTC; AT 1.5.1 logged both sides of each CHECK FAILED). Of
+  168 CHECK FAILED in run 3, 88+ were "same way": the follower's pass on a track it owns entered after the leader but
+  cleared before it (leader 0-85 s, follower 15-71 s), i.e. a plan overtaking a train ahead on one track. Cause:
+  Expand added no gap check (News) for resources in Train.Locked (tracks, the joint at the node, crossing zones), on
+  the idea that what a train owns nobody else has; but the grant lets a same-way follower share the track behind its
+  leader, so the leader's booking there was never seen and ClearLo (clear after it) never applied. The exemption also
+  stood in for the missing stop inside a track: without it a follower's plan could only wait at the track end before
+  the leader's track, and the plan-wait cut would keep it from closing up. The rest were the check's own clash test:
+  "other way" flagged any booking clearing after this pass entered even with disjoint windows (0.3-2.8 s vs
+  74.7-79.3 s), and "same way" flagged a train going first by more than a headway on a resource it owns.
+  Change: owned resources go through GapAt like any other; on a resource the train owns only locked bookings of other
+  trains count (a leader sharing it, or one to wait out); both on it when the plan starts: same way = behind it (clear
+  after it), another way = no wait helps, not a clash. FATSippTrain.BehindAt (FillSippTrain: GetGapToVehicles to a
+  standing train ahead on its route, minus the stop distance) adds one stop move inside a track on the fixed route, so
+  plans queue behind a standing leader and the grant's plan-wait cut lands there. FindCommittedConflict now runs GapAt
+  on each owned pass of the planned route instead of its own test. Candidate after testing: IsHeldForGood (1.4.18) was
+  the stand-in for the missing ClearLo on the front track and may be redundant now.

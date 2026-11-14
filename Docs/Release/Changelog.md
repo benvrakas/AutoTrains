@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.6.5
+
+- Log only: the planner's CHECK FAILED warning no longer reports a train it follows through a switch or crossing
+  (one ahead of it on its route, which it may follow through there); what is left is a real double hold. No change
+  to how trains drive.
+
 ## 1.6.4
 
 - Log only: the planner's CHECK FAILED warning also says, for both trains, whether each is on the place, holds it

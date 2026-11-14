@@ -1064,3 +1064,8 @@ the AFGTrain object name, unique where names repeat):
   19/3, failed plans 844/1079 vs 1439/1377. Left for the grant: CHECK FAILED "given to it too, another way" (a switch
   or crossing owned ahead while another train is on it another way, overlaps from a fraction of a second to ~25 s) and
   "was granted crossing ... while ... holds it" for two trains on one line where one route loops back over the crossing.
+- 1.6.5 (run 11, AT 1.6.4 detail): the "given to it too, another way" CHECK cases were merges and same-route queues:
+  e.g. #3558 holding switch 75 at 14 km/h while #3233 (on it, holding it, 3 km/h) had merged ahead onto #3558's line;
+  CanEnter lets a follower share a switch or crossing with a train ahead on its route when none of the leader's
+  vehicles there is off the follower's route (IsFollowed + HasVehicleOffRoute), and following keeps them apart. The
+  check now skips bookings of trains in FATSippTrain.First (the same "ahead on its route" test as IsFollowed).

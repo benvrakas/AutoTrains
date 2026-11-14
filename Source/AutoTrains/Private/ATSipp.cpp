@@ -1309,7 +1309,7 @@ namespace
 
 		// Check, on what the plan's route enters that the train owns: it clears it after a train ahead sharing it the same
 		// way (as its moves are planned), and no other train is given it another way at the same time (which the grant
-		// rules out).
+		// rules out, except for a train ahead on its route that it follows through it).
 		void FindCommittedConflict(FATSippResult& Out) const
 		{
 			auto Time = [this](double T)
@@ -1341,7 +1341,7 @@ namespace
 						break;
 					}
 					const bool bSameWay = Pass.Exit != INDEX_NONE && Booking.Exit == Pass.Exit && Booking.Via == Pass.Via;
-					if (Booking.Owner != Slot && Booking.bLocked && !bSameWay && !IsBehind(Booking.Owner, Pass.Resource)
+					if (Booking.Owner != Slot && Booking.bLocked && !bSameWay && !IsBehind(Booking.Owner, Pass.Resource) && !Train.First.Contains(Booking.Owner)
 						&& Pass.Enter < Booking.Clear && Booking.Enter < Pass.Clear)
 					{
 						With = Booking.Owner;

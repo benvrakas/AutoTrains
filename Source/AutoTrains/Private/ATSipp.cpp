@@ -1303,6 +1303,13 @@ namespace
 					{
 						Out.CommittedWith = Booking.Owner;
 						Out.CommittedAt = Pass.Resource;
+						auto Time = [this](double T) { return IsNever(T) ? FString(TEXT("never")) : FString::Printf(TEXT("%.1f"), T - Cycle.Now); };
+						Out.CommittedDetail = FString::Printf(TEXT("%s way; this one %s-%s s (enters %.0f m ahead, plan %s), that one %s-%s s (%s%s%s%s, kind %d)"),
+							bSameWay ? TEXT("same") : TEXT("other"), *Time(Pass.Enter), *Time(Pass.Clear), Pass.EnterAt / 100.f,
+							Out.bFailed ? TEXT("failed") : TEXT("reaches its goal"), *Time(Booking.Enter), *Time(Booking.Clear),
+							Booking.bLocked ? TEXT("locked") : TEXT("unlocked"), Booking.bHeld ? TEXT(", held") : TEXT(""),
+							Booking.bCommitted ? TEXT(", committed") : TEXT(""), Train.First.Contains(Booking.Owner) ? TEXT(", plans first") : TEXT(""),
+							static_cast<int32>(Booking.Kind));
 					}
 				}
 				if (Out.CommittedWith != INDEX_NONE)

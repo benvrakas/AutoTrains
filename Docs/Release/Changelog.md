@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.1
+
+- Log only: the planner's CHECK FAILED warning now also gives both trains' times on the place, whether they go the same
+  way, the other train's booking state and whether this train's plan failed, to find out what sets it off. No
+  change to how trains drive.
+
 ## 1.5.0
 
 - **One rule for who owns a switch, crossing or track.** The planner and the step that hands trains their way ahead

@@ -212,6 +212,8 @@ struct FATSippResult
 	// A train booked first on a resource this one can't stop short of any more, and that resource.
 	int32 CommittedWith = INDEX_NONE;
 	int32 CommittedAt = INDEX_NONE;
+	// The two passes' times and states there, for the log.
+	FString CommittedDetail;
 	// Rerouted: the arrival on the route it had, and the route search's effort.
 	bool bRerouted = false;
 	double OldArrival = ATSippNever;

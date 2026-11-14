@@ -1658,8 +1658,40 @@ void AATTrafficSubsystem::ApplyPlan(FATTrafficTrain& State, const FATSippCycle& 
 		if (!Committed.IsEmpty() && State.GhostUntil < 0.0)
 		{
 			++mPlanCommitted;
-			UE_LOG(LogAutoTrains, Warning, TEXT("planner: CHECK FAILED: %s owns %s, and its plan there doesn't fit %s's booking: %s"), *NameOf(Train),
-				*Name(Result.CommittedAt), *NameOf(TrainOf(Result.CommittedWith)), *Result.CommittedDetail);
+			// How each train stands to the place now: on it, holding it from its grant, its speed.
+			auto Relation = [this, &Graph, &Result](const FATTrafficTrain* Of)
+			{
+				if (!Of)
+				{
+					return FString(TEXT("gone"));
+				}
+				const int32 Resource = Result.CommittedAt;
+				bool bOn = false;
+				bool bHolds = false;
+				if (Graph.Length.IsValidIndex(Resource))
+				{
+					AFGBuildableRailroadTrack* Track = const_cast<AFGBuildableRailroadTrack*>(Graph.Tracks[Resource]);
+					bOn = Of->Occupied.Contains(Track);
+					bHolds = HoldsTrack(*Of, Track);
+				}
+				else if (Graph.IsJoint(Resource))
+				{
+					const int32 Joint = Resource - Graph.Length.Num();
+					bOn = Of->OccupiedJoints.Contains(Joint);
+					bHolds = HoldsJoint(*Of, Joint);
+				}
+				else
+				{
+					const int32 Crossing = Resource - Graph.CrossingResource(0);
+					bOn = Of->OccupiedCrossings.Contains(Crossing);
+					bHolds = HoldsCrossing(*Of, Crossing);
+				}
+				return FString::Printf(TEXT("%s, %s, %s, %.0f km/h"), bOn ? TEXT("on it") : TEXT("not on it"), bHolds ? TEXT("holds it") : TEXT("doesn't hold it"),
+					Of->bManaged ? TEXT("driving") : TEXT("not driven"), Of->Speed * 0.036f);
+			};
+			FATTrafficTrain* const* Other = mStateOf.Find(TrainOf(Result.CommittedWith));
+			UE_LOG(LogAutoTrains, Warning, TEXT("planner: CHECK FAILED: %s owns %s, and its plan there doesn't fit %s's booking: %s; now this one: %s; that one: %s"), *NameOf(Train),
+				*Name(Result.CommittedAt), *NameOf(TrainOf(Result.CommittedWith)), *Result.CommittedDetail, *Relation(&State), *Relation(Other ? *Other : nullptr));
 		}
 		State.PlanCommitted = Committed;
 	}

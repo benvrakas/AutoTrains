@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.6.4
+
+- Log only: the planner's CHECK FAILED warning also says, for both trains, whether each is on the place, holds it
+  from what it was given ahead, and how fast it goes. No change to how trains drive.
+
 ## 1.6.3
 
 - **Fixed: a train queueing behind a standing one could be planned to stop on a crossing or switch**, blocking the

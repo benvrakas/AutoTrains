@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.6.6
+
+- **Fixed: a train whose route goes over the same crossing, switch or track twice** (a loop that crosses itself)
+  was given its way there by the time of the second pass instead of the first, so it could wait for nothing or be
+  given the crossing too early. Each place now goes by its next pass along the route.
+
 ## 1.6.5
 
 - Log only: the planner's CHECK FAILED warning no longer reports a train it follows through a switch or crossing

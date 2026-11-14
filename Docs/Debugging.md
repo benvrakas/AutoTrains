@@ -1069,3 +1069,9 @@ the AFGTrain object name, unique where names repeat):
   CanEnter lets a follower share a switch or crossing with a train ahead on its route when none of the leader's
   vehicles there is off the follower's route (IsFollowed + HasVehicleOffRoute), and following keeps them apart. The
   check now skips bookings of trains in FATSippTrain.First (the same "ahead on its route" test as IsFollowed).
+- 1.6.6: IndexRoute keeps a place's first index on the route (FindOrAdd), but ApplyPlan filled PlanTrackEnter /
+  PlanJointEnter / PlanCrossingEnter with TMap::Add, so on a route over the same place twice the grant read the later
+  pass's time (and its locked flag) for the near one; an open near pass was skipped, letting a far one stand in. Seen
+  in this save: run 9's crossing 320 on Steel Ingot's route at step 14 after passing it; run 11's 20-min gridlock had
+  #4534 waiting before crossing 329 with its booking there "missing" and its body on crossing 320, with every plan
+  behind it failing at crossing 320. Now the first pass per place wins, open or not (unproven as the gridlock's cause).

@@ -1589,9 +1589,18 @@ void AATTrafficSubsystem::ApplyPlan(FATTrafficTrain& State, const FATSippCycle& 
 	State.PlanJointLocked.Reset();
 	State.PlanCrossingEnter.Reset();
 	State.PlanCrossingLocked.Reset();
+	// Per place the next pass along the route, as the route index and the grant take it: a route over the same place
+	// twice gets the later pass once the train is past the first. Passes come in route order.
+	TSet<int32> Passed;
 	for (const FATSippPass& Pass : Result.Passes)
 	{
-		if (Pass.Step == INDEX_NONE || IsOpen(Pass.Enter))
+		if (Pass.Step == INDEX_NONE)
+		{
+			continue;
+		}
+		bool bSeen = false;
+		Passed.Add(Pass.Resource, &bSeen);
+		if (bSeen || IsOpen(Pass.Enter))
 		{
 			continue;
 		}

@@ -1042,3 +1042,12 @@ the AFGTrain object name, unique where names repeat):
   ahead counts, as ClearLo (clear after it), and only when its clear time is known. The "both on it" case of 1.6.0
   is covered by that and removed. The check reports a ClearLo miss, or a locked booking another way at an overlapping
   time on something the train owns (two trains granted one place).
+- 1.6.2 (run 6, AT 1.6.1): full brakes rose further (347 vs 23 in run 4), train-km 1143 -> 1056; most full brakes now
+  followed plan waits at a track end for a named train (184 of 347), not failed plans. ClearLo from a moving leader
+  on a shared owned track uses that leader's predicted clear time, which slips each cycle; the follower's plan kept
+  placing a wait at a track end it could only reach by forced braking, and the plan-wait cut enforced it. 1.5.1 left
+  moving leaders to the follow layer (GetFollowLimit, smooth braking to the leader's vehicles), which drove better.
+  The case that needed the rule is a leader standing on the shared track (run 3: docked 0-85 s). Rule now: on owned
+  track only a locked same-way booking of a train that stands (FATSippTrain.bStanding) with a known clear time gives
+  ClearLo. Runs 4-6 for reference: deadlock reports 19 / 6 / 2, waiting for traffic 92.7 / 68.8 / 77.9 train-min;
+  run-to-run noise is not measured yet.

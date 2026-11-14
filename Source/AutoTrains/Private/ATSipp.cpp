@@ -397,11 +397,12 @@ namespace
 				{
 					continue;
 				}
-				// What it owns it may enter: nobody else has it, except a train ahead sharing it the same way, which leaves it
-				// first (when it is known when).
+				// What it owns it may enter: nobody else has it, except a train ahead sharing it the same way. One standing there
+				// leaves it first, when it is known when; one moving ahead is kept apart by following it.
 				if (bLocked)
 				{
-					if (Booking.bLocked && Exit != INDEX_NONE && Booking.Exit == Exit && Booking.Via == Via && !IsNever(Booking.Clear)
+					const bool bStandsAhead = Cycle.Trains.IsValidIndex(Booking.Owner) && Cycle.Trains[Booking.Owner].bStanding;
+					if (Booking.bLocked && bStandsAhead && Exit != INDEX_NONE && Booking.Exit == Exit && Booking.Via == Via && !IsNever(Booking.Clear)
 						&& Booking.Clear + Headway > Out.ClearLo)
 					{
 						Out.ClearLo = Booking.Clear + Headway;

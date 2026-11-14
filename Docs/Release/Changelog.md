@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.6.2
+
+- **Fixed: 1.6.1 still braked hard too often.** A train following a moving train on the same track was planned to
+  wait for it at track ends, using a guess of when the leader would be gone that kept changing; it now just follows
+  it, as before 1.6.0. Only a train standing on the track ahead (a queue at a station) is planned around.
+
 ## 1.6.1
 
 - **Fixed: 1.6.0 made trains brake hard far more often.** Its new check of track a train already owns could find

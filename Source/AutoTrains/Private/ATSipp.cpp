@@ -393,10 +393,20 @@ namespace
 			const bool bLocked = Train.Locked.Contains(Resource);
 			for (const FATSippBooking& Booking : Table.ByResource[Resource])
 			{
-				// What it owns goes first for every train that doesn't own it too: there only a train ahead sharing it the
-				// same way counts (or a booking it must wait out).
-				if (Booking.Owner == Slot || IsBehind(Booking.Owner, Resource) || (bLocked && !Booking.bLocked))
+				if (Booking.Owner == Slot || IsBehind(Booking.Owner, Resource))
 				{
+					continue;
+				}
+				// What it owns it may enter: nobody else has it, except a train ahead sharing it the same way, which leaves it
+				// first (when it is known when).
+				if (bLocked)
+				{
+					if (Booking.bLocked && Exit != INDEX_NONE && Booking.Exit == Exit && Booking.Via == Via && !IsNever(Booking.Clear)
+						&& Booking.Clear + Headway > Out.ClearLo)
+					{
+						Out.ClearLo = Booking.Clear + Headway;
+						Out.LoBy = Booking.Owner;
+					}
 					continue;
 				}
 				const bool bFirst = Booking.bLocked || Train.First.Contains(Booking.Owner);
@@ -407,8 +417,6 @@ namespace
 				}
 				const bool bOpen = IsNever(Booking.Clear);
 				const bool bByRank = !bFirst && Booking.Kind == EATSippKind::Moving && !Booking.bHeld && !Booking.bCommitted;
-				// Both on it when the plan starts: one ahead the same way leaves it first; another way, waiting doesn't help.
-				const bool bBothOn = Enter <= Cycle.Now && Booking.Enter <= Cycle.Now;
 				auto LowerHi = [&](double Hi)
 				{
 					if (Hi < Out.ClearHi)
@@ -421,7 +429,7 @@ namespace
 				if (Exit != INDEX_NONE && Booking.Exit == Exit && Booking.Via == Via)
 				{
 					// The same way: behind it, or ahead of it at both ends unless it goes first.
-					if (Enter >= Booking.Enter + Headway || bBothOn)
+					if (Enter >= Booking.Enter + Headway)
 					{
 						After = FMath::Max(After, Booking.Enter + Headway);
 						const double Lo = bOpen ? ATSippNever : Booking.Clear + Headway;
@@ -442,10 +450,6 @@ namespace
 						OutBy = Booking.Owner;
 						bOutByRank = bByRank;
 					}
-					continue;
-				}
-				if (bBothOn)
-				{
 					continue;
 				}
 				const double Lo = bFirst ? -ATSippNever : Booking.Enter - Headway;
@@ -1302,10 +1306,15 @@ namespace
 			}
 		}
 
-		// Check: the plan keeps to the gap rule on everything it owns ahead along its route, as every move it plans does. A
-		// pass outside it shows a booking the plan's moves didn't see.
+		// Check, on what the plan's route enters that the train owns: it clears it after a train ahead sharing it the same
+		// way (as its moves are planned), and no other train is given it another way at the same time (which the grant
+		// rules out).
 		void FindCommittedConflict(FATSippResult& Out) const
 		{
+			auto Time = [this](double T)
+			{
+				return IsNever(T) ? FString(TEXT("never")) : T <= -ATSippNever ? FString(TEXT("any")) : FString::Printf(TEXT("%.1f"), T - Cycle.Now);
+			};
 			for (const FATSippPass& Pass : Out.Passes)
 			{
 				if (!Pass.bLocked || Pass.EnterAt <= 0.f || IsNever(Pass.Enter) || Pass.Step == INDEX_NONE || Pass.Step >= Out.Route.Num())
@@ -1316,21 +1325,36 @@ namespace
 				double Retry = 0.0;
 				int32 By = INDEX_NONE;
 				bool bByRank = false;
-				const bool bEnters = GapAt(Pass.Resource, Pass.Exit, Pass.Via, Pass.Enter, Gap, Retry, By, bByRank);
-				const int32 With = !bEnters ? By : Pass.Clear > Gap.ClearHi + 1e-3 ? Gap.HiBy : Pass.Clear < Gap.ClearLo - 1e-3 ? Gap.LoBy : INDEX_NONE;
+				GapAt(Pass.Resource, Pass.Exit, Pass.Via, Pass.Enter, Gap, Retry, By, bByRank);
+				FString Why;
+				int32 With = INDEX_NONE;
+				if (Pass.Clear < Gap.ClearLo - 1e-3)
+				{
+					With = Gap.LoBy;
+					Why = FString::Printf(TEXT("the same way ahead of it, it has to clear after %s s"), *Time(Gap.ClearLo));
+				}
+				for (const FATSippBooking& Booking : Table.ByResource[Pass.Resource])
+				{
+					if (With != INDEX_NONE)
+					{
+						break;
+					}
+					const bool bSameWay = Pass.Exit != INDEX_NONE && Booking.Exit == Pass.Exit && Booking.Via == Pass.Via;
+					if (Booking.Owner != Slot && Booking.bLocked && !bSameWay && !IsBehind(Booking.Owner, Pass.Resource)
+						&& Pass.Enter < Booking.Clear && Booking.Enter < Pass.Clear)
+					{
+						With = Booking.Owner;
+						Why = FString::Printf(TEXT("given to it too, another way, %s-%s s"), *Time(Booking.Enter), *Time(Booking.Clear));
+					}
+				}
 				if (With == INDEX_NONE)
 				{
 					continue;
 				}
 				Out.CommittedWith = With;
 				Out.CommittedAt = Pass.Resource;
-				auto Time = [this](double T)
-				{
-					return IsNever(T) ? FString(TEXT("never")) : T <= -ATSippNever ? FString(TEXT("any")) : FString::Printf(TEXT("%.1f"), T - Cycle.Now);
-				};
 				Out.CommittedDetail = FString::Printf(TEXT("this one %s-%s s (enters %.0f m ahead, plan %s); %s"), *Time(Pass.Enter), *Time(Pass.Clear), Pass.EnterAt / 100.f,
-					Out.bFailed ? TEXT("failed") : TEXT("reaches its goal"), !bEnters ? *FString::Printf(TEXT("can't enter then, earliest %s s"), *Time(Retry))
-					: *FString::Printf(TEXT("must clear between %s and %s s"), *Time(Gap.ClearLo), *Time(Gap.ClearHi)));
+					Out.bFailed ? TEXT("failed") : TEXT("reaches its goal"), *Why);
 				return;
 			}
 		}

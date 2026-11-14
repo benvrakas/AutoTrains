@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.6.1
+
+- **Fixed: 1.6.0 made trains brake hard far more often.** Its new check of track a train already owns could find
+  no way on for a train at speed, so the train was told to stop where it was. A train may now always go on into
+  track it owns; the only thing checked there is that it leaves after a train ahead of it on the same track.
+
 ## 1.6.0
 
 - **Plans no longer pass a train ahead on the same track.** A train following another could share the track behind

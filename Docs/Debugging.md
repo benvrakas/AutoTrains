@@ -1033,3 +1033,12 @@ the AFGTrain object name, unique where names repeat):
   plans queue behind a standing leader and the grant's plan-wait cut lands there. FindCommittedConflict now runs GapAt
   on each owned pass of the planned route instead of its own test. Candidate after testing: IsHeldForGood (1.4.18) was
   the stand-in for the missing ClearLo on the front track and may be redundant now.
+- 1.6.1 (joint VM runs 4/5, emptied baseline, ST 0.33.3, ~31 trains driving): 1.6.0 vs 1.5.1 cut waiting for traffic
+  93 -> 69 train-min and CHECK FAILED 182 -> 0, but full brakes went 23 -> 250 (240 of them <3 s after a failed plan),
+  crossing entries 4 -> 10, failed plans 1439 -> 5315. On owned track 1.6.0 let GapAt raise clashes (same-way entry
+  inside the headway, another way, a leader's never-clearing booking): a moving train then had no move left, its plan
+  stood it "where it stands", and the plan-wait cut took its authority. A failed plan books never-clears, which
+  failed the plans behind it in turn. Rule now: what a train owns it may enter; on it only a locked same-way booking
+  ahead counts, as ClearLo (clear after it), and only when its clear time is known. The "both on it" case of 1.6.0
+  is covered by that and removed. The check reports a ClearLo miss, or a locked booking another way at an overlapping
+  time on something the train owns (two trains granted one place).

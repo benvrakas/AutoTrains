@@ -1656,7 +1656,7 @@ void AATTrafficSubsystem::ApplyPlan(FATTrafficTrain& State, const FATSippCycle& 
 		if (!Committed.IsEmpty() && State.GhostUntil < 0.0)
 		{
 			++mPlanCommitted;
-			UE_LOG(LogAutoTrains, Warning, TEXT("planner: CHECK FAILED: %s owns %s, which %s, ahead on its line, has booked at the same time: %s"), *NameOf(Train),
+			UE_LOG(LogAutoTrains, Warning, TEXT("planner: CHECK FAILED: %s owns %s, and its plan there doesn't fit %s's booking: %s"), *NameOf(Train),
 				*Name(Result.CommittedAt), *NameOf(TrainOf(Result.CommittedWith)), *Result.CommittedDetail);
 		}
 		State.PlanCommitted = Committed;

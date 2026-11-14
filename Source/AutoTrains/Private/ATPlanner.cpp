@@ -1425,11 +1425,11 @@ void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds, bool bW
 			Copy.bCommitted = Booking.bCommitted;
 			// Ownership as it is now, known to every turn from the start: what a train was granted since its last plan
 			// counts for the trains planned before it too.
-			const FATSippTrain& Owner = Cycle->Trains[*Slot];
-			if (Owner.Turn == EATSippTurn::Plan && Owner.Kind == EATSippKind::Moving)
+			const FATSippTrain& Booker = Cycle->Trains[*Slot];
+			if (Booker.Turn == EATSippTurn::Plan && Booker.Kind == EATSippKind::Moving)
 			{
-				Copy.bLocked = Copy.bLocked || Owner.Locked.Contains(Resource);
-				Copy.bHeld = !Copy.bLocked && (Copy.bHeld || Owner.Held.Contains(Resource));
+				Copy.bLocked = Copy.bLocked || Booker.Locked.Contains(Resource);
+				Copy.bHeld = !Copy.bLocked && (Copy.bHeld || Booker.Held.Contains(Resource));
 			}
 			Cycle->Table.Add(Resource, Copy);
 		}

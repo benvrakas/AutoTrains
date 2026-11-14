@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.6.3
+
+- **Fixed: a train queueing behind a standing one could be planned to stop on a crossing or switch**, blocking the
+  other line for minutes (1.6.0-1.6.2). Plans now stop it short of them, as following a train always did.
+
 ## 1.6.2
 
 - **Fixed: 1.6.1 still braked hard too often.** A train following a moving train on the same track was planned to

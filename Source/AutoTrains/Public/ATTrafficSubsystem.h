@@ -472,6 +472,10 @@ private:
 	// none is within GapSearchDistance. [cm]
 	float GetGapToVehicles(const AFGTrain* Train, const FATTrafficTrain& State, const FATTrafficTrain& Other) const;
 
+	// Returns the start of the first switch fouling zone or crossing zone along Train's route that its body would stand on
+	// with its front at Front, or -1 if none. [cm from the front]
+	float GetJunctionUnder(const AFGTrain* Train, const FATTrafficTrain& State, float Front) const;
+
 	// Returns the distance from Train's front to the start of Track along its path (negative once on it), or a large
 	// negative number if Track isn't on it. [cm]
 	float GetDistanceToTrackStart(const AFGTrain* Train, const FATTrafficTrain& State, const AFGBuildableRailroadTrack* Track) const;

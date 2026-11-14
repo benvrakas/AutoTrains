@@ -1143,9 +1143,11 @@ void AATTrafficSubsystem::FillSippTrain(const FATTrafficTrain& State, const FATS
 		if (FrontIndexOn(State, Other) != INDEX_NONE)
 		{
 			Out.First.Add(*OtherSlot);
-			// A standing train ahead: the plan may stop this one behind it, on track both share.
+			// A standing train ahead: the plan may stop this one behind it, on track both share, but not with its body on a
+			// switch or crossing (as when following it).
 			const float Gap = Other.Speed < StandingSpeed ? GetGapToVehicles(State.Train.Get(), State, Other) : -1.f;
-			const float At = Gap - GetStopDistance();
+			const float Junction = Gap >= 0.f ? GetJunctionUnder(State.Train.Get(), State, Gap - GetStopDistance()) : -1.f;
+			const float At = (Junction >= 0.f ? Junction : Gap) - GetStopDistance();
 			if (Gap >= 0.f && At > 0.f && (Out.BehindAt < 0.f || At < Out.BehindAt))
 			{
 				Out.BehindAt = At;

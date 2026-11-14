@@ -1051,3 +1051,9 @@ the AFGTrain object name, unique where names repeat):
   track only a locked same-way booking of a train that stands (FATSippTrain.bStanding) with a known clear time gives
   ClearLo. Runs 4-6 for reference: deadlock reports 19 / 6 / 2, waiting for traffic 92.7 / 68.8 / 77.9 train-min;
   run-to-run noise is not measured yet.
+- 1.6.3 (run 7, AT 1.6.2): full brakes back to normal (21), but waiting for traffic 250 train-min (run 4: 93),
+  train-km 922, 9 STUCK reports. One top-ranked train (#3945) stood before crossing 281 for most of the run with up to 16
+  behind it; #6341 stood in the queue to No Man's Land Sulfur In 1, 10 m behind the train ahead, with its body on
+  crossing 281 (booked locked "clear in 10 s" for 300+ s). The 1.6.0 BehindAt stop didn't avoid switches and crossings
+  as following does (GetFollowLimit's JunctionBefore). Now one GetJunctionUnder serves both: BehindAt moves back to
+  before the first switch fouling zone or crossing zone the body would stand on.

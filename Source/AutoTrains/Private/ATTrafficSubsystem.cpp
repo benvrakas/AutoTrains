@@ -1229,6 +1229,40 @@ float AATTrafficSubsystem::GetDistanceToTrackStart(const AFGTrain* Train, const 
 	return TrackNotOnPath;
 }
 
+float AATTrafficSubsystem::GetJunctionUnder(const AFGTrain* Train, const FATTrafficTrain& State, float Front) const
+{
+	const float Rear = Front - State.Length;
+	for (int32 Index = 0; Index < State.Route.Num(); ++Index)
+	{
+		const FATRouteStep& Step = State.Route[Index];
+		const float Start = GetDistanceToTrackStart(Train, State, Step.Track);
+		if (Start <= TrackNotOnPath || Start >= Front + GetClearance())
+		{
+			break;
+		}
+		const int32 Joint = Index > 0 ? GetJoint(State.Route[Index - 1].Exit) : INDEX_NONE;
+		if (Joint != INDEX_NONE)
+		{
+			const float Foul = GetJointFoulDistance(Joint);
+			if (Start - Foul > 0.f && Start - Foul < Front && Start + Foul > Rear)
+			{
+				return Start - Foul;
+			}
+		}
+		for (const FATZone& Zone : GetZones(Step.Track))
+		{
+			float From = 0.f;
+			float To = 0.f;
+			GetZoneAlong(Zone, Step.Track, Step.Exit, From, To);
+			if (Start + From > 0.f && Start + From < Front && Start + To > Rear)
+			{
+				return Start + From;
+			}
+		}
+	}
+	return -1.f;
+}
+
 float AATTrafficSubsystem::GetFollowLimit(const AFGTrain* Train, const FATTrafficTrain& State, float& OutHardLimit, FATFollowInfo* OutInfo) const
 {
 	float Limit = -1.f;
@@ -1252,40 +1286,7 @@ float AATTrafficSubsystem::GetFollowLimit(const AFGTrain* Train, const FATTraffi
 	};
 	// The start of the first switch or crossing zone ahead of the front that the train would stand on if it stopped behind
 	// a leader at Limit; -1 if none. [cm]
-	auto JunctionBefore = [this, Train, &State](float Limit)
-	{
-		const float Front = Limit - GetStopDistance();
-		const float Rear = Front - State.Length;
-		for (int32 Index = 0; Index < State.Route.Num(); ++Index)
-		{
-			const FATRouteStep& Step = State.Route[Index];
-			const float Start = GetDistanceToTrackStart(Train, State, Step.Track);
-			if (Start <= TrackNotOnPath || Start >= Front + GetClearance())
-			{
-				break;
-			}
-			const int32 Joint = Index > 0 ? GetJoint(State.Route[Index - 1].Exit) : INDEX_NONE;
-			if (Joint != INDEX_NONE)
-			{
-				const float Foul = GetJointFoulDistance(Joint);
-				if (Start - Foul > 0.f && Start - Foul < Front && Start + Foul > Rear)
-				{
-					return Start - Foul;
-				}
-			}
-			for (const FATZone& Zone : GetZones(Step.Track))
-			{
-				float From = 0.f;
-				float To = 0.f;
-				GetZoneAlong(Zone, Step.Track, Step.Exit, From, To);
-				if (Start + From > 0.f && Start + From < Front && Start + To > Rear)
-				{
-					return Start + From;
-				}
-			}
-		}
-		return -1.f;
-	};
+	auto JunctionBefore = [this, Train, &State](float Limit) { return GetJunctionUnder(Train, State, Limit - GetStopDistance()); };
 	for (const TWeakObjectPtr<AFGTrain>& LeaderTrain : State.FollowLeaders)
 	{
 		const FATTrafficTrain* Leader = mTrains.Find(LeaderTrain);

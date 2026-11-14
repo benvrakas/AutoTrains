@@ -1057,3 +1057,10 @@ the AFGTrain object name, unique where names repeat):
   crossing 281 (booked locked "clear in 10 s" for 300+ s). The 1.6.0 BehindAt stop didn't avoid switches and crossings
   as following does (GetFollowLimit's JunctionBefore). Now one GetJunctionUnder serves both: BehindAt moves back to
   before the first switch fouling zone or crossing zone the body would stand on.
+- 1.6.3 result (joint VM runs 8-10, emptied baseline, ST 0.33.3; series notes in D:\SFMod\TestEnv\JOINT-RUNS-2026-11-14.md):
+  run 8 repeated run 4 (both 1.5.1) to measure noise: train-km within ~2 %, waiting for traffic ~+-20 %, deadlock
+  report lines 19 vs 3. 1.6.3 (runs 9, 10) vs 1.5.1 (runs 4, 8): train-km 1226/1210 vs 1143/1166, waiting for traffic
+  26.2/43.3 vs 92.7/63.6 train-min, full brakes 34/31 vs 23/37, crossing entries 2/3 vs 4/5, deadlock lines 1/0 vs
+  19/3, failed plans 844/1079 vs 1439/1377. Left for the grant: CHECK FAILED "given to it too, another way" (a switch
+  or crossing owned ahead while another train is on it another way, overlaps from a fraction of a second to ~25 s) and
+  "was granted crossing ... while ... holds it" for two trains on one line where one route loops back over the crossing.

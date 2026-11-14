@@ -998,3 +998,21 @@ the AFGTrain object name, unique where names repeat):
   not self-driving). The 13:59 Crater Lakes pass-through came from a parked (not driven) train standing on a track the
   coal train couldn't stop short of any more; the collision itself can't be planned away once a train stops being
   driven in the way of a committed one (SmartTrains must not switch autopilot off before arrival).
+- 1.5.0 (consolidation, 2026-11-14; from a from-scratch design compared with the code, not from a log). The model:
+  ownership = occupied + granted ahead, exclusive (a same-way follower shares behind its leader). Planner input: Locked
+  = occupied, front in a zone, or owned while moving (was: also anything unowned within the full-brake distance, and
+  held only within that distance + stop distance); Held = owned while standing (releasable: the plan-wait cut in
+  GrantFromPlan gives it up; this is what keeps the 1.4.7 merge deadlock away, where a standing train kept a switch
+  while waiting for the train that needed it). Why unowned-within-braking was dropped: ApplyAuthority full-brakes and
+  force-brakes to the end of authority, so a train never enters what it doesn't own; locking it claimed otherwise and
+  produced the "can't stop short ... booked at the same time" conflicts, which 1.4.14 patched with a reorder. Why a
+  moving train's whole grant is locked: the grant never let another train into it anyway (physical holder test), so
+  plans that fitted in ahead of it were fiction ("moves off in 5 s" for hours). StartPlanCycle stamps current
+  ownership onto the copied bookings, so trains planned before the owner see it (was: flags from the last cycle).
+  CanEnter: kept if granted before (except behind a train ahead on its route); else earliest booking first; then the
+  physical owner test. No locked-vs-locked precedence, no bKeeps. FindCommittedConflict stays as a check only (logs
+  CHECK FAILED), its reorder is gone. LogDeadlocks: cycles as before; STUCK and BLOCKED from one root walk. Blocker
+  naming (held-behind, FindTrainInWay) moved into GrantFromPlan so WAIT dumps and reports see it. GetRouteOrder is
+  FrontIndexOn; ShortestWay serves FindDriveRoute and ExternalEstimateTravelSeconds. Not changed (candidates): the
+  follow-leader layer beside the bookings, the planner's track-end-only positions (queues inside a track), and the
+  several junction/climb rules.

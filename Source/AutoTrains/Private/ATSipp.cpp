@@ -1041,7 +1041,7 @@ namespace
 			Out.Route = RouteTo(Final);
 			// The steps passes are made for: the plan's route, and past where a plan that fails stands, the route steps
 			// on whose switch or track the train is locked (its body in a switch's zone ahead of its front, or what it
-			// can't stop short of), from the first on without a break.
+			// owns while moving), from the first on without a break.
 			TArray<int32> PassRoute = Out.Route;
 			const int32 Planned = PassRoute.Num();
 			bool bOnRoute = Route && Route->Num() > Planned;
@@ -1208,7 +1208,7 @@ namespace
 			FindCommittedConflict(Out);
 		}
 
-		// Committed: from the furthest pass the train holds or can't stop short of (else from where it is) up to the first
+		// Committed: from the furthest pass the train owns (else from where it is) up to the first
 		// place it can stand where its whole body is on nothing a train planned before it has booked from its arrival on.
 		void MarkCommitted(const TArray<int32>& Chain, int32 Final, FATSippResult& Out) const
 		{
@@ -1280,7 +1280,8 @@ namespace
 			}
 		}
 
-		// A train that goes first booked on something this one can't stop short of any more, at the same time.
+		// Check: a train that goes first booked on something this one owns and hasn't entered yet, at the same time. What
+		// a train owns goes first for every other train, so this only shows a train ahead on its line going another way.
 		void FindCommittedConflict(FATSippResult& Out) const
 		{
 			for (const FATSippPass& Pass : Out.Passes)
@@ -1456,7 +1457,7 @@ void ATSipp::Run(FATSippCycle& Cycle)
 	};
 
 	// The turns in order; a self-driving train whose plan fails on the booking of one planned before it, which counts
-	// only because that one plans first, or that can't stop short any more of such a booking, goes before it and the
+	// only because that one plans first, goes before it and the
 	// turns are planned again (paper sec. 6, priority adjustment), up to MaxRetries times and RetrySeconds. A train is never put before one ahead of it on its route, nor
 	// back before one that went before it this leg.
 	const FATSippTable Initial = Cycle.Table;
@@ -1488,12 +1489,8 @@ void ATSipp::Run(FATSippCycle& Cycle)
 			const int32 Slot = Cycle.Order[Position];
 			const FATSippTrain& Train = Cycle.Trains[Slot];
 			const FATSippResult& Result = Cycle.Results[Slot];
-			// A train that can't stop short any more of something a train planned before it booked at the same time goes
-			// before that train too: it can't keep clear, the other one still can (the IB save's "can't stop short"
-			// conflicts came after the other train's timetable changed and it was planned again first).
-			const bool bFailedByRank = Result.bFailed && Result.bBlockedByRank;
-			const int32 By = bFailedByRank ? Result.BlockedBy : Result.CommittedWith;
-			if (Train.Kind != EATSippKind::Moving || Train.bProbe || (!bFailedByRank && Result.CommittedWith == INDEX_NONE) || !Cycle.Trains.IsValidIndex(By)
+			const int32 By = Result.BlockedBy;
+			if (Train.Kind != EATSippKind::Moving || Train.bProbe || !Result.bFailed || !Result.bBlockedByRank || !Cycle.Trains.IsValidIndex(By)
 				|| Cycle.Trains[By].Kind != EATSippKind::Moving || Train.First.Contains(By) || Cycle.Trains[By].MovedAheadOf.Contains(Slot))
 			{
 				continue;

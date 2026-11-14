@@ -88,6 +88,64 @@ namespace
 			: Graph.IsJoint(Resource) ? ResourceName(nullptr, Resource - Graph.Length.Num()) : ResourceName(nullptr, INDEX_NONE, Resource - Graph.CrossingResource(0));
 	}
 
+	// Shortest distance [cm] over the network copy from any of Starts (connections a train leaves its track through) to
+	// GoalNode, or with that INDEX_NONE to any connection of track GoalTrack reached by driving, never leaving a track
+	// past a signal seen from behind; -1 if there is no way. OutNodes, when given, gets the connections on the way.
+	float ShortestWay(const FATSippGraph& Graph, const TArray<int32>& Starts, int32 GoalNode, int32 GoalTrack, TArray<int32>* OutNodes)
+	{
+		TArray<float> Best;
+		Best.Init(MAX_flt, Graph.TrackOf.Num());
+		TArray<int32> From;
+		From.Init(INDEX_NONE, Graph.TrackOf.Num());
+		TArray<TPair<float, int32>> Open;
+		const auto Less = [](const TPair<float, int32>& A, const TPair<float, int32>& B) { return A.Key < B.Key; };
+		for (const int32 Start : Starts)
+		{
+			if (Best.IsValidIndex(Start))
+			{
+				Best[Start] = 0.f;
+				Open.HeapPush({0.f, Start}, Less);
+			}
+		}
+		while (Open.Num() > 0)
+		{
+			TPair<float, int32> Item;
+			Open.HeapPop(Item, Less);
+			if (Item.Key > Best[Item.Value])
+			{
+				continue;
+			}
+			if (GoalNode != INDEX_NONE ? Item.Value == GoalNode : (Graph.TrackOf[Item.Value] == GoalTrack && Item.Key > 0.f))
+			{
+				for (int32 Node = Item.Value; OutNodes && Node != INDEX_NONE; Node = From[Node])
+				{
+					OutNodes->Insert(Node, 0);
+				}
+				return Item.Key;
+			}
+			if (Graph.OneWay[Item.Value])
+			{
+				continue;
+			}
+			for (const int32 Entry : Graph.Attached[Item.Value])
+			{
+				const int32 Next = Graph.OppositeOf.IsValidIndex(Entry) ? Graph.OppositeOf[Entry] : INDEX_NONE;
+				if (Next == INDEX_NONE)
+				{
+					continue;
+				}
+				const float Cost = Item.Key + Graph.Length[Graph.TrackOf[Next]];
+				if (Cost < Best[Next])
+				{
+					Best[Next] = Cost;
+					From[Next] = Item.Value;
+					Open.HeapPush({Cost, Next}, Less);
+				}
+			}
+		}
+		return -1.f;
+	}
+
 	// A leg check nobody asked for again within this long is dropped. [s]
 	constexpr double LegCheckForgetSeconds = 60.0;
 
@@ -543,7 +601,7 @@ bool AATTrafficSubsystem::FindLeg(const FATTrafficTrain& State, AFGBuildableRail
 	return OutRoute.Num() > 0;
 }
 
-bool AATTrafficSubsystem::CanEnter(FATTrafficTrain& Self, const FResourceKey& Key, int32 Index, double Enter, bool bLocked, bool bHeldBefore,
+bool AATTrafficSubsystem::CanEnter(FATTrafficTrain& Self, const FResourceKey& Key, int32 Index, double Enter, bool bHeldBefore,
 	const UFGRailroadTrackConnectionComponent* Via, const UFGRailroadTrackConnectionComponent* Exit, double Now, const FATTrafficTrain*& OutBlocker,
 	FString& OutWhy) const
 {
@@ -559,10 +617,9 @@ bool AATTrafficSubsystem::CanEnter(FATTrafficTrain& Self, const FResourceKey& Ke
 	// A train ahead of this one on its route the same way is followed through the same track or switch the same way; the
 	// follow limit keeps the distance.
 	auto IsFollowed = [this, &Self](const FATTrafficTrain* Other) { return Other && Other->bManaged && GetRouteOrder(Self, *Other) > 0; };
-	// Held from its last grant and locked (it may not stop short of it at service braking) or without a slot in its
-	// plan: the train keeps it whatever was booked since; only a train standing there or holding it stops it.
-	const bool bKeeps = bHeldBefore && (bLocked || bUnplanned);
-	if (const TArray<FBooking>* Bookings = bKeeps ? nullptr : mBookings.Find(Key))
+	// Among trains that don't own it, the plan's order decides: a train ahead on this route first, then the earlier
+	// booking. What this train was granted before it keeps, except behind a train ahead of it on its route.
+	if (const TArray<FBooking>* Bookings = mBookings.Find(Key))
 	{
 		for (const FBooking& Booking : *Bookings)
 		{
@@ -571,7 +628,7 @@ bool AATTrafficSubsystem::CanEnter(FATTrafficTrain& Self, const FResourceKey& Ke
 				continue;
 			}
 			// A train ahead on this route goes first here, and one behind can't get here before this one has passed. Else
-			// locked bookings go first, then bookings in order of entry; ties by pointer so both trains see the same order.
+			// bookings go in order of entry; ties by pointer so both trains see the same order.
 			FATTrafficTrain* const* Other = mStateOf.Find(Booking.Owner);
 			const int32 Ahead = Other ? FrontIndexOn(Self, **Other) : INDEX_NONE;
 			const bool bAheadHere = Ahead != INDEX_NONE && Ahead <= Index;
@@ -579,15 +636,12 @@ bool AATTrafficSubsystem::CanEnter(FATTrafficTrain& Self, const FResourceKey& Ke
 			{
 				continue;
 			}
-			// Held from its last grant: kept against a booking that isn't locked and isn't of a train ahead on this route,
-			// as its plan keeps it.
-			if (bHeldBefore && !Booking.bLocked && !bAheadHere)
+			if (bHeldBefore && !bAheadHere)
 			{
 				continue;
 			}
 			const bool bEarlier = Booking.Enter < Enter || (Booking.Enter == Enter && Booking.Owner < SelfTrain);
-			const bool bFirst = bAheadHere || (Booking.bLocked != bLocked ? Booking.bLocked : bEarlier);
-			if (!bFirst)
+			if (!bAheadHere && !bEarlier)
 			{
 				continue;
 			}
@@ -732,7 +786,7 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 		{
 			FResourceKey Key;
 			Key.Joint = Joint;
-			if (!CanEnter(State, Key, Index, JointEnter(Joint), State.PlanJointLocked.Contains(Joint), HeldJoints.Contains(Joint), Entry, Step.Exit, Now, Blocker, Why))
+			if (!CanEnter(State, Key, Index, JointEnter(Joint), HeldJoints.Contains(Joint), Entry, Step.Exit, Now, Blocker, Why))
 			{
 				Where = FString::Printf(TEXT("the switch before %s"), *ResourceName(Step.Track, INDEX_NONE));
 				bBlocked = true;
@@ -742,7 +796,7 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 		{
 			FResourceKey Key;
 			Key.Track = Step.Track;
-			if (!CanEnter(State, Key, Index, TrackEnter(Step.Track), State.PlanTrackLocked.Contains(Step.Track), HeldTracks.Contains(Step.Track), nullptr, Step.Exit, Now, Blocker, Why))
+			if (!CanEnter(State, Key, Index, TrackEnter(Step.Track), HeldTracks.Contains(Step.Track), nullptr, Step.Exit, Now, Blocker, Why))
 			{
 				Where = ResourceName(Step.Track, INDEX_NONE);
 				bBlocked = true;
@@ -787,7 +841,7 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 				}
 				FResourceKey Key;
 				Key.Crossing = Zone.Value;
-				if (!CanEnter(State, Key, Index, CrossingEnter(Zone.Value), State.PlanCrossingLocked.Contains(Zone.Value), HeldCrossings.Contains(Zone.Value), nullptr, Step.Exit, Now, Blocker, Why))
+				if (!CanEnter(State, Key, Index, CrossingEnter(Zone.Value), HeldCrossings.Contains(Zone.Value), nullptr, Step.Exit, Now, Blocker, Why))
 				{
 					Where = ResourceName(nullptr, INDEX_NONE, Zone.Value);
 					State.AuthorityCut = End - Zone.Key + GetStopDistance();
@@ -873,12 +927,19 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 	}
 	UpdateAuthority(State);
 	UpdateFollowLeaders(State);
-	// Held up with no train named, close behind a train that stands for good: that one.
+	// The train it waits for, named here once for the log, the reports and other mods. Held up with none named: the
+	// train it stands close behind that stands for good, else the first train standing in its way ahead.
 	TWeakObjectPtr<AFGTrain> HeldBehind;
+	FString InWayOn;
 	if (bBlocked && !State.BlockedBy.IsValid() && IsHeldForGood(State, HeldBehind))
 	{
 		State.BlockedBy = HeldBehind;
 		State.BlockedReason += FString::Printf(TEXT("; stays behind %s, which stands there for good"), *NameOf(HeldBehind.Get()));
+	}
+	else if (const FATTrafficTrain* InWay = bBlocked && !State.BlockedBy.IsValid() ? FindTrainInWay(State, InWayOn) : nullptr)
+	{
+		State.BlockedBy = InWay->Train;
+		State.BlockedReason += FString::Printf(TEXT("; %s stands in its way on %s"), *NameOf(InWay->Train.Get()), *InWayOn);
 	}
 	// Standing behind a train in its way that holds it there: named, so a cycle of such trains shows as a deadlock.
 	if (!bBlocked && State.Speed < FollowStuckSpeed)
@@ -1028,13 +1089,13 @@ void AATTrafficSubsystem::FillSippTrain(const FATTrafficTrain& State, const FATS
 	Out.FrontZAt = State.FrontZAt;
 	Out.RearZAt = State.RearZAt;
 	Out.bStanding = State.Speed < StandingSpeed;
-	// Held: what the train holds from its last grant (route steps it holds from its front on, and the switches between
-	// them). Locked: what it stands on, can't stop short of, or, moving, holds within its full-brake stopping distance plus
-	// the stop distance; only what it holds or can't avoid, never a resource ahead it merely stands close to.
+	// Ownership, the one rule the planner and the grant share: a train owns what it stands on and what it was granted
+	// ahead (route steps it holds from its front on, and the switches between them). Locked: owned and not given up, which
+	// is what it stands on (or its front has entered) and, while it moves, everything it was granted. Held: granted ahead
+	// of a standing train, which its plan may still give up by waiting short of it. Nothing it doesn't own is locked: its
+	// speed is capped so it stops within what it owns.
 	TArray<FPass> Passes;
 	CollectPasses(State, Passes);
-	const float Committed = GetStoppingDistance(State, State.Speed);
-	const float LockedWithin = Committed + GetStopDistance();
 	int32 HeldIndex = INDEX_NONE;
 	while (HeldIndex + 1 < State.Route.Num() && HoldsTrack(State, State.Route[HeldIndex + 1].Track))
 	{
@@ -1049,7 +1110,7 @@ void AATTrafficSubsystem::FillSippTrain(const FATTrafficTrain& State, const FATS
 		}
 		const bool bHolds = Pass.RouteIndex != INDEX_NONE && Pass.RouteIndex <= HeldIndex
 			&& (Pass.Key.Crossing == INDEX_NONE || State.ClaimedCrossings.Contains(Pass.Key.Crossing));
-		if (Pass.RouteIndex == INDEX_NONE || Pass.EnterAt <= 0.f || Pass.EnterAt <= Committed || (bHolds && !Out.bStanding && Pass.EnterAt <= LockedWithin))
+		if (Pass.RouteIndex == INDEX_NONE || Pass.EnterAt <= 0.f || (bHolds && !Out.bStanding))
 		{
 			Out.Locked.Add(Resource);
 		}
@@ -1362,6 +1423,14 @@ void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds, bool bW
 			Copy.bLocked = Booking.bLocked;
 			Copy.bHeld = Booking.bHeld;
 			Copy.bCommitted = Booking.bCommitted;
+			// Ownership as it is now, known to every turn from the start: what a train was granted since its last plan
+			// counts for the trains planned before it too.
+			const FATSippTrain& Owner = Cycle->Trains[*Slot];
+			if (Owner.Turn == EATSippTurn::Plan && Owner.Kind == EATSippKind::Moving)
+			{
+				Copy.bLocked = Copy.bLocked || Owner.Locked.Contains(Resource);
+				Copy.bHeld = !Copy.bLocked && (Copy.bHeld || Owner.Held.Contains(Resource));
+			}
 			Cycle->Table.Add(Resource, Copy);
 		}
 	}
@@ -1427,7 +1496,7 @@ void AATTrafficSubsystem::ApplyPlanCycle()
 			Own.Keys.Add(Key);
 		}
 	}
-	// Trains moved up after a failed plan, or one that couldn't stop short of the other's booking, stay before the train
+	// Trains moved up after a failed plan stay before the train
 	// in their way for the rest of their leg.
 	for (const TPair<int32, int32>& Move : Cycle->Reordered)
 	{
@@ -1440,7 +1509,7 @@ void AATTrafficSubsystem::ApplyPlanCycle()
 		Moved->LegStart = FMath::Min(Moved->LegStart, Passed->LegStart - 0.001);
 		Moved->MovedAheadOf.Add(Passed->Train);
 		++mPlanReorders;
-		UE_LOG(LogAutoTrains, Verbose, TEXT("planner: %s is planned before %s from now on: its plan found no way past %s's booking, or couldn't stop short of it"), *NameOf(Moved->Train.Get()),
+		UE_LOG(LogAutoTrains, Verbose, TEXT("planner: %s is planned before %s from now on: its plan found no way past %s's booking"), *NameOf(Moved->Train.Get()),
 			*NameOf(Passed->Train.Get()), *NameOf(Passed->Train.Get()));
 	}
 	const FString Limited = Cycle->Owners.IsValidIndex(Cycle->RetryLimited) ? NameOf(Cycle->Owners[Cycle->RetryLimited].Get()) : FString();
@@ -1579,7 +1648,7 @@ void AATTrafficSubsystem::ApplyPlan(FATTrafficTrain& State, const FATSippCycle& 
 		if (!Committed.IsEmpty() && State.GhostUntil < 0.0)
 		{
 			++mPlanCommitted;
-			UE_LOG(LogAutoTrains, Warning, TEXT("planner: %s can't stop short of %s any more, which %s has booked at the same time"), *NameOf(Train),
+			UE_LOG(LogAutoTrains, Warning, TEXT("planner: CHECK FAILED: %s owns %s, which %s, ahead on its line, has booked at the same time"), *NameOf(Train),
 				*Name(Result.CommittedAt), *NameOf(TrainOf(Result.CommittedWith)));
 		}
 		State.PlanCommitted = Committed;
@@ -1852,7 +1921,7 @@ void AATTrafficSubsystem::UpdatePlannedTraffic(float DeltaSeconds)
 		{
 			Bookings += Pair.Value.Num();
 		}
-		UE_LOG(LogAutoTrains, Log, TEXT("planner: last %.0f s: %d trains (%d driving), %d bookings now, %.2f ms per update; %d cycles, %.1f ms each on a worker, %d updates waited for one, %d trains moved up after a failed plan or one that couldn't stop short; %d plans, %d with a wait, %d failed, %d committed conflicts, %d reroutes, %d departures predicted"),
+		UE_LOG(LogAutoTrains, Log, TEXT("planner: last %.0f s: %d trains (%d driving), %d bookings now, %.2f ms per update; %d cycles, %.1f ms each on a worker, %d updates waited for one, %d trains moved up after a failed plan; %d plans, %d with a wait, %d failed, %d committed conflicts, %d reroutes, %d departures predicted"),
 			PlanSummarySeconds, mStateOf.Num(), Driving.Num(), Bookings, mPlanUpdates > 0 ? mPlanSeconds * 1000.0 / mPlanUpdates : 0.0, mCycles,
 			mCycles > 0 ? mCycleMilliseconds / mCycles : 0.0, mCyclesLate, mPlanReorders, mPlans, mPlanWaits, mPlanFailures, mPlanCommitted, mPlanReroutes, mPlanPredictions);
 		mPlans = mPlanWaits = mPlanFailures = mPlanCommitted = mPlanReroutes = mPlanPredictions = mPlanUpdates = mCycles = mCyclesLate = mPlanReorders = 0;
@@ -2227,52 +2296,15 @@ float AATTrafficSubsystem::ExternalEstimateTravelSeconds(AFGTrain* Train, AFGBui
 		return -1.f;
 	}
 	// Shortest distance over the network from either end of From's track to To's track, never past a signal from behind.
-	TArray<float> Best;
-	Best.Init(MAX_flt, Graph->TrackOf.Num());
-	TArray<TPair<float, int32>> Open;
-	const auto Less = [](const TPair<float, int32>& A, const TPair<float, int32>& B) { return A.Key < B.Key; };
+	TArray<int32> Starts;
 	for (int32 End = 0; End < 2; ++End)
 	{
-		const int32* Node = Graph->ConnectionIndex.Find(FromTrack->GetConnection(End));
-		if (Node && Best.IsValidIndex(*Node))
+		if (const int32* Node = Graph->ConnectionIndex.Find(FromTrack->GetConnection(End)))
 		{
-			Best[*Node] = 0.f;
-			Open.HeapPush({0.f, *Node}, Less);
+			Starts.Add(*Node);
 		}
 	}
-	float Distance = -1.f;
-	while (Open.Num() > 0)
-	{
-		TPair<float, int32> Item;
-		Open.HeapPop(Item, Less);
-		if (Item.Key > Best[Item.Value])
-		{
-			continue;
-		}
-		if (Graph->TrackOf[Item.Value] == *GoalTrack && Item.Key > 0.f)
-		{
-			Distance = Item.Key;
-			break;
-		}
-		if (Graph->OneWay[Item.Value])
-		{
-			continue;
-		}
-		for (const int32 Entry : Graph->Attached[Item.Value])
-		{
-			const int32 Next = Graph->OppositeOf.IsValidIndex(Entry) ? Graph->OppositeOf[Entry] : INDEX_NONE;
-			if (Next == INDEX_NONE)
-			{
-				continue;
-			}
-			const float Cost = Item.Key + Graph->Length[Graph->TrackOf[Next]];
-			if (Cost < Best[Next])
-			{
-				Best[Next] = Cost;
-				Open.HeapPush({Cost, Next}, Less);
-			}
-		}
-	}
+	const float Distance = ShortestWay(*Graph, Starts, INDEX_NONE, *GoalTrack, nullptr);
 	if (Distance < 0.f)
 	{
 		return -1.f;
@@ -2642,54 +2674,13 @@ bool AATTrafficSubsystem::FindDriveRoute(AFGTrain* Train, const UFGRailroadTrack
 		return false;
 	}
 	// Shortest way from the connection ahead of the front, never leaving a track past a signal seen from behind.
-	TArray<float> Best;
-	Best.Init(MAX_flt, Graph->TrackOf.Num());
-	TArray<int32> From;
-	From.Init(INDEX_NONE, Graph->TrackOf.Num());
-	TArray<TPair<float, int32>> Open;
-	const auto Less = [](const TPair<float, int32>& A, const TPair<float, int32>& B) { return A.Key < B.Key; };
-	Best[*StartNode] = 0.f;
-	Open.HeapPush({0.f, *StartNode}, Less);
-	bool bFound = false;
-	while (Open.Num() > 0)
-	{
-		TPair<float, int32> Item;
-		Open.HeapPop(Item, Less);
-		if (Item.Key > Best[Item.Value])
-		{
-			continue;
-		}
-		if (Item.Value == *GoalNode)
-		{
-			bFound = true;
-			break;
-		}
-		if (Graph->OneWay[Item.Value])
-		{
-			continue;
-		}
-		for (const int32 Entry : Graph->Attached[Item.Value])
-		{
-			const int32 Next = Graph->OppositeOf.IsValidIndex(Entry) ? Graph->OppositeOf[Entry] : INDEX_NONE;
-			if (Next == INDEX_NONE)
-			{
-				continue;
-			}
-			const float Cost = Item.Key + Graph->Length[Graph->TrackOf[Next]];
-			if (Cost < Best[Next])
-			{
-				Best[Next] = Cost;
-				From[Next] = Item.Value;
-				Open.HeapPush({Cost, Next}, Less);
-			}
-		}
-	}
-	if (!bFound)
+	TArray<int32> Nodes;
+	if (ShortestWay(*Graph, {*StartNode}, *GoalNode, INDEX_NONE, &Nodes) < 0.f)
 	{
 		OutWhy = FString::Printf(TEXT("no way from %s, driving forward, that passes no signal from behind"), *ResourceName(Start->GetTrack(), INDEX_NONE));
 		return false;
 	}
-	for (int32 Node = *GoalNode; Node != INDEX_NONE; Node = From[Node])
+	for (const int32 Node : Nodes)
 	{
 		UFGRailroadTrackConnectionComponent* Connection = Graph->Connections[Node].Get();
 		if (!Connection)
@@ -2698,7 +2689,7 @@ bool AATTrafficSubsystem::FindDriveRoute(AFGTrain* Train, const UFGRailroadTrack
 			OutRoute.Reset();
 			return false;
 		}
-		OutRoute.Insert(Connection, 0);
+		OutRoute.Add(Connection);
 	}
 	return true;
 }

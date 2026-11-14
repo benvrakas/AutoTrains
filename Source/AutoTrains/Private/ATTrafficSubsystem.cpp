@@ -566,16 +566,6 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 	UpdatePlannedTraffic(DeltaSeconds);
 	for (FATTrafficTrain* State : Managed)
 	{
-		// Held up with no train named: the first train standing in its way ahead is the one it waits for.
-		if (!State->BlockedReason.IsEmpty() && !State->BlockedBy.IsValid())
-		{
-			FString Where;
-			if (const FATTrafficTrain* InWay = FindTrainInWay(*State, Where))
-			{
-				State->BlockedBy = InWay->Train;
-				State->BlockedReason += FString::Printf(TEXT("; %s stands in its way on %s"), *TrainName(InWay->Train.Get()), *Where);
-			}
-		}
 		if (LogKey(State) != PreviousReasons.FindRef(State) && !State->BlockedReason.IsEmpty())
 		{
 			UE_LOG(LogAutoTrains, Verbose, TEXT("traffic: %s: %s"), *TrainName(State->Train.Get()), *State->BlockedReason);
@@ -1124,21 +1114,12 @@ int32 AATTrafficSubsystem::GetRouteOrder(const FATTrafficTrain& Self, const FATT
 	{
 		return 0;
 	}
-	const FATRouteStep& OtherStep = Other.Route[0];
-	for (int32 Index = 0; Index < Self.Route.Num(); ++Index)
+	// Ahead as FrontIndexOn has it, the one test of two trains' order along a line.
+	if (FrontIndexOn(Self, Other) != INDEX_NONE)
 	{
-		if (Self.Route[Index].Track != OtherStep.Track)
-		{
-			continue;
-		}
-		if (Self.Route[Index].Exit != OtherStep.Exit)
-		{
-			return -1;
-		}
-		// On the same track: the one nearer its end is ahead.
-		return Index > 0 || OtherStep.EndDistance - Other.FrontAhead < Self.Route[0].EndDistance - Self.FrontAhead ? 1 : -1;
+		return 1;
 	}
-	return 0;
+	return Self.RouteIndexOf.Contains(Other.Route[0].Track) ? -1 : 0;
 }
 
 bool AATTrafficSubsystem::IsLeaderOf(const FATTrafficTrain& Self, const FATTrafficTrain& Other) const
@@ -1590,66 +1571,57 @@ void AATTrafficSubsystem::LogDeadlocks()
 			}
 		}
 	}
-	// A train held up for long with no train to wait for all that time: nothing ahead will let it go, so it and every
-	// train whose chain of waits ends at it are stuck. Logged when it first shows up; it looks for another way at once.
+	// Every other long wait ends somewhere along the chain of trains waited for. Two ends don't clear by themselves: a
+	// train with no train to wait for all that time (STUCK), and a train waiting for one nobody drives, parked or driven
+	// by hand (BLOCKED). Each is logged when it first shows up, with the trains whose chains end at it; a stuck train
+	// looks for another way at once.
 	auto IsWaiting = [this](const FATTrafficTrain* State) { return State && State->bManaged && State->WaitingSeconds >= mSettings.DeadlockWaitSeconds; };
+	auto IsUndriven = [](const FATTrafficTrain* State)
+	{
+		const AFGTrain* Train = State ? State->Train.Get() : nullptr;
+		return Train && !State->bManaged && !Train->IsDocked() && !Train->IsSelfDrivingEnabled();
+	};
+	TMap<const FATTrafficTrain*, TArray<FString>> BehindOf;
 	TSet<const FATTrafficTrain*> InStall;
 	for (TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Pair : mTrains)
 	{
-		FATTrafficTrain& Root = Pair.Value;
-		if (!IsWaiting(&Root) || Root.UnnamedWaitSeconds < mSettings.DeadlockWaitSeconds || InCycle.Contains(&Root))
-		{
-			continue;
-		}
-		TArray<FString> Behind;
-		InStall.Add(&Root);
-		for (const TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Other : mTrains)
-		{
-			const FATTrafficTrain* Current = &Other.Value;
-			for (int32 Steps = 0; Current != &Root && IsWaiting(Current) && Steps < 64; ++Steps)
-			{
-				Current = mTrains.Find(Current->BlockedBy);
-			}
-			if (Current == &Root && &Other.Value != &Root)
-			{
-				Behind.Add(TrainName(Other.Value.Train.Get()));
-				InStall.Add(&Other.Value);
-			}
-		}
-		const FString Signature = TEXT("stuck|") + TrainName(Root.Train.Get());
-		FDeadlockSeen* Seen = mDeadlocks.Find(Signature);
-		const bool bNew = !Seen;
-		if (bNew)
-		{
-			Seen = &mDeadlocks.Add(Signature, {Now, Now});
-		}
-		Seen->Last = Now;
-		if (!bNew)
-		{
-			continue;
-		}
-		Behind.Sort();
-		const FString Fault = FString::Printf(TEXT("%s %s has waited %.0f s with no train to wait for: %s; %d waiting behind it%s%s\n"),
-			*FDateTime::Now().ToString(TEXT("%Y-%m-%d %H:%M:%S")), *TrainName(Root.Train.Get()), Root.UnnamedWaitSeconds, *Root.BlockedReason, Behind.Num(),
-			Behind.Num() > 0 ? TEXT(": ") : TEXT(""), *FString::Join(Behind, TEXT(", ")));
-		UE_LOG(LogAutoTrains, Warning, TEXT("traffic: STUCK: %s"), *Fault.TrimEnd());
-		WriteFault(Fault);
-		Root.RerouteCooldown = 0.f;
-		Root.RerouteTimer = 0.f;
+		Pair.Value.bWaitsForParked = false;
 	}
-	// A train held up for long by a train nobody drives (parked, or driven by hand): it won't move on until someone
-	// moves that one. Logged when it first shows up, with the trains whose chain of waits ends at it.
-	for (TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Pair : mTrains)
+	for (const TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Pair : mTrains)
 	{
-		FATTrafficTrain& Root = Pair.Value;
-		const FATTrafficTrain* By = mTrains.Find(Root.BlockedBy);
-		const AFGTrain* ByTrain = By ? By->Train.Get() : nullptr;
-		Root.bWaitsForParked = IsWaiting(&Root) && ByTrain && !By->bManaged && !ByTrain->IsDocked() && !ByTrain->IsSelfDrivingEnabled() && !InCycle.Contains(&Root);
-		if (!Root.bWaitsForParked)
+		const FATTrafficTrain* Root = &Pair.Value;
+		if (!IsWaiting(Root) || InCycle.Contains(Root))
 		{
 			continue;
 		}
-		const FString Signature = TEXT("parked|") + TrainName(Root.Train.Get()) + TEXT("|") + TrainName(ByTrain);
+		for (int32 Steps = 0; Steps < 64; ++Steps)
+		{
+			const FATTrafficTrain* Next = mTrains.Find(Root->BlockedBy);
+			if (!IsWaiting(Next) || InCycle.Contains(Next))
+			{
+				break;
+			}
+			Root = Next;
+		}
+		const bool bStuck = Root->UnnamedWaitSeconds >= mSettings.DeadlockWaitSeconds;
+		if (!bStuck && !IsUndriven(mTrains.Find(Root->BlockedBy)))
+		{
+			continue;
+		}
+		TArray<FString>& Behind = BehindOf.FindOrAdd(Root);
+		InStall.Add(&Pair.Value);
+		if (Root != &Pair.Value)
+		{
+			Behind.Add(TrainName(Pair.Value.Train.Get()));
+		}
+	}
+	for (TPair<const FATTrafficTrain*, TArray<FString>>& Stall : BehindOf)
+	{
+		FATTrafficTrain* Root = mTrains.Find(Stall.Key->Train);
+		const FATTrafficTrain* By = mTrains.Find(Root->BlockedBy);
+		const bool bParked = IsUndriven(By);
+		Root->bWaitsForParked = bParked;
+		const FString Signature = (bParked ? TEXT("parked|") : TEXT("stuck|")) + TrainName(Root->Train.Get()) + TEXT("|") + (bParked ? TrainName(By->Train.Get()) : FString());
 		FDeadlockSeen* Seen = mDeadlocks.Find(Signature);
 		const bool bNew = !Seen;
 		if (bNew)
@@ -1661,25 +1633,24 @@ void AATTrafficSubsystem::LogDeadlocks()
 		{
 			continue;
 		}
-		TArray<FString> Behind;
-		for (const TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Other : mTrains)
+		Stall.Value.Sort();
+		const FString Behind = FString::Printf(TEXT("%d waiting behind it%s%s"), Stall.Value.Num(), Stall.Value.Num() > 0 ? TEXT(": ") : TEXT(""), *FString::Join(Stall.Value, TEXT(", ")));
+		const FString Stamp = FDateTime::Now().ToString(TEXT("%Y-%m-%d %H:%M:%S"));
+		FString Fault;
+		if (bParked)
 		{
-			const FATTrafficTrain* Current = &Other.Value;
-			for (int32 Steps = 0; Current != &Root && IsWaiting(Current) && Steps < 64; ++Steps)
-			{
-				Current = mTrains.Find(Current->BlockedBy);
-			}
-			if (Current == &Root && &Other.Value != &Root)
-			{
-				Behind.Add(TrainName(Other.Value.Train.Get()));
-			}
+			const FString Where = By->Vehicles.Num() > 0 ? TrackName(By->Vehicles[0].Track) : TEXT("no track");
+			Fault = FString::Printf(TEXT("%s %s has waited %.0f s for %s, which nobody drives (parked, or driven by hand) on %s: %s; %s\n"), *Stamp, *TrainName(Root->Train.Get()),
+				Root->WaitingSeconds, *TrainName(By->Train.Get()), *Where, *Root->BlockedReason, *Behind);
 		}
-		Behind.Sort();
-		const FString Where = By->Vehicles.Num() > 0 ? TrackName(By->Vehicles[0].Track) : TEXT("no track");
-		const FString Fault = FString::Printf(TEXT("%s %s has waited %.0f s for %s, which nobody drives (parked, or driven by hand) on %s: %s; %d waiting behind it%s%s\n"),
-			*FDateTime::Now().ToString(TEXT("%Y-%m-%d %H:%M:%S")), *TrainName(Root.Train.Get()), Root.WaitingSeconds, *TrainName(ByTrain), *Where, *Root.BlockedReason,
-			Behind.Num(), Behind.Num() > 0 ? TEXT(": ") : TEXT(""), *FString::Join(Behind, TEXT(", ")));
-		UE_LOG(LogAutoTrains, Warning, TEXT("traffic: BLOCKED: %s"), *Fault.TrimEnd());
+		else
+		{
+			Fault = FString::Printf(TEXT("%s %s has waited %.0f s with no train to wait for: %s; %s\n"), *Stamp, *TrainName(Root->Train.Get()), Root->UnnamedWaitSeconds,
+				*Root->BlockedReason, *Behind);
+			Root->RerouteCooldown = 0.f;
+			Root->RerouteTimer = 0.f;
+		}
+		UE_LOG(LogAutoTrains, Warning, TEXT("traffic: %s: %s"), bParked ? TEXT("BLOCKED") : TEXT("STUCK"), *Fault.TrimEnd());
 		WriteFault(Fault);
 	}
 	for (auto It = mDeadlocks.CreateIterator(); It; ++It)

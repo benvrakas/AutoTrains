@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.5.0
+
+- **One rule for who owns a switch, crossing or track.** The planner and the step that hands trains their way ahead
+  used to decide this by two sets of rules that could disagree; several earlier fixes patched the places where they
+  did. Both now go by ownership: a train owns what it stands on and what it was given ahead, nobody else is given
+  that, and among trains that don't own a place the plan's order decides. A moving train keeps everything it was
+  given; a standing one may still give it up. Plans now match what trains are actually allowed to do, so there are
+  fewer waits planned to end "in a few seconds" that don't, and no train is planned across track another already has.
+- Removed with it: counting track a train doesn't own as taken because it is within its braking distance (its speed is
+  capped so it stops within what it owns), and the planning-order change that made up for that.
+- **One report for waits that don't clear by themselves.** Deadlocks, trains stuck with nothing to wait for and trains
+  waiting for a parked train are found by one walk along who waits for whom. The log names the train waited for at
+  the moment it is decided, so wait lines no longer show "?" where a train was known.
+- Internal: one test of which train is ahead on a line, and one shortest-way search, each used everywhere.
+
 ## 1.4.18
 
 - **Fixed: a train stuck behind one that stands for good made other trains wait for nothing.** A train standing close

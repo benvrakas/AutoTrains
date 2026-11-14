@@ -578,11 +578,11 @@ private:
 		const UFGRailroadTrackConnectionComponent* Exit = nullptr;
 		const UFGRailroadTrackConnectionComponent* Via = nullptr;
 		EBookingKind Kind = EBookingKind::Moving;
-		// Locked: the owner stands on it or couldn't stop short of it at service braking; nobody books ahead of it, and it
-		// goes first. Held: the owner holds it from its last grant; others may still fit in ahead of it.
+		// Locked: the owner stands on it, or was granted it and is moving; nobody books ahead of it. Held: a standing
+		// owner was granted it; its plan may still give it up, so others may fit in ahead of it.
 		bool bLocked = false;
 		bool bHeld = false;
-		// Committed: on the owner's way from what it holds or can't stop short of to the next place it can stand without
+		// Committed: on the owner's way from what it owns to the next place it can stand without
 		// holding up a train planned before it; it can't give way inside that stretch.
 		bool bCommitted = false;
 	};
@@ -676,10 +676,10 @@ private:
 	// Sets State's claims: the route resources from its front up to its stopping distance plus lookahead that it may
 	// enter now: booked for it, no other train booked there first or standing there, except one it follows the same way.
 	void GrantFromPlan(FATTrafficTrain& State, double Now);
-	// Returns true if Self may enter Key, at its route step Index, now with its booking entering at Enter (locked or not;
-	// held from its last grant or not); otherwise sets the train in the way and why. A train it follows the same way is added to its followed
-	// trains.
-	bool CanEnter(FATTrafficTrain& Self, const FResourceKey& Key, int32 Index, double Enter, bool bLocked, bool bHeldBefore, const UFGRailroadTrackConnectionComponent* Via,
+	// Returns true if Self may enter Key, at its route step Index, with its booking entering at Enter (bHeldBefore: it
+	// was granted it last time): nobody else owns it, and it kept it or no train that doesn't own it goes first by the
+	// plan; otherwise sets the train in the way and why. A train it follows the same way is added to its followed trains.
+	bool CanEnter(FATTrafficTrain& Self, const FResourceKey& Key, int32 Index, double Enter, bool bHeldBefore, const UFGRailroadTrackConnectionComponent* Via,
 		const UFGRailroadTrackConnectionComponent* Exit, double Now, const FATTrafficTrain*& OutBlocker, FString& OutWhy) const;
 	// Returns true if Other has a vehicle on the switch's fouling zone or crossing zone Key on a track that isn't on
 	// Self's route or under Self.

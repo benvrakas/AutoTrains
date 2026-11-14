@@ -77,7 +77,8 @@ enum class EATSippKind : uint8
 
 // A booking as the planner holds it: the owner's slot in the cycle, when it holds the resource (world seconds), the
 // connection it leaves a track through and, at a joint, the one it comes from (INDEX_NONE if unknown). Locked: nobody
-// books ahead of it. Held: from the owner's last grant. Committed: the owner can't give way there.
+// books ahead of it (owned and not given up). Held: granted to a standing owner, which may give it up. Committed:
+// the owner can't give way there.
 struct FATSippBooking
 {
 	int32 Owner = INDEX_NONE;

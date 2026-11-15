@@ -5,9 +5,9 @@
 - **Trains never wait with any part of them on a switch or crossing.** They wait before the junction instead. Until
   now a short wait there was allowed (the "Longest wait across a junction" setting, 5 s), but planned waits often
   last longer than planned, and a train standing on a junction holds up the other line; in a busy cluster of crossings
-  that closed into rings of trains waiting for each other. On the test server, with the same save, the same build at
-  5 s jammed in 5 of 7 runs (down to 520-1059 km driven in 25 min, 200-600 train-minutes waiting) and at 0 s in
-  neither of 2 (1231 and 1155 km, 30 and 99 train-minutes).
+  that closed into rings of trains waiting for each other. On the test server, with the same save, 1.6.4-1.6.9 at
+  5 s jammed in 5 of 7 runs (down to 520-1059 km driven in 25 min, 200-600 train-minutes waiting) and 1.6.9 at 0 s
+  in neither of 2 (1231 and 1155 km, 30 and 99 train-minutes).
 - Removed: the "Longest wait across a junction" setting.
 
 ## 1.6.9

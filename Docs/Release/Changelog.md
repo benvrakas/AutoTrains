@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.6.9
+
+- **Fixed: some deadlocks weren't seen as deadlocks**, so trains stood in them for many minutes ("STUCK" with no
+  train to wait for). A train whose plan found no way on said it waited for nobody when the planner knew which train
+  held it up. It now names that train (and keeps naming it while its plan keeps failing), so the cycle shows and is
+  handled like any deadlock.
+
 ## 1.6.8
 
 - Log only: the planner's WAIT dump of a long-waiting train also lists the bookings where its plan finds no way on,

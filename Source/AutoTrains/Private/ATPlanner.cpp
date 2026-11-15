@@ -1636,7 +1636,10 @@ void AATTrafficSubsystem::ApplyPlan(FATTrafficTrain& State, const FATSippCycle& 
 	State.PlanWaitExit = bWaits && Result.Route.IsValidIndex(Result.WaitStep) ? Graph.Connections[Result.Route[Result.WaitStep]] : TWeakObjectPtr<UFGRailroadTrackConnectionComponent>();
 	State.PlanWaitShort = Result.WaitShort;
 	State.PlanDepart = bWaits ? Result.WaitUntil : -1.0;
-	State.PlanWaitFor = TrainOf(Result.WaitFor);
+	// The train it waits for: its plan's wait, else what held up a plan that found no way, else (failing on with none
+	// named) the one it was held up by before, so a cycle of waits stays visible to the stall walk.
+	AFGTrain* WaitFor = TrainOf(Result.WaitFor != INDEX_NONE ? Result.WaitFor : Result.bFailed ? Result.BlockedBy : INDEX_NONE);
+	State.PlanWaitFor = WaitFor ? TWeakObjectPtr<AFGTrain>(WaitFor) : Result.bFailed && !State.PlanFailure.IsEmpty() ? State.PlanWaitFor : TWeakObjectPtr<AFGTrain>();
 	State.PlanArrival = Result.bFailed ? OpenTime : Result.Arrival;
 	if (State.SearchedArrival < 0.0 && !IsOpen(State.PlanArrival))
 	{

@@ -1086,3 +1086,10 @@ the AFGTrain object name, unique where names repeat):
   up after a failed plan" stayed 0 (since 1.5.0 only blocks by plan rank reorder, and owners' locked bookings aren't
   by rank). The WAIT dump listed only crossing 314 (where the grant stops), so the bookings at the plan's failure place
   were never logged; FATTrafficTrain.PlanBlocked* keeps that place and LogWaitDump lists its bookings too.
+- 1.6.9 (run 17, AT 1.6.8 + ST 0.34.1): the jam was a stable 3-train cycle 01:27-01:37 UTC: Copper (-> Southern Forest
+  Alclad) waits for Heavy Oil (grant), Heavy Oil for Sulfur #3826 (grant), #3826 for Copper only in its plan ("no way
+  on past crossing 326 for Copper", alternating with "no way to its goal: no move on from route step -1" and tail
+  windows missed). The grant called #3826 "waits for ?: its plan has no slot there yet" because PlanWaitFor came only
+  from Result.WaitFor, so LogDeadlocks saw a STUCK root, never the cycle, and no pass-through came. PlanWaitFor now
+  falls back to Result.BlockedBy for a failed plan, and keeps the last one named while the plan keeps failing with
+  none. Runs 11/14/15 likely the same (roots "no slot there yet", nobody named).

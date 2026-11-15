@@ -1093,3 +1093,9 @@ the AFGTrain object name, unique where names repeat):
   from Result.WaitFor, so LogDeadlocks saw a STUCK root, never the cycle, and no pass-through came. PlanWaitFor now
   falls back to Result.BlockedBy for a failed plan, and keeps the last one named while the plan keeps failing with
   none. Runs 11/14/15 likely the same (roots "no slot there yet", nobody named).
+- 1.7.0 (runs 18-20, AT 1.6.9 + ST 0.34.1, emptied baseline): with JunctionWaitSeconds 5 the crossing cluster 314-331
+  jammed in 4 of 5 runs (cycles visible since 1.6.9 but forming and dissolving faster than GhostAfterSeconds); with 0
+  (VM config only) runs 19 and 20 didn't jam (waiting 30 / 99 train-min; run 20 had 12 deadlock reports, 8 passed through). The 1.3.9 rule allowed waits up to JunctionWaitSeconds with the body on
+  a joint's fouling zone or a crossing zone, measured by plan times that slip each cycle, so trains stood on junctions
+  for minutes. Now: no wait at all there (Leave > Earliest with IsOnJunction is rejected; as before not at the start
+  state, where the train already stands). The setting is gone.

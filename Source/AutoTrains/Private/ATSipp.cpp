@@ -973,8 +973,8 @@ namespace
 					Leave = Later;
 					continue;
 				}
-				// No long wait with the body across a junction, holding up the other line: it waits before the junction.
-				if (State.Step >= 0 && Leave > Earliest + Cycle.JunctionWaitSeconds && IsOnJunction(Index))
+				// No wait with the body across a junction, holding up the other line: it waits before the junction.
+				if (State.Step >= 0 && Leave > Earliest && IsOnJunction(Index))
 				{
 					++RejectedJunction;
 					return;

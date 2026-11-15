@@ -1276,7 +1276,6 @@ void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds, bool bW
 	// Retries end by half the update interval, so the cycle is in by the next update.
 	Cycle->MaxRetries = FMath::RoundToInt(mSettings.PlanRetries);
 	Cycle->RetrySeconds = mSettings.UpdateIntervalSeconds * 0.5;
-	Cycle->JunctionWaitSeconds = mSettings.JunctionWaitSeconds;
 	Cycle->MaxStates = FMath::RoundToInt(mSettings.PlanSearchLimit);
 	TMap<const AFGTrain*, int32> SlotOf;
 	for (const FTurn& Turn : Turns)

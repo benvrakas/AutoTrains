@@ -20,8 +20,6 @@ struct FATSettings
 	float HillStallSeconds = 4.f;
 	// Writes every train's waits, departures, acceleration and braking to FactoryGame.log, and telemetry to a CSV file.
 	bool bDetailedLog = false;
-	// Longest a train waits with any part of it on a switch or crossing; else it waits before the junction. [s]
-	float JunctionWaitSeconds = 5.f;
 	// Time kept between two trains' bookings of the same track or switch. [s]
 	float SafetyMargin = 0.f;
 	// Top speed of every self-driving train, 0 for each train's own. [km/h]

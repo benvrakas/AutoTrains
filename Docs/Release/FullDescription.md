@@ -118,8 +118,9 @@ doesn't cost frame time.
   move, and the stop's set duration when there isn't, so the departure is known as soon as the platforms start (or
   don't). Only stops set to fully load or unload go by how long the train stayed there last time. At a station
   without freight platforms, where the game lets a train go at once, no stay is planned.
-- **Never stuck in a junction.** A train only drives into a stretch it can get through; it won't stop with its body
-  across a crossing or switch someone else is booked on.
+- **Never stuck in a junction.** A train only drives into a stretch it can get through, and it never stops with any
+  part of it on a switch or crossing: it waits before the junction, so the other line stays free. A train queueing
+  behind a standing one stops right behind it, short of any switch or crossing.
 - **Brakes it can trust.** Each train measures how hard it really brakes and accelerates at each speed, with the
   slope taken out, and plans with that. Stopping distances and stop points add the slope of the track ahead, so trains
   stop where planned downhill and aren't held back uphill. If a train still can't stop in time, the mod brakes it
@@ -130,7 +131,7 @@ doesn't cost frame time.
 - **Deadlocks cleared.** Trains waiting for each other in a circle get the game's warning over them. With the beta
   setting on (the default), after a minute they pass through each other to clear the jam, and the case is written to
   a log you can send in. A train held up that long with no train to wait for also gets the warning and is logged as
-  stuck.
+  stuck, and one held up by a parked or hand-driven train is logged as blocked.
 
 The method follows the safe interval planning of Phillips and Likhachev (2011) and its extension to long vehicles,
 [MT-SIPP](https://doi.org/10.3390/machines12070482) (Miao et al., 2024), which books the body of a train and not just
@@ -200,7 +201,8 @@ side of the track (back to back) allows both ways.
   train leaves a station, SmartTrains asks Auto Trains whether its first leg can be driven now, around every other
   train, including trains coming the other way on a single track; if not, the train waits in the station. Station
   queues and travel times feed its trip timing, how busy the way into a station is helps it pick between stations,
-  and its monitor shows trains that are stuck or deadlocked.
+  its monitor shows trains that are stuck or deadlocked, and it can send an idle train to a depot spot (a siding or
+  a signal) that isn't a station, which Auto Trains then drives it to like any other leg.
 - **[Freight Car Control](https://ficsit.app/mod/FreightCarControl)** sets each freight car to load, unload or skip
   at every stop, so one train can fill car 1 at one station and car 2 at the next. Stations, docking and timetables
   work as usual.

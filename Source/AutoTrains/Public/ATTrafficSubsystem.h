@@ -285,6 +285,10 @@ struct FATTrafficTrain
 	const AFGBuildableRailroadTrack* BlockedAtTrack = nullptr;
 	int32 BlockedAtJoint = INDEX_NONE;
 	int32 BlockedAtCrossing = INDEX_NONE;
+	// Where its last plan found no way on (none if it found one), for the log.
+	const AFGBuildableRailroadTrack* PlanBlockedTrack = nullptr;
+	int32 PlanBlockedJoint = INDEX_NONE;
+	int32 PlanBlockedCrossing = INDEX_NONE;
 };
 
 // Server only. Train traffic without signals, planned in space and time (ATPlanner.cpp): every train books the tracks

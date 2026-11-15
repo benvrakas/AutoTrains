@@ -1081,3 +1081,8 @@ the AFGTrain object name, unique where names repeat):
   2136230838, after another train passed through it at 23:28 UTC. The 2136... tracks are in the network copy (trains
   drive them in every run). The failure line now says which case it is (MinDepart never from IsHeldForGood, route past
   the network copy, search limit, or the route step it got no further than).
+- 1.6.8 (run 15, AT 1.6.7): the jam's root was starved, not blocked: its plan failed every few seconds behind a different
+  train at track 2146731141 (Heavy Oil, Stator, Sulfur, two Caterium trains) while it stood before crossing 314; "moved
+  up after a failed plan" stayed 0 (since 1.5.0 only blocks by plan rank reorder, and owners' locked bookings aren't
+  by rank). The WAIT dump listed only crossing 314 (where the grant stops), so the bookings at the plan's failure place
+  were never logged; FATTrafficTrain.PlanBlocked* keeps that place and LogWaitDump lists its bookings too.

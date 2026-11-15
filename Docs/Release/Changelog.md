@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.6.8
+
+- Log only: the planner's WAIT dump of a long-waiting train also lists the bookings where its plan finds no way on,
+  when that is another place than where it stands waiting. No change to how trains drive.
+
 ## 1.6.7
 
 - Log only: a plan that finds no way to its goal without a train in the way now says why: the train may not move off,

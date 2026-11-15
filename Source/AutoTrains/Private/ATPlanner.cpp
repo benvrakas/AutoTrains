@@ -1645,6 +1645,24 @@ void AATTrafficSubsystem::ApplyPlan(FATTrafficTrain& State, const FATSippCycle& 
 	mPlanWaits += bWaits ? 1 : 0;
 
 	FString Failure;
+	State.PlanBlockedTrack = nullptr;
+	State.PlanBlockedJoint = INDEX_NONE;
+	State.PlanBlockedCrossing = INDEX_NONE;
+	if (Result.bFailed && Result.BlockedAt != INDEX_NONE)
+	{
+		if (Graph.Length.IsValidIndex(Result.BlockedAt))
+		{
+			State.PlanBlockedTrack = Graph.Tracks[Result.BlockedAt];
+		}
+		else if (Graph.IsJoint(Result.BlockedAt))
+		{
+			State.PlanBlockedJoint = Result.BlockedAt - Graph.Length.Num();
+		}
+		else
+		{
+			State.PlanBlockedCrossing = Result.BlockedAt - Graph.CrossingResource(0);
+		}
+	}
 	if (Result.bFailed)
 	{
 		// With no train in the way named: why the search ended.
@@ -2021,16 +2039,31 @@ void AATTrafficSubsystem::LogWaitDump(const FATTrafficTrain& State, double Now) 
 		: Key.Crossing != INDEX_NONE ? State.PlanCrossingLocked.Contains(Key.Crossing) : State.PlanTrackLocked.Contains(Key.Track);
 	FString Lines = FString::Printf(TEXT("planner: WAIT %s: %s; %s; its booking there %s%s"), *Describe(&State), *State.PlanNote, *ResourceName(Key.Track, Key.Joint, Key.Crossing),
 		Enter ? *FString::Printf(TEXT("enters in %s"), *SecondsText(*Enter - Now)) : TEXT("missing"), bLocked ? TEXT(", locked") : TEXT(""));
-	if (const TArray<FBooking>* Bookings = mBookings.Find(Key))
+	// Every booking on a place, one line each.
+	auto AddBookings = [&](const FResourceKey& At)
 	{
-		for (const FBooking& Booking : *Bookings)
+		if (const TArray<FBooking>* Bookings = mBookings.Find(At))
 		{
-			FATTrafficTrain* const* Other = mStateOf.Find(Booking.Owner);
-			Lines += FString::Printf(TEXT("\n    %s: %s %s-%s s%s%s%s, kind %d; %s"), *ResourceName(Key.Track, Key.Joint, Key.Crossing), *NameOf(Booking.Owner), *SecondsText(Booking.Enter - Now),
-				*SecondsText(Booking.Clear - Now), Booking.bLocked ? TEXT(" locked") : TEXT(""), Booking.bHeld ? TEXT(" held") : TEXT(""),
-				Booking.bCommitted ? TEXT(" committed") : TEXT(""), static_cast<int32>(Booking.Kind),
-				Other ? *Describe(*Other) : TEXT("gone"));
+			for (const FBooking& Booking : *Bookings)
+			{
+				FATTrafficTrain* const* Other = mStateOf.Find(Booking.Owner);
+				Lines += FString::Printf(TEXT("\n    %s: %s %s-%s s%s%s%s, kind %d; %s"), *ResourceName(At.Track, At.Joint, At.Crossing), *NameOf(Booking.Owner), *SecondsText(Booking.Enter - Now),
+					*SecondsText(Booking.Clear - Now), Booking.bLocked ? TEXT(" locked") : TEXT(""), Booking.bHeld ? TEXT(" held") : TEXT(""),
+					Booking.bCommitted ? TEXT(" committed") : TEXT(""), static_cast<int32>(Booking.Kind),
+					Other ? *Describe(*Other) : TEXT("gone"));
+			}
 		}
+	};
+	AddBookings(Key);
+	// Where its plan found no way on, if that is another place.
+	FResourceKey PlanKey;
+	PlanKey.Joint = State.PlanBlockedJoint;
+	PlanKey.Crossing = State.PlanBlockedCrossing;
+	PlanKey.Track = PlanKey.Joint == INDEX_NONE && PlanKey.Crossing == INDEX_NONE ? State.PlanBlockedTrack : nullptr;
+	if ((PlanKey.Track || PlanKey.Joint != INDEX_NONE || PlanKey.Crossing != INDEX_NONE) && !(PlanKey == Key))
+	{
+		Lines += FString::Printf(TEXT("\n    its plan finds no way on past %s:"), *ResourceName(PlanKey.Track, PlanKey.Joint, PlanKey.Crossing));
+		AddBookings(PlanKey);
 	}
 	UE_LOG(LogAutoTrains, Log, TEXT("%s"), *Lines);
 }

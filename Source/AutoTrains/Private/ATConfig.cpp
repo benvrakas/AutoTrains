@@ -373,6 +373,27 @@ bool UATConfig::Write(const UObject* WorldContext, const FString& Key, const FSt
 	return true;
 }
 
+bool UATConfig::ReadValues(const UObject* WorldContext, TMap<FString, FString>& OutValues)
+{
+	const UConfigPropertySection* Root = FindRoot(WorldContext);
+	if (!Root)
+	{
+		return false;
+	}
+	for (const TPair<FString, TObjectPtr<UConfigProperty>>& Pair : Root->SectionProperties)
+	{
+		if (const UConfigPropertyBool* Bool = Cast<UConfigPropertyBool>(Pair.Value.Get()))
+		{
+			OutValues.Add(Pair.Key, Bool->Value ? TEXT("on") : TEXT("off"));
+		}
+		else if (const UConfigPropertyFloat* Float = Cast<UConfigPropertyFloat>(Pair.Value.Get()))
+		{
+			OutValues.Add(Pair.Key, FString::SanitizeFloat(Float->Value));
+		}
+	}
+	return true;
+}
+
 bool UATConfig::Read(const UObject* WorldContext, FATSettings& OutSettings)
 {
 	const UConfigPropertySection* Root = FindRoot(WorldContext);

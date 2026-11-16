@@ -16,6 +16,7 @@ public:
 	// Returns true if Sender is the host's own player, a player the game flags as server admin, or on a dedicated server a
 	// player whose privilege level is Administrator.
 	static bool MayChangeWorld(UCommandSender* Sender);
+	static bool MayChangeWorld(const APlayerController* Player);
 
 	virtual EExecutionStatus ExecuteCommand_Implementation(UCommandSender* Sender, const TArray<FString>& Arguments, const FString& Label) override;
 

@@ -209,8 +209,8 @@ side of the track (back to back) allows both ways.
 - **[DynamicTimeTable](https://ficsit.app/mod/DynamicTimeTable)**: stations, docking and timetables work as usual.
 - **Not** with mods that set train routes themselves, such as DynamicTrainRoutes. Auto Trains does its own routing,
   so remove them.
-- Multiplayer: the host (or dedicated server) runs all traffic control, using the host's settings. Everyone needs the
-  mod.
+- Multiplayer: the host (or dedicated server) runs all traffic control, using the host's settings. On a dedicated
+  server an admin's Mods menu changes are sent to the server. Everyone needs the mod.
 
 ### Good to know
 
@@ -251,8 +251,9 @@ Type them in the game chat. A `<train>` is its number from `/at list`, or part o
 | `/at tp <place>` / `back` | Moves you on foot to a place (3 m above it), or back to where your last `/at tp` started. Mind passing trains. |
 
 In multiplayer only the host or a server admin can change anything. A server admin is a player signed in to the
-dedicated server with its admin password. On a dedicated server, `/at set` is the way to change settings in game:
-your own Mods menu only changes your copy, which the server doesn't read.
+dedicated server with its admin password. On a dedicated server, a setting a server admin changes in their Mods menu
+is sent to the server about two seconds after the last change, and chat says what the server now uses. The Mods menu
+still shows your own copy of the settings, so `/at settings` is the way to see the server's. `/at set` works too.
 
 ### Bugs and ideas
 

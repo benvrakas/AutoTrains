@@ -180,7 +180,11 @@ AATChatCommand::AATChatCommand()
 
 bool AATChatCommand::MayChangeWorld(UCommandSender* Sender)
 {
-	const APlayerController* Player = Sender ? Sender->GetPlayer() : nullptr;
+	return MayChangeWorld(Sender ? Sender->GetPlayer() : nullptr);
+}
+
+bool AATChatCommand::MayChangeWorld(const APlayerController* Player)
+{
 	if (!Player)
 	{
 		return false;
@@ -229,7 +233,7 @@ EExecutionStatus AATChatCommand::ExecuteCommand_Implementation(UCommandSender* S
 		const UWorld* World = GetWorld();
 		if (World && World->GetNetMode() == NM_DedicatedServer)
 		{
-			Sender->SendChatMessage(TEXT("Your own Mods menu doesn't change a dedicated server's settings."));
+			Sender->SendChatMessage(TEXT("Your Mods menu shows your own settings; a change an admin makes there is sent to this server."));
 		}
 		return EExecutionStatus::COMPLETED;
 	}

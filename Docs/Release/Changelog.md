@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.7.1
+
+- **Fixed: on a dedicated server, the Mods menu settings did nothing.** Each player's Mods menu only changed their
+  own copy, which the server never read, so top speed, acceleration and every other setting stayed at the server's
+  values. A change a server admin makes in their Mods menu is now sent to the server about two seconds after the last
+  change; the server saves it, uses it within a second, and tells everyone in chat. A player who isn't an admin is
+  told the server keeps its own settings. The Mods menu still shows your own copy; `/at settings` shows the server's.
+
 ## 1.7.0
 
 - **Trains never wait with any part of them on a switch or crossing.** They wait before the junction instead. Until

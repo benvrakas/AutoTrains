@@ -4,7 +4,8 @@
 #include "Configuration/ModConfiguration.h"
 #include "ATConfig.generated.h"
 
-// Auto Trains settings, read live from SML's Mods menu (the host's apply in multiplayer).
+// Auto Trains settings, read live from SML's Mods menu (the host's apply in multiplayer; an admin's Mods menu changes
+// are sent to a server).
 struct FATSettings
 {
 	bool bTrafficControl = true;
@@ -103,4 +104,8 @@ public:
 	// the registered configuration, which SML saves to this machine's config file. OutMessage says what happened.
 	// Returns false if Key or Value isn't valid or the configuration isn't available.
 	static bool Write(const UObject* WorldContext, const FString& Key, const FString& Value, FString& OutMessage);
+
+	// Fills OutValues with every setting of the registered configuration as Write takes it: key to "on"/"off" or a
+	// number. Returns false if the configuration isn't available.
+	static bool ReadValues(const UObject* WorldContext, TMap<FString, FString>& OutValues);
 };

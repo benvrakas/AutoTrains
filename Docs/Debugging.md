@@ -1099,3 +1099,15 @@ the AFGTrain object name, unique where names repeat):
   a joint's fouling zone or a crossing zone, measured by plan times that slip each cycle, so trains stood on junctions
   for minutes. Now: no wait at all there (Leave > Earliest with IsOnJunction is rejected; as before not at the start
   state, where the train already stands). The setting is gone.
+
+## 1.7.1: Mods menu settings on a dedicated server
+
+SML configurations are per machine and never replicate. A client's Mods menu writes the client's own
+`Configs/AutoTrains.cfg`; the dedicated server reads only its own, so before 1.7.1 every Mods menu change made while
+connected to a server was silently ignored (seen on the IB server: top speed and acceleration did nothing).
+`AATClientSettingsSubsystem` (SpawnOnClient) reads the local values every 0.5 s and, 2 s after the last edit, sends the
+changed keys through `UATRemoteCallObject::Server_SetSettings`. The server checks the sender with
+`AATChatCommand::MayChangeWorld` (same rule as `/at set`), writes each with `UATConfig::Write` and broadcasts the result.
+Same pattern as Better Movement's `UBMRemoteCallObject`. The client only snapshots on join, so values that differ from
+the server's are not pushed until the admin changes them. Log lines: `Settings: sending N Mods menu changes` (client),
+`Settings: Mods menu of <player>: <key> <value>: <result>` (server).

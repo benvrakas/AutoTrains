@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.7.2
+
+- **Fixed: trains stuck for good behind a parked train they could have gone round.** A train standing close behind
+  a parked train (or one that will never move on) was taken as held there for good: it got no departure time and no
+  longer looked for another route, even with a switch between them where it could turn off, e.g. onto a main line
+  past a station whose platform a parked train hangs out of. Seen on a server: a queue of trains for one factory
+  stood behind such a switch for 25 minutes. It now only counts as held when there is no such switch, so it looks
+  for another route and takes it.
+- Detailed log: a stuck train's route search that finds nothing is logged (at most every 30 s per train).
+
 ## 1.7.1
 
 - **Fixed: on a dedicated server, the Mods menu settings did nothing.** Each player's Mods menu only changed their

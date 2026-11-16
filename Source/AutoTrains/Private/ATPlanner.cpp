@@ -36,6 +36,8 @@ namespace
 	constexpr float StandingSpeed = 50.f;
 	// A plan's wait at most this far ahead of the front stands the train where it is. [cm]
 	constexpr float StandHereDistance = 100.f;
+	// Least time between two log lines about a stuck train's route searches that found nothing. [s]
+	constexpr double SearchNoneLogSeconds = 30.0;
 	// A driven-to goal counts as reached by a standing train whose front is no more than this short of its stop point. [cm]
 	constexpr float ArrivedSlackDistance = 500.f;
 	// A drive whose path the train doesn't follow gets its path again at most this often. [s]
@@ -984,6 +986,19 @@ bool AATTrafficSubsystem::IsHeldForGood(const FATTrafficTrain& State, TWeakObjec
 	{
 		return false;
 	}
+	// A switch before the leader where its route could turn off: another route may go round it.
+	for (const FATRouteStep& Step : State.Route)
+	{
+		const float End = Step.EndDistance - State.FrontAhead;
+		if (End >= Info.Gap)
+		{
+			break;
+		}
+		if (End >= 0.f && Step.Exit && Step.Exit->GetConnections().Num() > 1)
+		{
+			return false;
+		}
+	}
 	OutLeader = Info.Leader;
 	return true;
 }
@@ -1579,6 +1594,12 @@ void AATTrafficSubsystem::ApplyPlan(FATTrafficTrain& State, const FATSippCycle& 
 	if (Result.bRerouted)
 	{
 		ApplyReroute(State, Cycle, Slot);
+	}
+	else if (Result.SearchStates > 0 && (Result.bFailed || IsOpen(Result.Arrival)) && Now - State.SearchNoneLoggedAt >= SearchNoneLogSeconds)
+	{
+		State.SearchNoneLoggedAt = Now;
+		UE_LOG(LogAutoTrains, Verbose, TEXT("planner: %s searched for another route to its goal, as its plan %s: none found (%d states, %.2f ms on a worker)"),
+			*NameOf(State.Train.Get()), Result.bFailed ? TEXT("finds no way") : TEXT("never gets there"), Result.SearchStates, Result.SearchMilliseconds);
 	}
 	++mPlans;
 	State.bHasPlan = true;

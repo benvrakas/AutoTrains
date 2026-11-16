@@ -1111,3 +1111,16 @@ changed keys through `UATRemoteCallObject::Server_SetSettings`. The server check
 Same pattern as Better Movement's `UBMRemoteCallObject`. The client only snapshots on join, so values that differ from
 the server's are not pushed until the admin changes them. Log lines: `Settings: sending N Mods menu changes` (client),
 `Settings: Mods menu of <player>: <key> <value>: <result>` (server).
+
+## 1.7.2: held for good, but a switch before the leader
+
+IB 2026-11-16 20:31-20:58 UTC (AT 1.7.0): a Silica/HOR/Rubber train to No Man's Land Heavy Oil Residue Out 1 stood 13 m
+before switch 103 (track 2144913005 behind it, 2144913006 next) for 25 min with Coal and Sulfur trains queued behind.
+A train ST had parked at the one-platform station "Turbofuel- Sulfur SNK" stood with its tail on 2144913006 (same spot
+reported 2026-11-12). The double main line next to it was free. Its plan read "no slot there yet", arrival unknown, and
+no reroute was logged after 20:25 (the 20:25 one put it on the station route while the station was still free).
+`IsHeldForGood` found the parked train within `FollowStuckDistance` and said held: that sets `MinDepart` to never and
+`bSearch` to false, so the train neither moved nor searched. Now a facing switch (route step exit with more than one
+connection) between the front and the leader means not held; the search then finds the way round (a plan that never
+arrives takes any route found). Route searches that find nothing for a failed/never plan are now logged (Verbose,
+30 s per train): before, the log couldn't show whether a search ran.

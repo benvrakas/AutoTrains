@@ -247,6 +247,8 @@ struct FATTrafficTrain
 	// -1 unknown).
 	double PlanArrival = -1.0;
 	double SearchedArrival = -1.0;
+	// When the log last said a route search of this train found nothing. [s]
+	double SearchNoneLoggedAt = -1000.0;
 	// Why the last plan failed and which train it is committed against, empty if neither; a summary for /at traffic.
 	FString PlanFailure;
 	FString PlanCommitted;
@@ -466,7 +468,8 @@ private:
 	// leaders' planning braking, for full brake. [cm]
 	float GetFollowLimit(const AFGTrain* Train, const FATTrafficTrain& State, float& OutHardLimit, FATFollowInfo* OutInfo = nullptr) const;
 	// Returns true if State stands close behind a leader on its route that stands there for good (not driven, or its plan
-	// stands it where it is with no departure); OutLeader is that train.
+	// stands it where it is with no departure) with no switch between them where its route could turn off; OutLeader is
+	// that train.
 	bool IsHeldForGood(const FATTrafficTrain& State, TWeakObjectPtr<AFGTrain>& OutLeader) const;
 
 	// Returns Braking, but no further than Leader may still travel: the end of its authority or its goal. [cm]

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.7.3
+
+- **Fixed: a stuck train named the wrong train as the one it waits for.** When several trains' bookings kept a train
+  from moving on, the last one checked was named, even when another one never leaves (a parked train in the way). The
+  BLOCKED and STUCK reports then named a different, often far-away train every minute, and deadlocks through such a
+  train could go unseen. Now the train in the way for good is named first, else the one in the way longest.
+
 ## 1.7.2
 
 - **Fixed: trains stuck for good behind a parked train they could have gone round.** A train standing close behind

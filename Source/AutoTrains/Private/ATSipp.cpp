@@ -165,8 +165,9 @@ namespace
 	// The front at Pos [cm from where it is now] at Arrive with Speed, at the end of route step Step's track (Node, the
 	// connection at NodePos), stopped short of it or passing it; it got there over a run of track starting with
 	// connection First, leaving the parent at Leave over Edge, later than it got there for Cause's booking. Opens
-	// [OpenFirst, +NumOpen): what the move here started on. BlockedBy/BlockedAt: the last booking that kept a move on from
-	// here, and whether it counted only because its train plans first.
+	// [OpenFirst, +NumOpen): what the move here started on. BlockedBy/BlockedAt: the booking that kept a move on from here,
+	// one that never clears before any other, else the last; whether it counted only because its train plans first, and
+	// whether it never clears.
 	struct FState
 	{
 		int32 Node = INDEX_NONE;
@@ -187,6 +188,7 @@ namespace
 		int32 BlockedBy = INDEX_NONE;
 		int32 BlockedAt = INDEX_NONE;
 		bool bBlockedByRank = false;
+		bool bBlockedForGood = false;
 	};
 
 	// The connections of a run of track.
@@ -380,7 +382,7 @@ namespace
 		// Whether the train may enter Resource (leaving its track through Exit, coming from Via) at Enter: no booking in
 		// its scope there is in the way, and a train the same way is a headway ahead or
 		// behind at both ends. Sets the gap it then has to clear the resource in, else the earliest later entry that might
-		// work, the train in the way and whether its booking counts only because that train plans first.
+		// work, the train in the way longest and whether its booking counts only because that train plans first.
 		bool GapAt(int32 Resource, int32 Exit, int32 Via, double Enter, FGap& Out, double& OutRetry, int32& OutBy, bool& bOutByRank) const
 		{
 			Out = FGap();
@@ -447,9 +449,12 @@ namespace
 					else
 					{
 						bClash = true;
+						if (Booking.Enter + Headway >= OutRetry)
+						{
+							OutBy = Booking.Owner;
+							bOutByRank = bByRank;
+						}
 						OutRetry = FMath::Max(OutRetry, Booking.Enter + Headway);
-						OutBy = Booking.Owner;
-						bOutByRank = bByRank;
 					}
 					continue;
 				}
@@ -466,9 +471,12 @@ namespace
 				else
 				{
 					bClash = true;
+					if (Hi >= OutRetry)
+					{
+						OutBy = Booking.Owner;
+						bOutByRank = bByRank;
+					}
 					OutRetry = FMath::Max(OutRetry, Hi);
-					OutBy = Booking.Owner;
-					bOutByRank = bByRank;
 				}
 			}
 			if (bClash)
@@ -821,13 +829,15 @@ namespace
 			return (ZAt(NodePos) - ZAt(From) + ZAt(NodePos - Train.Length) - ZAt(From - Train.Length)) * 0.5f / Distance;
 		}
 
-		void NoteBlock(int32 Index, int32 By, int32 Resource, bool bByRank)
+		void NoteBlock(int32 Index, int32 By, int32 Resource, bool bByRank, bool bForGood = false)
 		{
-			if (By != INDEX_NONE)
+			FState& State = States[Index];
+			if (By != INDEX_NONE && (bForGood || !State.bBlockedForGood))
 			{
-				States[Index].BlockedBy = By;
-				States[Index].BlockedAt = Resource;
-				States[Index].bBlockedByRank = bByRank;
+				State.BlockedBy = By;
+				State.BlockedAt = Resource;
+				State.bBlockedByRank = bByRank;
+				State.bBlockedForGood = bForGood;
 			}
 		}
 
@@ -920,7 +930,7 @@ namespace
 					bool bByRank = false;
 					if (!GapAt(News[New].Resource, News[New].Exit, News[New].Via, Enters[New], Gaps[New], Retry, By, bByRank))
 					{
-						NoteBlock(Index, By, News[New].Resource, bByRank);
+						NoteBlock(Index, By, News[New].Resource, bByRank, IsNever(Retry));
 						// Entered before the stop, or no waiting: no later departure helps.
 						if (!bOnMove || !bCanWait || IsNever(Retry))
 						{

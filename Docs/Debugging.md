@@ -1124,3 +1124,14 @@ no reroute was logged after 20:25 (the 20:25 one put it on the station route whi
 connection) between the front and the leader means not held; the search then finds the way round (a plan that never
 arrives takes any route found). Route searches that find nothing for a failed/never plan are now logged (Verbose,
 30 s per train): before, the log couldn't show whether a search ran.
+
+## 1.7.3: blame the train in the way for good
+
+Same IB jam as 1.7.2: the BLOCKED report of the train before switch 103 named a different far-away train each minute
+("parked at Grass Fields AI Limiter Out 1", "to Grass Fields Crystal Oscillator Out 1", ...). Switch 103 splits the
+main line from the station branch, so every main-line train books it; the branch is too short to stand in between
+(junction rule), so the only move on runs into the parked train's track (booking that never clears). Both `GapAt`
+(several clashing bookings on one resource) and `NoteBlock` (several resources of one move) kept the last booking
+checked, so a passing main-line train got the blame. `GapAt` now blames the clash with the latest retry, and
+`NoteBlock` keeps a never-clearing block (`IsNever(Retry)`) over later ones. A failed plan's `WaitFor`/`BlockedBy`,
+`PlanWaitFor` and so the deadlock walk now name the parked train.

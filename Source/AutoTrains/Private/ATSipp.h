@@ -150,6 +150,10 @@ struct FATSippTrain
 	// Where its front stops behind the nearest vehicle of a standing train ahead on its route, -1 if none. [cm from the
 	// front now]
 	float BehindAt = -1.f;
+	// The furthest its front gets along its route, behind a train ahead there that stands for good (the gap to it and
+	// the room that train has left), and that train's slot; -1 and INDEX_NONE if none. [cm from the front now]
+	float HeldAt = -1.f;
+	int32 HeldBy = INDEX_NONE;
 	// What its tail holds behind the route (entered, locked), and which route resources are locked or held.
 	TArray<FATSippPass> Tail;
 	TSet<int32> Locked;

@@ -34,8 +34,6 @@ namespace
 	constexpr float FollowStuckDistance = 3000.f;
 	// A train slower than this plans from standing. [cm/s]
 	constexpr float StandingSpeed = 50.f;
-	// A plan's wait at most this far ahead of the front stands the train where it is. [cm]
-	constexpr float StandHereDistance = 100.f;
 	// Least time between two log lines about a stuck train's route searches that found nothing. [s]
 	constexpr double SearchNoneLogSeconds = 30.0;
 	// A driven-to goal counts as reached by a standing train whose front is no more than this short of its stop point. [cm]
@@ -974,33 +972,32 @@ bool AATTrafficSubsystem::IsHeldForGood(const FATTrafficTrain& State, TWeakObjec
 	GetFollowLimit(Train, State, HardLimit, &Info);
 	const AFGTrain* LeaderTrain = Info.Leader.Get();
 	const FATTrafficTrain* Leader = LeaderTrain ? mTrains.Find(LeaderTrain) : nullptr;
-	if (HardLimit < 0.f || HardLimit >= FollowStuckDistance || !Leader || Leader->Speed >= StandingSpeed)
+	const float Room = Leader ? GetStandRoom(*Leader) : -1.f;
+	if (HardLimit < 0.f || Room < 0.f || HardLimit + Room >= FollowStuckDistance)
 	{
 		return false;
-	}
-	// Not driven and not docked: nothing moves it on; driven: its plan stands it where it is with no time to move off.
-	const bool bParked = !Leader->bManaged && !LeaderTrain->IsDocked() && !LeaderTrain->IsSelfDrivingEnabled();
-	const bool bStuck = Leader->bManaged && Leader->bHasPlan && Leader->PlanDepart >= 0.0 && IsOpen(Leader->PlanDepart)
-		&& (Leader->bPlanWaitHere || (Leader->PlanWaitAt >= 0.f && Leader->PlanWaitAt <= StandHereDistance));
-	if (!bParked && !bStuck)
-	{
-		return false;
-	}
-	// A switch before the leader where its route could turn off: another route may go round it.
-	for (const FATRouteStep& Step : State.Route)
-	{
-		const float End = Step.EndDistance - State.FrontAhead;
-		if (End >= Info.Gap)
-		{
-			break;
-		}
-		if (End >= 0.f && Step.Exit && Step.Exit->GetConnections().Num() > 1)
-		{
-			return false;
-		}
 	}
 	OutLeader = Info.Leader;
 	return true;
+}
+
+float AATTrafficSubsystem::GetStandRoom(const FATTrafficTrain& Other) const
+{
+	const AFGTrain* Train = Other.Train.Get();
+	if (!Train || Other.Speed >= StandingSpeed)
+	{
+		return -1.f;
+	}
+	// Not driven and not docked: nothing moves it on.
+	if (!Other.bManaged)
+	{
+		return !Train->IsDocked() && !Train->IsSelfDrivingEnabled() ? 0.f : -1.f;
+	}
+	if (!Other.bHasPlan || Other.PlanDepart < 0.0 || !IsOpen(Other.PlanDepart))
+	{
+		return -1.f;
+	}
+	return Other.bPlanWaitHere ? 0.f : Other.PlanWaitAt;
 }
 
 int32 AATTrafficSubsystem::GetRouteCommit(const FATTrafficTrain& State) const
@@ -1147,6 +1144,8 @@ void AATTrafficSubsystem::FillSippTrain(const FATTrafficTrain& State, const FATS
 	// Along one line the order is fixed: a train ahead on this route comes first wherever its bookings meet this
 	// route, and one behind has to pass this train before it gets to the tracks both routes share from here on.
 	Out.BehindAt = -1.f;
+	Out.HeldAt = -1.f;
+	Out.HeldBy = INDEX_NONE;
 	for (const TPair<const AFGTrain*, FATTrafficTrain*>& Pair : mStateOf)
 	{
 		const FATTrafficTrain& Other = *Pair.Value;
@@ -1166,6 +1165,13 @@ void AATTrafficSubsystem::FillSippTrain(const FATTrafficTrain& State, const FATS
 			if (Gap >= 0.f && At > 0.f && (Out.BehindAt < 0.f || At < Out.BehindAt))
 			{
 				Out.BehindAt = At;
+			}
+			// One that stands there for good: this one's route goes no further than up to where that train still gets.
+			const float Room = Gap >= 0.f ? GetStandRoom(Other) : -1.f;
+			if (Room >= 0.f && (Out.HeldAt < 0.f || Gap + Room < Out.HeldAt))
+			{
+				Out.HeldAt = Gap + Room;
+				Out.HeldBy = *OtherSlot;
 			}
 			continue;
 		}
@@ -1329,16 +1335,14 @@ void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds, bool bW
 			Out.Turn = EATSippTurn::Plan;
 			Out.Kind = EATSippKind::Moving;
 			Out.bRanked = true;
-			// Close behind a train that stands there for good it can't move on either, whatever its route ahead holds.
-			TWeakObjectPtr<AFGTrain> HeldBehind;
-			Out.MinDepart = IsHeldForGood(State, HeldBehind) ? ATSippNever : Now;
+			Out.MinDepart = Now;
 			FTrainDockingRuleSet Rules;
 			const AFGRailroadTimeTable* TimeTable = Train ? Train->GetTimeTable() : nullptr;
 			// A driven-to goal: it stands there until it is sent on, and its route there isn't searched again.
 			const bool bDrive = State.DriveGoal.IsValid();
 			Out.GoalDwell = bDrive ? ATSippNever : GetExpectedStay(Train, State.GoalStation.Get(), GetStopRules(Train, TimeTable ? TimeTable->GetCurrentStop() : INDEX_NONE, State.GoalStation.Get(), Rules), -1);
 			Out.Commit = GetRouteCommit(State);
-			Out.bSearch = !bDrive && !HeldBehind.IsValid() && IsSearchDue(State, DeltaSeconds) && Out.Commit < Out.Route.Num() - 2;
+			Out.bSearch = !bDrive && IsSearchDue(State, DeltaSeconds) && Out.Commit < Out.Route.Num() - 2;
 			Out.MinGainSeconds = mSettings.RerouteMinGainSeconds;
 			Out.MinGainPercent = mSettings.RerouteMinGainPercent;
 			continue;
@@ -1690,8 +1694,7 @@ void AATTrafficSubsystem::ApplyPlan(FATTrafficTrain& State, const FATSippCycle& 
 	{
 		// With no train in the way named: why the search ended.
 		const FATSippTrain& Input = Cycle.Trains[Slot];
-		const FString Why = IsOpen(Input.MinDepart) ? FString(TEXT("it may not move off (held behind a train that stands for good)"))
-			: !Input.bGoal ? FString(TEXT("its route runs past the network copy"))
+		const FString Why = !Input.bGoal ? FString(TEXT("its route runs past the network copy"))
 			: Result.States >= Cycle.MaxStates ? FString::Printf(TEXT("the search stopped at its limit of %d states"), Cycle.MaxStates)
 			: FString::Printf(TEXT("no move on from route step %d"), Result.StandStep);
 		Failure = Result.BlockedAt != INDEX_NONE ? FString::Printf(TEXT("no way on past %s for %s"), *Name(Result.BlockedAt), *NameOf(TrainOf(Result.BlockedBy)))

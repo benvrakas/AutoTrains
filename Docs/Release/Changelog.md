@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.7.5
+
+- **Fixed: a deadlock behind a train that couldn't move on.** A train stopped a few metres short of the spot its plan
+  waited at, with no time to move on, didn't count as stuck. The trains queued behind it then planned as if they
+  could move up and leave the track under their tails, so other trains drove onto a crossing counting on that track
+  coming free, and the queues locked each other for good. Now no plan takes a train past where a train ahead that
+  stands for good still gets to; it may still turn off at a switch before it.
+
 ## 1.7.4
 
 - For other mods: `ExternalEstimateTravelSeconds` without a train (or with one Auto Trains doesn't know) timed the

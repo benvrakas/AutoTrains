@@ -167,9 +167,10 @@ namespace
 	// connection First, leaving the parent at Leave over Edge, later than it got there for Cause's booking. Opens
 	// [OpenFirst, +NumOpen): what the move here started on. BlockedBy/BlockedAt: the booking that kept a move on from here,
 	// one that never clears before any other, else the last; whether it counted only because its train plans first, and
-	// whether it never clears.
+	// whether it never clears. OffRoute: the way here left the train's route.
 	struct FState
 	{
+		bool bOffRoute = false;
 		int32 Node = INDEX_NONE;
 		int32 Step = -1;
 		int32 Parent = INDEX_NONE;
@@ -829,6 +830,40 @@ namespace
 			return (ZAt(NodePos) - ZAt(From) + ZAt(NodePos - Train.Length) - ZAt(From - Train.Length)) * 0.5f / Distance;
 		}
 
+		// Where a move from state Index over Run turns off the route: the front at the track end it turns off at, -1 if it
+		// stays on the route. [cm]
+		float LeavesRouteAt(int32 Index, const FRun& Run) const
+		{
+			const FState& State = States[Index];
+			float LinkEnd = State.Step >= 0 ? State.NodePos : 0.f;
+			for (int32 Link = 0; Link < Run.Num(); ++Link)
+			{
+				const int32 Step = State.Step + 1 + Link;
+				if (!Route->IsValidIndex(Step) || (*Route)[Step] != Run[Link])
+				{
+					return LinkEnd;
+				}
+				LinkEnd = State.Step < 0 && Link == 0 ? FMath::Max(Train.FirstEnd, State.Pos + MinMove) : LinkEnd + Graph.Length[Graph.TrackOf[Run[Link]]];
+			}
+			return -1.f;
+		}
+
+		// The track of a move from state Index over Run that its front gets onto past At [cm], else the run's last.
+		int32 TrackPast(int32 Index, const FRun& Run, float At) const
+		{
+			const FState& State = States[Index];
+			float LinkEnd = State.Step >= 0 ? State.NodePos : 0.f;
+			for (int32 Link = 0; Link < Run.Num(); ++Link)
+			{
+				LinkEnd = State.Step < 0 && Link == 0 ? FMath::Max(Train.FirstEnd, State.Pos + MinMove) : LinkEnd + Graph.Length[Graph.TrackOf[Run[Link]]];
+				if (LinkEnd > At)
+				{
+					return Graph.TrackOf[Run[Link]];
+				}
+			}
+			return Graph.TrackOf[Run.Last()];
+		}
+
 		void NoteBlock(int32 Index, int32 By, int32 Resource, bool bByRank, bool bForGood = false)
 		{
 			FState& State = States[Index];
@@ -847,6 +882,18 @@ namespace
 		void Move(int32 Index, const FRun& Run, float NodePos, float To, float Speed, bool bStop, float RunAccel, float RunBrake)
 		{
 			const FState State = States[Index];
+			// Along its route it gets no further than the train ahead that stands there for good lets it; it may turn off
+			// before that.
+			const float LeavesAt = Train.HeldAt >= 0.f && !State.bOffRoute ? LeavesRouteAt(Index, Run) : -1.f;
+			if (Train.HeldAt >= 0.f && !State.bOffRoute)
+			{
+				const float Reach = FMath::Max(Train.HeldAt, ForcedReach);
+				if ((LeavesAt >= 0.f ? LeavesAt : To) > Reach)
+				{
+					NoteBlock(Index, Train.HeldBy, TrackPast(Index, Run, Reach), false, true);
+					return;
+				}
+			}
 			const float Distance = To - State.Pos;
 			FEdge Edge;
 			if (!Edge.Make(Distance, State.Speed, Speed, Top, RunAccel, RunBrake, To <= ForcedReach))
@@ -990,6 +1037,7 @@ namespace
 					return;
 				}
 				FState Next;
+				Next.bOffRoute = State.bOffRoute || LeavesAt >= 0.f;
 				Next.Node = Run.Last();
 				Next.First = Run[0];
 				Next.Step = State.Step + Run.Num();

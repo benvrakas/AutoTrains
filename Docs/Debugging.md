@@ -1135,3 +1135,26 @@ main line from the station branch, so every main-line train books it; the branch
 checked, so a passing main-line train got the blame. `GapAt` now blames the clash with the latest retry, and
 `NoteBlock` keeps a never-clearing block (`IsNever(Retry)`) over later ones. A failed plan's `WaitFor`/`BlockedBy`,
 `PlanWaitFor` and so the deadlock walk now name the parked train.
+
+## 1.7.5: reach behind a train that stands for good
+
+VM pair 14 emptied (ST 0.36.3, AT 1.7.3, 2026-11-17, first DEADLOCK 15:32:03 UTC, never cleared, 29 of 36 trains
+standing by the end). Cycle at Grass Fields Copper Ingot Out 1: F (Copper Ingot to Dune Desert Circuit Board In 1)
+stood 6 m before crossing 345 with a failed plan from 15:29; E stood 10 m behind F, C 10 m behind E with its tail on
+track 2136180593. C's locked booking there read "clear in 2 s": `IsHeldForGood` only counted a leader whose wait was
+within `StandHereDistance` (1 m) of its front, so F (6 m) wasn't stuck, E and C planned as if they could move (the
+same-way rule in `GapAt` lets a follower enter a standing leader's resources a headway after it), and their tails
+"cleared" what they stood on. D and then B planned past crossing 345 onto 2136180593 on that, stood behind C with B
+across crossing 345, and F could never get its slot there. The 1.7.2 switch exception had the same effect whenever a
+switch lay in the gap: `MinDepart` back to now, so the plan on the current route ran through the leader.
+
+Now: `GetStandRoom` says how far a standing train still gets when it stands for good (0 not driven; its plan's wait
+distance when that plan has no departure, any distance). `FillSippTrain` sets `HeldAt` = gap to such a train ahead on
+the route + its room (the least over such trains), `HeldBy`
+its slot. In `FPlanner::Move` a move on the current route whose end (or
+the point where it turns off the route) lies past `max(HeldAt, ForcedReach)` is left out and noted as blocked for
+good by `HeldBy`; states carry `bOffRoute` so a searched way that turns off before the reach goes on freely. The plan
+then stands short of the reach for good (bookings never clear), its `WaitFor` is the leader, and the next train back
+sees it as standing for good in turn. `MinDepart` is now always now for driven trains, searches are no longer
+switched off for held trains (a capped search with no turn-off ends in a few states), and the switch exception and
+`StandHereDistance` are gone. `IsHeldForGood` (naming only) is gap + room under `FollowStuckDistance`.

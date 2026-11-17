@@ -467,10 +467,12 @@ private:
 	// with the strongest braking a sample counts for; -1 if it follows none. OutHardLimit is the same with the
 	// leaders' planning braking, for full brake. [cm]
 	float GetFollowLimit(const AFGTrain* Train, const FATTrafficTrain& State, float& OutHardLimit, FATFollowInfo* OutInfo = nullptr) const;
-	// Returns true if State stands close behind a leader on its route that stands there for good (not driven, or its plan
-	// stands it where it is with no departure) with no switch between them where its route could turn off; OutLeader is
-	// that train.
+	// Returns true if State stands close behind a leader on its route that stands there for good and can't move on far;
+	// OutLeader is that train.
 	bool IsHeldForGood(const FATTrafficTrain& State, TWeakObjectPtr<AFGTrain>& OutLeader) const;
+	// Returns how far a standing train that stands there for good still moves on: none when not driven, else up to the
+	// wait its plan stands it at with no departure; -1 if it isn't standing there for good. [cm]
+	float GetStandRoom(const FATTrafficTrain& Other) const;
 
 	// Returns Braking, but no further than Leader may still travel: the end of its authority or its goal. [cm]
 	float GetLeaderTravel(const FATTrafficTrain& Leader, float Braking) const;

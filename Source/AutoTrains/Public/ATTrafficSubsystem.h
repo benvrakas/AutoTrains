@@ -524,6 +524,8 @@ private:
 		float Brake = 100.f;
 	};
 	FRouteSpeed GetRouteSpeed(const FATTrafficTrain& State) const;
+	// The median cruise, acceleration and braking of every known train; defaults when there is none.
+	FRouteSpeed GetFleetRouteSpeed() const;
 
 	// Sets State.PlanDecel: a share of the deceleration measured in each band; a band without a measurement takes the
 	// nearest measured band above it (braking is weaker at higher speed), or above every measured band the highest

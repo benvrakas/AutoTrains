@@ -98,6 +98,10 @@ namespace
 	// Share of its locomotives' traction a train is planned to use until some has been measured.
 	constexpr float UnseenTractionShare = 0.5f;
 	constexpr float MinPlanCruise = 833.f;
+	// Speeds for an estimate with no train and none known: a locomotive's top speed on level track, and a loaded
+	// train's typical acceleration. [cm/s] [cm/s^2]
+	constexpr float FleetDefaultCruise = 3333.f;
+	constexpr float FleetDefaultAccel = 40.f;
 	constexpr float MinPlanAcceleration = 10.f;
 	// Hill help: starts below this speed when the slope's pull is over this share of its traction and it wants to go
 	// this much faster; gives this much more traction than the pull; ends once the pull is under this share. [cm/s]
@@ -1687,6 +1691,40 @@ AATTrafficSubsystem::FRouteSpeed AATTrafficSubsystem::GetRouteSpeed(const FATTra
 	Speed.Accel = Acceleration;
 	Speed.Brake = FMath::Max(Deceleration, MinPlanDeceleration);
 	return Speed;
+}
+
+AATTrafficSubsystem::FRouteSpeed AATTrafficSubsystem::GetFleetRouteSpeed() const
+{
+	TArray<float> Cruises;
+	TArray<float> Accels;
+	TArray<float> Brakes;
+	for (const TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Pair : mTrains)
+	{
+		if (!Pair.Key.IsValid())
+		{
+			continue;
+		}
+		const FRouteSpeed Speed = GetRouteSpeed(Pair.Value);
+		Cruises.Add(Speed.Cruise);
+		Accels.Add(Speed.Accel);
+		Brakes.Add(Speed.Brake);
+	}
+	FRouteSpeed Fleet;
+	if (Cruises.Num() == 0)
+	{
+		Fleet.Cruise = FleetDefaultCruise;
+		Fleet.Accel = FleetDefaultAccel;
+		return Fleet;
+	}
+	auto Median = [](TArray<float>& Values)
+	{
+		Values.Sort();
+		return Values[Values.Num() / 2];
+	};
+	Fleet.Cruise = Median(Cruises);
+	Fleet.Accel = Median(Accels);
+	Fleet.Brake = Median(Brakes);
+	return Fleet;
 }
 
 void AATTrafficSubsystem::RebuildConflicts()

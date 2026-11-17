@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.4
+
+- For other mods: `ExternalEstimateTravelSeconds` without a train (or with one Auto Trains doesn't know) timed the
+  drive at 18 km/h, about 4.5 times too long. It now uses the median speeds of the trains Auto Trains knows, or
+  120 km/h when it knows none.
+
 ## 1.7.3
 
 - **Fixed: a stuck train named the wrong train as the one it waits for.** When several trains' bookings kept a train

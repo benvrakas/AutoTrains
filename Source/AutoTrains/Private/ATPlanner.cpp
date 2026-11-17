@@ -2423,7 +2423,7 @@ float AATTrafficSubsystem::ExternalEstimateTravelSeconds(AFGTrain* Train, AFGBui
 		return -1.f;
 	}
 	const FATTrafficTrain* State = Train ? mTrains.Find(Train) : nullptr;
-	const FRouteSpeed Speed = State ? GetRouteSpeed(*State) : FRouteSpeed();
+	const FRouteSpeed Speed = State ? GetRouteSpeed(*State) : GetFleetRouteSpeed();
 	const float Cruise = FMath::Max(Speed.Cruise, 100.f);
 	return Distance / Cruise + Cruise / (2.f * FMath::Max(Speed.Accel, 1.f)) + Cruise / (2.f * FMath::Max(Speed.Brake, 1.f));
 }

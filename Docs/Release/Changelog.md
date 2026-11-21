@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.6
+
+- **For game 1.2.5.1** (the update of 18 November 2026). That update changed how the game stores train stations and
+  platforms, so the previous version read the wrong data on it and crashed the game when a world loaded (GitHub issue
+  2). Needs SML 3.12.1, which also fixes the crash when joining a multiplayer game on 1.2.5.1.
+
 ## 1.7.5
 
 - **Fixed: a deadlock behind a train that couldn't move on.** A train stopped a few metres short of the spot its plan

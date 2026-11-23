@@ -29,7 +29,6 @@ namespace
 	bool GAggressive = true;
 	bool GPhaseThrough = false;
 	// Some train is passing through a deadlock.
-	bool GGhosting = false;
 	// Seconds of slack for following and going first. [s]
 	float GSafetyMargin = 0.f;
 	// Top speed of every self-driving train, 0 for each train's own [cm/s], and the acceleration multiplier.
@@ -380,7 +379,7 @@ void AATTrafficSubsystem::ApplySettings()
 
 bool AATTrafficSubsystem::ShouldPhaseThrough()
 {
-	return GPhaseThrough || GGhosting;
+	return GPhaseThrough;
 }
 
 void AATTrafficSubsystem::CountPhaseThrough(AFGBuildableRailroadTrack* Track, AFGBuildableRailroadTrack* OtherTrack)
@@ -523,15 +522,6 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 		RefreshBrakePlan(State);
 		RefreshTractionPlan(State);
 		State.StoppedSeconds = State.Speed < 100.f ? State.StoppedSeconds + DeltaSeconds : 0.f;
-		if (State.GhostUntil >= 0.0)
-		{
-			State.GhostLeft -= State.Speed * DeltaSeconds;
-			if (State.GhostLeft <= 0.f || WorldNow > State.GhostUntil || !State.bManaged)
-			{
-				State.GhostUntil = -1.0;
-				UE_LOG(LogAutoTrains, Log, TEXT("traffic: %s has passed through the deadlock"), *TrainName(Train));
-			}
-		}
 		State.RerouteCooldown = FMath::Max(0.f, State.RerouteCooldown - DeltaSeconds);
 	}
 	for (auto It = mTrains.CreateIterator(); It; ++It)
@@ -540,11 +530,6 @@ void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 		{
 			It.RemoveCurrent();
 		}
-	}
-	GGhosting = false;
-	for (const TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Pair : mTrains)
-	{
-		GGhosting = GGhosting || Pair.Value.GhostUntil >= 0.0;
 	}
 
 	TArray<FATTrafficTrain*> Managed;
@@ -1453,34 +1438,6 @@ float AATTrafficSubsystem::GetGapToVehicles(const AFGTrain* Train, const FATTraf
 	return -1.f;
 }
 
-void AATTrafficSubsystem::GhostThrough(const TArray<const FATTrafficTrain*>& Chain, double Seconds)
-{
-	const double Now = GetWorld()->GetTimeSeconds();
-	if (Chain.ContainsByPredicate([](const FATTrafficTrain* Member) { return Member->GhostUntil >= 0.0; }))
-	{
-		return;
-	}
-	// One train at a time, so no two run onto the same switch together: the first whose way is free of the train it
-	// waits for, else the first.
-	const FATTrafficTrain* const* Free = Chain.FindByPredicate([this](const FATTrafficTrain* Member) { return !IsWayTaken(*Member); });
-	const FATTrafficTrain* Picked = Free ? *Free : Chain[0];
-	FATTrafficTrain* Stuck = mTrains.Find(Picked->Train);
-	if (!Stuck)
-	{
-		return;
-	}
-	Stuck->GhostUntil = Now + mSettings.GhostMaxSeconds;
-	Stuck->GhostLeft = Stuck->Length + mSettings.GhostDistanceMetres * 100.f;
-	TArray<FString> Lines;
-	for (const FATTrafficTrain* Member : Chain)
-	{
-		Lines.Add(FString::Printf(TEXT("%s%s: %s"), Member == Picked ? TEXT("passes through: ") : TEXT(""), *TrainName(Member->Train.Get()), *Member->BlockedReason));
-	}
-	GGhosting = true;
-	const FString Fault = FString::Printf(TEXT("%s deadlock of %d trains passed through after %.0f s:\n  %s\n"), *FDateTime::Now().ToString(TEXT("%Y-%m-%d %H:%M:%S")), Chain.Num(),
-		Seconds, *FString::Join(Lines, TEXT("\n  ")));
-	UE_LOG(LogAutoTrains, Warning, TEXT("traffic: DEADLOCK passed through: %s"), *Fault);
-	WriteFault(Fault);
 }
 
 bool AATTrafficSubsystem::IsWayTaken(const FATTrafficTrain& State) const
@@ -1554,10 +1511,6 @@ void AATTrafficSubsystem::LogDeadlocks()
 			Seen = &mDeadlocks.Add(Signature, {Now, Now});
 		}
 		Seen->Last = Now;
-		if (mSettings.bGhostDeadlocks && Now - Seen->First >= mSettings.GhostAfterSeconds)
-		{
-			GhostThrough(Chain, Now - Seen->First);
-		}
 		if (!bNew)
 		{
 			continue;
@@ -2409,9 +2362,7 @@ void AATTrafficSubsystem::ApplyAuthority(AFGTrain* Train, float DeltaSeconds)
 	// Behind a leader on shared track: keep able to stop where the leader could stop.
 	float HardFollowLimit = -1.f;
 	FATFollowInfo FollowInfo;
-	// Passing through a deadlock: the trains in its way don't hold it back.
-	const bool bGhost = State->GhostUntil >= 0.0;
-	const float FollowLimit = bGhost ? -1.f : GetFollowLimit(Train, *State, HardFollowLimit, &FollowInfo);
+	const float FollowLimit = GetFollowLimit(Train, *State, HardFollowLimit, &FollowInfo);
 	if (Distance < 0.f && FollowLimit < 0.f)
 	{
 		State->Room = MAX_flt;

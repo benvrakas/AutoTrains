@@ -280,9 +280,6 @@ struct FATTrafficTrain
 	TMap<int32, int32> CrossingIndexOf;
 	// In a cycle of trains waiting for each other.
 	bool bDeadlocked = false;
-	// Passing through a deadlock: until when at most (world seconds, -1 if not) and how far it still drives so. [cm]
-	double GhostUntil = -1.0;
-	float GhostLeft = 0.f;
 	// The track or switch the train waits at.
 	const AFGBuildableRailroadTrack* BlockedAtTrack = nullptr;
 	int32 BlockedAtJoint = INDEX_NONE;
@@ -434,8 +431,6 @@ private:
 	void UpdateAuthority(FATTrafficTrain& State) const;
 	void RefreshClaimedJoints(FATTrafficTrain& State) const;
 	void LogDeadlocks();
-	// Lets one train of a deadlock that lasted Seconds pass through the others, and records the fault.
-	void GhostThrough(const TArray<const FATTrafficTrain*>& Chain, double Seconds);
 	// Whether the train it waits for stands on or holds the place it waits at (true if either is unknown).
 	bool IsWayTaken(const FATTrafficTrain& State) const;
 	// Logs what a long-waiting train waits for: its booking and every booking at that resource, with their trains.

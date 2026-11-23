@@ -729,21 +729,6 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 		}
 	}
 	bool bBlocked = false;
-	// Passing through a deadlock: its way ahead whatever else is there.
-	if (State.GhostUntil >= 0.0)
-	{
-		for (int32 Index = 0; Index < State.Route.Num(); ++Index)
-		{
-			State.Claims.Add(State.Route[Index].Track);
-			if (State.Route[Index].EndDistance - State.FrontAhead >= Need)
-			{
-				break;
-			}
-		}
-		UpdateAuthority(State);
-		UpdateFollowLeaders(State);
-		return;
-	}
 	// The plan waits somewhere ahead and doesn't move off right away.
 	const bool bPlanWaits = State.PlanWaitAt >= 0.f && State.PlanDepart > Now + PlanWaitGraceSeconds;
 	// A track climbing too steeply for the train to get going on again: granted all the way up or not at all.
@@ -1705,8 +1690,7 @@ void AATTrafficSubsystem::ApplyPlan(FATTrafficTrain& State, const FATSippCycle& 
 	const FString Committed = Result.CommittedWith != INDEX_NONE ? FString::Printf(TEXT("%s at %s"), *NameOf(TrainOf(Result.CommittedWith)), *Name(Result.CommittedAt)) : FString();
 	if (Committed != State.PlanCommitted)
 	{
-		// Trains passing through a deadlock run into others on purpose.
-		if (!Committed.IsEmpty() && State.GhostUntil < 0.0)
+		if (!Committed.IsEmpty())
 		{
 			++mPlanCommitted;
 			// How each train stands to the place now: on it, holding it from its grant, its speed.
@@ -1901,14 +1885,10 @@ void AATTrafficSubsystem::UpdatePlannedTraffic(float DeltaSeconds)
 	for (const FATTrafficTrain* Checked : Driving)
 	{
 		const FATTrafficTrain& State = *Checked;
-		if (State.GhostUntil >= 0.0)
-		{
-			continue;
-		}
 		for (const TPair<const AFGTrain*, FATTrafficTrain*>& Pair : mStateOf)
 		{
 			const FATTrafficTrain& Other = *Pair.Value;
-			if (&Other == &State || Other.GhostUntil >= 0.0 || State.FollowedTrains.Contains(Other.Train) || Other.FollowedTrains.Contains(State.Train))
+			if (&Other == &State || State.FollowedTrains.Contains(Other.Train) || Other.FollowedTrains.Contains(State.Train))
 			{
 				continue;
 			}
@@ -2088,8 +2068,7 @@ void AATTrafficSubsystem::LogWaitDump(const FATTrafficTrain& State, double Now) 
 
 void AATTrafficSubsystem::LogCrossingEntries(const FATTrafficTrain& State, const TSet<int32>& WasOn, double Now) const
 {
-	// Trains passing through a deadlock run onto others' zones on purpose.
-	if (!State.bManaged || State.GhostUntil >= 0.0)
+	if (!State.bManaged)
 	{
 		return;
 	}
@@ -2112,10 +2091,6 @@ FString AATTrafficSubsystem::DescribeCrossing(const FATTrafficTrain& State, int3
 	TArray<FString> Parts;
 	Parts.Add(State.OccupiedCrossings.Contains(Crossing) ? TEXT("stands on it") : TEXT("doesn't stand on it"));
 	Parts.Add(State.ClaimedCrossings.Contains(Crossing) ? TEXT("holds it") : TEXT("doesn't hold it"));
-	if (State.GhostUntil >= 0.0)
-	{
-		Parts.Add(TEXT("passing through a deadlock"));
-	}
 	for (int32 Index = 0; Index < State.Route.Num(); ++Index)
 	{
 		const FATRouteStep& Step = State.Route[Index];

@@ -15,7 +15,6 @@ const FString UATConfig::TrafficControlKey = TEXT("TrafficControl");
 const FString UATConfig::ReroutingKey = TEXT("Rerouting");
 const FString UATConfig::PhaseThroughKey = TEXT("PhaseThrough");
 const FString UATConfig::AggressiveKey = TEXT("AggressiveTiming");
-const FString UATConfig::GhostDeadlocksKey = TEXT("GhostDeadlocks");
 const FString UATConfig::HillHelpKey = TEXT("HillHelp");
 const FString UATConfig::DetailedLogKey = TEXT("DetailedLog");
 
@@ -57,8 +56,6 @@ namespace
 				LOCTEXT("NormalBrakingTip", "How hard trains brake for normal stops, 30 to 100% of the braking they plan with. Higher stops later and gets there sooner; lower is gentler and leaves room for error.")},
 			{TEXT("DefaultStaySeconds"), &FATSettings::DefaultStaySeconds, 0.f, 600.f, LOCTEXT("DefaultStay", "Station stay estimate (seconds)"),
 				LOCTEXT("DefaultStayTip", "How long a train is expected to stay at a stop set to fully load or unload, 0 to 600 seconds, until it has been seen there; after that its own last stay there counts. Stops that load or unload once take the freight platforms' fixed time, or the stop's set duration when there's no cargo to move.")},
-			{TEXT("GhostAfterSeconds"), &FATSettings::GhostAfterSeconds, 10.f, 600.f, LOCTEXT("GhostAfter", "Pass through a deadlock after (seconds)"),
-				LOCTEXT("GhostAfterTip", "How long trains stay deadlocked, 10 to 600 seconds, before they pass through each other (when that's on).")},
 			{TEXT("RouteSearchSeconds"), &FATSettings::RouteSearchSeconds, 1.f, 60.f, LOCTEXT("RouteSearch", "Route search interval (seconds)"),
 				LOCTEXT("RouteSearchTip", "How often each train looks for a faster route, 1 to 60 seconds. Shorter finds better routes sooner; longer costs less planning time on big networks.")},
 			{TEXT("RouteSearchLateSeconds"), &FATSettings::RouteSearchLateSeconds, 1.f, 300.f, LOCTEXT("RouteSearchLate", "Route search when late (seconds)"),
@@ -73,10 +70,6 @@ namespace
 				LOCTEXT("HillHelpMaxTip", "The most traction a stalled train gets on a climb, 1 to 10 times its own. Raise it if heavy trains still stall on very steep ramps.")},
 			{TEXT("HillStallSeconds"), &FATSettings::HillStallSeconds, 1.f, 60.f, LOCTEXT("HillStall", "Hill help: stall time (seconds)"),
 				LOCTEXT("HillStallTip", "A train that stands this long while it is told to go gets more traction, and more again each time this passes, 1 to 60 seconds.")},
-			{TEXT("GhostDistanceMetres"), &FATSettings::GhostDistanceMetres, 0.f, 2000.f, LOCTEXT("GhostDistance", "Deadlock pass-through distance (m)"),
-				LOCTEXT("GhostDistanceTip", "A train passing through a deadlock does so until it has driven its own length and this much further, 0 to 2000 m.")},
-			{TEXT("GhostMaxSeconds"), &FATSettings::GhostMaxSeconds, 10.f, 600.f, LOCTEXT("GhostMax", "Deadlock pass-through time limit (seconds)"),
-				LOCTEXT("GhostMaxTip", "A train passes through a deadlock for at most this long, 10 to 600 seconds, even if it hasn't driven the distance.")},
 			{TEXT("PlanSearchLimit"), &FATSettings::PlanSearchLimit, 10000.f, 1000000.f, LOCTEXT("PlanSearchLimit", "Plan search limit (states)"),
 				LOCTEXT("PlanSearchLimitTip", "Most steps one train's plan may search, 10000 to 1000000. Lower uses less CPU and memory on huge networks; long or busy routes may then find no way more often.")},
 			{TEXT("SlopeLookaheadMetres"), &FATSettings::SlopeLookaheadMetres, 0.f, 2000.f, LOCTEXT("SlopeLookahead", "Slope lookahead (m)"),
@@ -173,9 +166,6 @@ UATConfig::UATConfig()
 	AddBool(AggressiveKey, TEXT("AggressiveTiming"), LOCTEXT("Aggressive", "Aggressive timing"),
 		LOCTEXT("AggressiveTip", "Tighter margins: trains plan braking closer to what they really manage. Best with trains passing through each other. Off is more cautious."),
 		Defaults.bAggressive);
-	AddBool(GhostDeadlocksKey, TEXT("GhostDeadlocks"), LOCTEXT("GhostDeadlocks", "Clear deadlocks by passing through (beta)"),
-		LOCTEXT("GhostDeadlocksTip", "When trains have been stuck waiting for each other in a circle for the set time, they drive on and pass through each other until they're clear of the jam. Each case is written to FactoryGame/Saved/AutoTrains/faults.log so it can be reported."),
-		Defaults.bGhostDeadlocks);
 	AddBool(HillHelpKey, TEXT("HillHelp"), LOCTEXT("HillHelp", "Help stalled trains up hills"),
 		LOCTEXT("HillHelpTip", "A train that has slowed down on a climb too steep for its locomotives to get going again gets extra traction, up to the set limit, until it is moving and the slope under it is one it can manage. Trains are planned not to wait on such climbs; this is for when one has to anyway."),
 		Defaults.bHillHelp);
@@ -404,7 +394,6 @@ bool UATConfig::Read(const UObject* WorldContext, FATSettings& OutSettings)
 	OutSettings.bRerouting = ReadBool(Root, ReroutingKey, Defaults.bRerouting);
 	OutSettings.bPhaseThrough = ReadBool(Root, PhaseThroughKey, Defaults.bPhaseThrough);
 	OutSettings.bAggressive = ReadBool(Root, AggressiveKey, Defaults.bAggressive);
-	OutSettings.bGhostDeadlocks = ReadBool(Root, GhostDeadlocksKey, Defaults.bGhostDeadlocks);
 	OutSettings.bHillHelp = ReadBool(Root, HillHelpKey, Defaults.bHillHelp);
 	OutSettings.bDetailedLog = ReadBool(Root, DetailedLogKey, Defaults.bDetailedLog);
 	for (const FNumberSetting& Setting : GetNumberSettings())

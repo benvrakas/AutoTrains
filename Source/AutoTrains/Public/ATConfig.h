@@ -12,8 +12,6 @@ struct FATSettings
 	bool bRerouting = true;
 	bool bPhaseThrough = true;
 	bool bAggressive = true;
-	// Deadlocked trains pass through each other after GhostAfterSeconds to clear the jam (beta).
-	bool bGhostDeadlocks = true;
 	// A train too slow to climb the slope under it gets extra traction, up to HillHelpMax times its own, until it can.
 	bool bHillHelp = true;
 	float HillHelpMax = 4.f;
@@ -45,8 +43,6 @@ struct FATSettings
 	float DefaultStaySeconds = 40.f;
 	// How often trains are read, planned and given track. [s]
 	float UpdateIntervalSeconds = 0.25f;
-	// How long a deadlock lasts before its trains pass through each other. [s]
-	float GhostAfterSeconds = 60.f;
 	// Route search: every train this often, at once when its planned arrival has got this much later since its last
 	// search, and this often while its plan finds no way. [s]
 	float RouteSearchSeconds = 5.f;
@@ -56,10 +52,6 @@ struct FATSettings
 	float TrackRefreshSeconds = 30.f;
 	// How long a train waits before it counts for deadlock detection. [s]
 	float DeadlockWaitSeconds = 20.f;
-	// A train passing through a deadlock does so until it has driven its length and this much further, or for at most
-	// this long. [m] [s]
-	float GhostDistanceMetres = 300.f;
-	float GhostMaxSeconds = 120.f;
 	// Most search states one plan may use.
 	float PlanSearchLimit = 200000.f;
 	// How far ahead a train's slope is averaged for its braking. [m]
@@ -79,7 +71,6 @@ public:
 	static const FString ReroutingKey;
 	static const FString PhaseThroughKey;
 	static const FString AggressiveKey;
-	static const FString GhostDeadlocksKey;
 	static const FString HillHelpKey;
 	static const FString DetailedLogKey;
 

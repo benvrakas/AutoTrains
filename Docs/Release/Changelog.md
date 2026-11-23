@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.8.0
+
+- **Fixed: gridlocks that grew instead of clearing.** When a train found no way only because another train was
+  planned before it, Auto Trains was meant to plan it first and try again. That retry had a time limit shorter than
+  one planning round on bigger networks, so it almost never ran (a 40-train server: 2,319 of 2,569 times not at all).
+  The train kept losing its turn, stood for good, and the trains around it planned around it until a whole area
+  locked up. Now the train is simply planned first from the next round on (well under a second later), with no
+  limit. The **Planning retries** setting is gone.
+- **A standing train with no way to its goal stays where it is.** It used to drive on as far as its plan reached and
+  stop there for good, often onto track other trains needed next, so one stuck train pulled the trains around it
+  into the jam. Now it waits where it stands (in its station, or wherever it stopped) until a way opens. It only
+  moves first when it stands on a switch or crossing, to get clear of it.
+
 ## 1.7.6
 
 - **For game 1.2.5.1** (the update of 18 November 2026). That update changed how the game stores train stations and

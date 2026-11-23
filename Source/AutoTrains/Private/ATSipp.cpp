@@ -218,12 +218,13 @@ namespace
 			ForcedReach = FMath::Square(Train.Speed) / (2.f * Brake);
 		}
 
-		// Plans the train along Route (bLastIsGoal: its last step is the goal), else to its furthest stop there, where it
-		// then stands for good.
+		// Plans the train along Route (bLastIsGoal: its last step is the goal). With no way there it stands for good: where it
+		// stands if it stands clear of every switch and crossing, else at its furthest stop there (Docs/Debugging.md, "1.8.0").
 		void Plan(const TArray<int32>& InRoute, bool bLastIsGoal, FATSippResult& Out)
 		{
 			const int32 Final = Search(InRoute, false, bLastIsGoal);
-			const int32 Stand = Final != INDEX_NONE ? Final : FurthestClear != INDEX_NONE ? FurthestClear : FurthestStopped != INDEX_NONE ? FurthestStopped : FurthestAny;
+			const int32 Stand = Final != INDEX_NONE ? Final : StandsClear() ? 0
+				: FurthestClear != INDEX_NONE ? FurthestClear : FurthestStopped != INDEX_NONE ? FurthestStopped : FurthestAny;
 			Build(Stand, Final != INDEX_NONE, Out);
 			Out.States = States.Num();
 			Out.RejectedMotion = RejectedMotion;
@@ -527,6 +528,23 @@ namespace
 					}
 				}
 			}
+		}
+
+		// Whether the train stands now with its whole body clear of every switch's fouling zone and crossing zone.
+		bool StandsClear() const
+		{
+			if (!Train.bStanding || Train.bFrontOnJunction)
+			{
+				return false;
+			}
+			for (const FATSippPass& Pass : Train.Tail)
+			{
+				if (Pass.Resource >= Graph.Length.Num())
+				{
+					return false;
+				}
+			}
+			return true;
 		}
 
 		// Whether the body standing at state Index is on a switch's fouling zone or a crossing zone.
@@ -1562,27 +1580,21 @@ void ATSipp::Run(FATSippCycle& Cycle)
 		}
 	};
 
-	// The turns in order; a self-driving train whose plan fails on the booking of one planned before it, which counts
-	// only because that one plans first, goes before it and the
-	// turns are planned again (paper sec. 6, priority adjustment), up to MaxRetries times and RetrySeconds. A train is never put before one ahead of it on its route, nor
+	// The turns in order. A self-driving train whose plan fails on the booking of one planned before it, which counts
+	// only because that one plans first, is put before it from the next cycle on (paper sec. 6, priority adjustment,
+	// one move per cycle; Docs/Debugging.md, "1.8.0"). A train is never put before one ahead of it on its route, nor
 	// back before one that went before it this leg.
-	const FATSippTable Initial = Cycle.Table;
 	Cycle.Order.Reset();
 	for (int32 Slot = 0; Slot < Count; ++Slot)
 	{
 		Cycle.Order.Add(Slot);
 	}
-	for (int32 Attempt = 0;; ++Attempt)
 	{
 		int32 Rank = 0;
 		for (const int32 Slot : Cycle.Order)
 		{
 			FATSippTrain& Train = Cycle.Trains[Slot];
 			Train.Rank = Train.Turn == EATSippTurn::Plan && Train.Kind == EATSippKind::Moving ? Rank++ : INDEX_NONE;
-		}
-		if (Attempt > 0)
-		{
-			Cycle.Table = Initial;
 		}
 		for (const int32 Slot : Cycle.Order)
 		{
@@ -1613,18 +1625,10 @@ void ATSipp::Run(FATSippCycle& Cycle)
 				Before = ByPosition;
 			}
 		}
-		if (Failed == INDEX_NONE)
+		if (Failed != INDEX_NONE)
 		{
-			break;
+			Cycle.Reordered.Add(TPair<int32, int32>(Failed, Cycle.Order[Before]));
 		}
-		if (Attempt >= Cycle.MaxRetries || FPlatformTime::Seconds() - Begin > Cycle.RetrySeconds)
-		{
-			Cycle.RetryLimited = Failed;
-			break;
-		}
-		Cycle.Reordered.Add(TPair<int32, int32>(Failed, Cycle.Order[Before]));
-		Cycle.Order.Remove(Failed);
-		Cycle.Order.Insert(Failed, Before);
 	}
 	Cycle.Milliseconds = (FPlatformTime::Seconds() - Begin) * 1000.0;
 }

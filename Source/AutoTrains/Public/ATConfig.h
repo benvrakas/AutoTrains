@@ -47,9 +47,6 @@ struct FATSettings
 	float UpdateIntervalSeconds = 0.25f;
 	// How long a deadlock lasts before its trains pass through each other. [s]
 	float GhostAfterSeconds = 60.f;
-	// How often a planning cycle may be planned again with a train whose plan failed moved up before the train in its
-	// way.
-	float PlanRetries = 3.f;
 	// Route search: every train this often, at once when its planned arrival has got this much later since its last
 	// search, and this often while its plan finds no way. [s]
 	float RouteSearchSeconds = 5.f;

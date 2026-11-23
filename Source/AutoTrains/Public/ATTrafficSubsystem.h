@@ -735,8 +735,6 @@ private:
 	int32 mPlanUpdates = 0;
 	int32 mCycles = 0;
 	int32 mPlanReorders = 0;
-	// The last train logged as held up past the planning retry limit.
-	FString mLastRetryLimited;
 	int32 mCyclesLate = 0;
 	double mCycleMilliseconds = 0.0;
 	double mPlanSeconds = 0.0;

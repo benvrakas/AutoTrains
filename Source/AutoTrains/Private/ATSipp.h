@@ -181,6 +181,8 @@ struct FATSippTrain
 	float FrontZAt = 0.f;
 	float RearZAt = 0.f;
 	bool bStanding = false;
+	// Standing with the body ahead of its rear on a switch's fouling zone or a crossing zone (the tail's part is in Tail).
+	bool bFrontOnJunction = false;
 	double MinDepart = 0.0;
 	double GoalDwell = 0.0;
 	// Only asked about: planned after every other train, never moved up before one.
@@ -245,19 +247,14 @@ struct FATSippCycle
 	TSharedPtr<const FATSippGraph, ESPMode::ThreadSafe> Graph;
 	double Now = 0.0;
 	double Headway = 0.0;
-	// How often and for how long the turns may be planned again with a failed train moved up. [s]
-	int32 MaxRetries = 0;
-	double RetrySeconds = 0.0;
 	// Most search states one plan may use.
 	int32 MaxStates = 200000;
 	TArray<FATSippTrain> Trains;
 	FATSippTable Table;
 	TArray<FATSippResult> Results;
-	// The order the turns were planned in last, each (train, train it was put before) move, and a failed train that
-	// would have been moved up past the retry limit (INDEX_NONE if none).
+	// The order the turns were planned in, and the (train, train it goes before from the next cycle on) move.
 	TArray<int32> Order;
 	TArray<TPair<int32, int32>> Reordered;
-	int32 RetryLimited = INDEX_NONE;
 	double Milliseconds = 0.0;
 	std::atomic<bool> bDone{false};
 	// Game thread only: the train of each slot.

@@ -512,7 +512,8 @@ the AFGTrain object name, unique where names repeat):
   (`bBlockedByRank`), never before a train ahead on its route nor back before one that went before it this leg
   (`MovedAheadOf`); bounded by the Planning retries setting and half the update interval. The move sticks for the leg
   (LegStart just before the other train's). Logs: `is planned before ... from now on`, `planning retry limit
-  reached`, and `N trains moved up after a failed plan` in the 60 s summary.
+  reached`, and `N trains moved up after a failed plan` in the 60 s summary. (1.8.0: one move per cycle, applied from
+  the next cycle on; no retries, no setting. See "1.8.0".)
 - Second standstill (c2b684a, 03:16-03:25 local): every train at a station "no way to its goal (1 states; left out:
   0 ...)". The real cause of both standstills: a train standing with its front at its track's end (trains stand so
   at stations) had no move at all, since passing a track end needed at least 0.5 m/s and speeding up from standstill
@@ -1158,3 +1159,31 @@ then stands short of the reach for good (bookings never clear), its `WaitFor` is
 sees it as standing for good in turn. `MinDepart` is now always now for driven trains, searches are no longer
 switched off for held trains (a capped search with no turn-off ends in a few states), and the switch exception and
 `StandHereDistance` are gone. `IsHeldForGood` (naming only) is gap + room under `FollowStuckDistance`.
+
+## 1.8.0: priority adjustment across cycles; a failed standing train stays
+
+IB log 2026-11-22 23:47 to 2026-11-23 22:20 UTC (AT 1.7.6 + SmartTrains 0.36.7, 40 trains). A gridlock started at
+20:29:35 UTC with 3 trains, grew to 17 (cycle report 22:00:00) and 33 standing trains (waits up to 5,564 s), and
+never cleared; the server was restarted at 22:20. GhostThrough at 22:01:00 freed one train, but most edges of the
+cycle were plan waits ("its plan has no slot there yet", "neither stands on nor holds the place"), so the same
+cycle was reported again 38 s later.
+
+Cause: `RetrySeconds = UpdateIntervalSeconds * 0.5` (0.125 s) against cycles of 260-1,030 ms (hourly means). The
+retry check ran after the first full pass, so the budget was always spent: 2,569 "planning retry limit reached", 2,319
+with 0 retries. At the limit the reorder was dropped (`RetryLimited` only logged), so the next cycle had the same
+order and the same failure; the failed train stood for good at its furthest stop and later plans went around that.
+About 35 plans failed per minute in normal running.
+
+1.8.0:
+- `ATSipp::Run` plans the turns once. The first failed train that may move up (the same rules as before:
+  `bBlockedByRank`, not before a train in its `First` set or one between, not back before one in `MovedAheadOf`)
+  is added to `Reordered`; `ApplyPlanCycle` sets its `LegStart` just before the other's, so `RankTrains` plans it
+  first from the next cycle on. One move per cycle; `MaxRetries`, `RetrySeconds`, `RetryLimited` and the
+  PlanRetries setting are gone. The move is logged (`is planned before ... from now on`, now at Log level).
+- `FPlanner::Plan`: a failed plan of a standing train stands at state 0 (where it is) when `StandsClear`: no switch
+  or crossing under the body (`bFrontOnJunction` from `GetJunctionUnder(Train, State, 0)` on the game thread, joint
+  and crossing resources in `Tail`). Otherwise as before: the furthest stop clear of switches and crossings, else the
+  furthest stop. A moving train keeps the old rule (it can't stop at once, and its failures are often for one cycle).
+
+Watch on the next runs: `planner: ... is planned before`, `trains moved up after a failed plan` in the summary, the
+failed count, DEADLOCK and `passed through` lines, waits over 300 s in WAIT dumps.

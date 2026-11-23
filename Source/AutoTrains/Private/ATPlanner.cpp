@@ -1101,6 +1101,7 @@ void AATTrafficSubsystem::FillSippTrain(const FATTrafficTrain& State, const FATS
 	Out.FrontZAt = State.FrontZAt;
 	Out.RearZAt = State.RearZAt;
 	Out.bStanding = State.Speed < StandingSpeed;
+	Out.bFrontOnJunction = Out.bStanding && GetJunctionUnder(State.Train.Get(), State, 0.f) >= 0.f;
 	// Ownership, the one rule the planner and the grant share: a train owns what it stands on and what it was granted
 	// ahead (route steps it holds from its front on, and the switches between them). Locked: owned and not given up, which
 	// is what it stands on (or its front has entered) and, while it moves, everything it was granted. Held: granted ahead
@@ -1295,8 +1296,6 @@ void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds, bool bW
 	Cycle->Now = Now;
 	Cycle->Headway = GetSafetyMarginSeconds();
 	// Retries end by half the update interval, so the cycle is in by the next update.
-	Cycle->MaxRetries = FMath::RoundToInt(mSettings.PlanRetries);
-	Cycle->RetrySeconds = mSettings.UpdateIntervalSeconds * 0.5;
 	Cycle->MaxStates = FMath::RoundToInt(mSettings.PlanSearchLimit);
 	TMap<const AFGTrain*, int32> SlotOf;
 	for (const FTurn& Turn : Turns)
@@ -1524,8 +1523,8 @@ void AATTrafficSubsystem::ApplyPlanCycle()
 			Own.Keys.Add(Key);
 		}
 	}
-	// Trains moved up after a failed plan stay before the train
-	// in their way for the rest of their leg.
+	// A train moved up after a failed plan is planned before the train in its way from the next cycle on, for the rest
+	// of its leg.
 	for (const TPair<int32, int32>& Move : Cycle->Reordered)
 	{
 		FATTrafficTrain* Moved = mTrains.Find(Cycle->Owners[Move.Key]);
@@ -1537,16 +1536,9 @@ void AATTrafficSubsystem::ApplyPlanCycle()
 		Moved->LegStart = FMath::Min(Moved->LegStart, Passed->LegStart - 0.001);
 		Moved->MovedAheadOf.Add(Passed->Train);
 		++mPlanReorders;
-		UE_LOG(LogAutoTrains, Verbose, TEXT("planner: %s is planned before %s from now on: its plan found no way past %s's booking"), *NameOf(Moved->Train.Get()),
+		UE_LOG(LogAutoTrains, Log, TEXT("planner: %s is planned before %s from now on: its plan found no way past %s's booking"), *NameOf(Moved->Train.Get()),
 			*NameOf(Passed->Train.Get()), *NameOf(Passed->Train.Get()));
 	}
-	const FString Limited = Cycle->Owners.IsValidIndex(Cycle->RetryLimited) ? NameOf(Cycle->Owners[Cycle->RetryLimited].Get()) : FString();
-	if (Limited != mLastRetryLimited && !Limited.IsEmpty())
-	{
-		UE_LOG(LogAutoTrains, Log, TEXT("planner: planning retry limit reached (%d retries, %.1f ms): %s stays held up by a train planned before it"),
-			Cycle->Reordered.Num(), Cycle->Milliseconds, *Limited);
-	}
-	mLastRetryLimited = Limited;
 	for (int32 Slot = 0; Slot < Cycle->Trains.Num(); ++Slot)
 	{
 		const FATSippTrain& Input = Cycle->Trains[Slot];

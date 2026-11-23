@@ -59,8 +59,6 @@ namespace
 				LOCTEXT("DefaultStayTip", "How long a train is expected to stay at a stop set to fully load or unload, 0 to 600 seconds, until it has been seen there; after that its own last stay there counts. Stops that load or unload once take the freight platforms' fixed time, or the stop's set duration when there's no cargo to move.")},
 			{TEXT("GhostAfterSeconds"), &FATSettings::GhostAfterSeconds, 10.f, 600.f, LOCTEXT("GhostAfter", "Pass through a deadlock after (seconds)"),
 				LOCTEXT("GhostAfterTip", "How long trains stay deadlocked, 10 to 600 seconds, before they pass through each other (when that's on).")},
-			{TEXT("PlanRetries"), &FATSettings::PlanRetries, 0.f, 10.f, LOCTEXT("PlanRetries", "Planning retries"),
-				LOCTEXT("PlanRetriesTip", "When a train finds no way because a train planned before it is in the way, it is planned before that train and the round is planned again, up to this many times per round, 0 to 10. 0 leaves the planning order as it is.")},
 			{TEXT("RouteSearchSeconds"), &FATSettings::RouteSearchSeconds, 1.f, 60.f, LOCTEXT("RouteSearch", "Route search interval (seconds)"),
 				LOCTEXT("RouteSearchTip", "How often each train looks for a faster route, 1 to 60 seconds. Shorter finds better routes sooner; longer costs less planning time on big networks.")},
 			{TEXT("RouteSearchLateSeconds"), &FATSettings::RouteSearchLateSeconds, 1.f, 300.f, LOCTEXT("RouteSearchLate", "Route search when late (seconds)"),

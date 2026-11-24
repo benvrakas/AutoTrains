@@ -1187,3 +1187,26 @@ About 35 plans failed per minute in normal running.
 
 Watch on the next runs: `planner: ... is planned before`, `trains moved up after a failed plan` in the summary, the
 failed count, DEADLOCK and `passed through` lines, waits over 300 s in WAIT dumps.
+
+## 1.9.0: a train waits only where it first stands; no deadlock pass-through
+
+VM pair 18 (ST 0.37.0 + AT 1.8.0, 2026-11-24 UTC, emptied half): from about 00:58 trains queued around Dune Desert
+Rubber In 1 and Blue Crater Rubber Out 1/2 (a vanilla shuttle "Train" works the same stations); by the end 19 trains
+stood with waits of 600-940 s, mostly "waits for ? before track ...: its plan has no slot there yet", and the planning
+cycle grew from 0.6 s to 3.5 s. 1.8.0's priority adjustment ran (22 moves) and plans rarely failed, so this was not a
+failure cascade but waits planned out on the line: every plan could stop at any stop state on its way and wait there
+(`bCanWait = State.bStopped`), and when the times they waited for slipped, the waiting trains held each other's way.
+
+1.9.0:
+- `FState::bHasStood`: the train stood still at an earlier state of the plan. `Move` lets a state wait only if it is
+  stopped and `!bHasStood`: the start of a standing train, or the first stop of a moving one. Later stops depart at
+  once (no wait). `KeyOf` includes the flag so dominance doesn't drop a state that may still wait.
+- `SearchLeavingLater`: for a standing train, a move further on that doesn't fit and may not wait (a gap with a known
+  retry, a tail clear before `ClearLo`, a goal stay behind a train ahead) notes the departure from the start that would
+  make it fit (`NoteLater`, `DepartOf`); with no plan found, the search runs again with `DepartFloor` there, up to
+  `DepartPasses` (4) times. Route searches use the same.
+- GhostThrough and its settings are removed (1.8.0's notes; in pair 18 it never fired, as each cycle's members kept
+  changing).
+
+Watch: WAIT dumps (waits should be at stations or where trains stand, not "before track ... no slot there yet" out on
+the line), the planner's ms per cycle, failed plans per minute, DEADLOCK.

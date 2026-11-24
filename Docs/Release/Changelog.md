@@ -2,6 +2,11 @@
 
 ## 1.9.0
 
+- **Trains wait only where they stand.** A train used to drive off as soon as its plan let it and then wait on the
+  way: behind the train ahead, before a busy crossing, outside a full station. When anything ran later than planned,
+  those waits on the line locked into rings of trains waiting for each other. Now a train that stands waits where it
+  is until it can drive all the way to its stop without stopping again (it may still slow down), and a train already
+  moving gets one stop at most, where it first has to stand. A whole jam can no longer build up out on the line.
 - **Removed: passing through deadlocks.** Trains stuck waiting for each other in a circle used to drive through each
   other after a minute. With 1.8.0 a train that can't get a plan goes first in the next round and a stopped train
   without a full plan stays where it is, so such circles no longer form in the first place; and when one did, letting

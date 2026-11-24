@@ -42,6 +42,9 @@ namespace
 	constexpr int32 MaxShifts = 24;
 	// A wait shorter than this isn't one. [s]
 	constexpr double MinWaitSeconds = 0.5;
+	// A standing train whose way on is taken further along tries leaving later from where it stands this many times
+	// (Docs/Debugging.md, "1.9.0").
+	constexpr int32 DepartPasses = 4;
 	// A move shorter than this is none, and a train slower than this at a track end stops there instead. [cm] [cm/s]
 	constexpr float MinMove = 1.f;
 	constexpr float MinPassSpeed = 50.f;
@@ -167,10 +170,12 @@ namespace
 	// connection First, leaving the parent at Leave over Edge, later than it got there for Cause's booking. Opens
 	// [OpenFirst, +NumOpen): what the move here started on. BlockedBy/BlockedAt: the booking that kept a move on from here,
 	// one that never clears before any other, else the last; whether it counted only because its train plans first, and
-	// whether it never clears. OffRoute: the way here left the train's route.
+	// whether it never clears. OffRoute: the way here left the train's route. HasStood: the train stood still at an
+	// earlier state of the plan, so it can't wait here (it waits only where it first stands).
 	struct FState
 	{
 		bool bOffRoute = false;
+		bool bHasStood = false;
 		int32 Node = INDEX_NONE;
 		int32 Step = -1;
 		int32 Parent = INDEX_NONE;
@@ -222,7 +227,7 @@ namespace
 		// stands if it stands clear of every switch and crossing, else at its furthest stop there (Docs/Debugging.md, "1.8.0").
 		void Plan(const TArray<int32>& InRoute, bool bLastIsGoal, FATSippResult& Out)
 		{
-			const int32 Final = Search(InRoute, false, bLastIsGoal);
+			const int32 Final = SearchLeavingLater(InRoute, false, bLastIsGoal);
 			const int32 Stand = Final != INDEX_NONE ? Final : StandsClear() ? 0
 				: FurthestClear != INDEX_NONE ? FurthestClear : FurthestStopped != INDEX_NONE ? FurthestStopped : FurthestAny;
 			Build(Stand, Final != INDEX_NONE, Out);
@@ -238,7 +243,7 @@ namespace
 		// goal of its route; returns the route found (empty if none) and its arrival.
 		TArray<int32> FindRoute(const TArray<int32>& InRoute, double& OutArrival)
 		{
-			const int32 Final = Search(InRoute, true, true);
+			const int32 Final = SearchLeavingLater(InRoute, true, true);
 			OutArrival = Final != INDEX_NONE ? States[Final].Arrive : ATSippNever;
 			return Final != INDEX_NONE ? RouteTo(Final) : TArray<int32>();
 		}
@@ -246,6 +251,50 @@ namespace
 		int32 NumStates() const { return States.Num(); }
 
 	private:
+		// Search, and for a standing train whose way on is taken further along (where it may not wait), the same search
+		// leaving at the first later time that a move found could fit, up to DepartPasses times.
+		int32 SearchLeavingLater(const TArray<int32>& InRoute, bool bInFree, bool bInGoalAtEnd)
+		{
+			DepartFloor = 0.0;
+			int32 Final = INDEX_NONE;
+			for (int32 Pass = 0; Pass < DepartPasses; ++Pass)
+			{
+				LaterDepart = ATSippNever;
+				Final = Search(InRoute, bInFree, bInGoalAtEnd);
+				if (Final != INDEX_NONE || !Train.bStanding || IsNever(LaterDepart) || LaterDepart <= DepartFloor)
+				{
+					break;
+				}
+				DepartFloor = LaterDepart;
+			}
+			return Final;
+		}
+
+		// The departure from where the train is of the plan leading to state Index (its first move's Leave).
+		double DepartOf(int32 Index, double LeaveHere) const
+		{
+			int32 At = Index;
+			if (States[At].Step < 0)
+			{
+				return LeaveHere;
+			}
+			while (States[At].Parent != INDEX_NONE && States[States[At].Parent].Step >= 0)
+			{
+				At = States[At].Parent;
+			}
+			return States[At].Leave;
+		}
+
+		// A move from state Index leaving at Leave would fit only Delta seconds later, and the train may not wait there: the
+		// plan may leave that much later from where the train stands.
+		void NoteLater(int32 Index, double Leave, double Delta)
+		{
+			if (Train.bStanding && Delta > 0.0 && !IsNever(Delta))
+			{
+				LaterDepart = FMath::Min(LaterDepart, DepartOf(Index, Leave) + Delta);
+			}
+		}
+
 		int32 Search(const TArray<int32>& InRoute, bool bInFree, bool bInGoalAtEnd)
 		{
 			Route = &InRoute;
@@ -357,7 +406,7 @@ namespace
 		{
 			const int32 Where = bFree ? State.Node : State.Step;
 			const uint32 Band = State.bStopped ? 0x80000000u ^ GetTypeHash(FMath::RoundToInt(State.Pos)) : 1u + static_cast<uint32>(FMath::Min(State.Speed / Top * SpeedBands, SpeedBands));
-			return (static_cast<uint64>(static_cast<uint32>(Where)) << 32) | HashCombine(State.Key, Band);
+			return (static_cast<uint64>(static_cast<uint32>(Where)) << 32) | HashCombine(HashCombine(State.Key, Band), State.bHasStood ? 1u : 0u);
 		}
 
 		bool InScope(const FATSippBooking& Booking, bool bFirst) const
@@ -629,6 +678,8 @@ namespace
 				else if (bFits && Clear < Open.Gap.ClearLo)
 				{
 					NoteBlock(Index, Open.Gap.LoBy, Open.Resource, false);
+					// Arriving that much later, the stay would fit: a standing train may leave later (it can't wait on the way).
+					NoteLater(Index, State.Leave, Open.Gap.ClearLo - Clear + 1e-3);
 				}
 				bFits = bFits && Clear <= Open.Gap.ClearHi && Clear >= Open.Gap.ClearLo;
 			});
@@ -968,8 +1019,10 @@ namespace
 				AddZones(Run[Link], TrackEnd - Graph.Length[Track]);
 				TrackStart = TrackEnd;
 			}
-			const bool bCanWait = State.bStopped;
-			const double Earliest = State.Step < 0 ? FMath::Max(State.Arrive, Train.MinDepart) : State.Arrive;
+			// It waits only where it first stands (Docs/Debugging.md, "1.9.0"): where it stands now, or, moving now, at its first
+			// stop. Further on its plan drives through; a standing train leaves later instead (SearchLeavingLater).
+			const bool bCanWait = State.bStopped && !State.bHasStood;
+			const double Earliest = State.Step < 0 ? FMath::Max3(State.Arrive, Train.MinDepart, DepartFloor) : State.Arrive;
 			// Not moving off at all: it stands where it is.
 			if (IsNever(Earliest))
 			{
@@ -996,9 +1049,13 @@ namespace
 					if (!GapAt(News[New].Resource, News[New].Exit, News[New].Via, Enters[New], Gaps[New], Retry, By, bByRank))
 					{
 						NoteBlock(Index, By, News[New].Resource, bByRank, IsNever(Retry));
-						// Entered before the stop, or no waiting: no later departure helps.
+						// Entered before the stop, or no waiting: no later departure helps here (a standing train may leave later).
 						if (!bOnMove || !bCanWait || IsNever(Retry))
 						{
+							if (bOnMove && !bCanWait && !IsNever(Retry))
+							{
+								NoteLater(Index, Leave, Retry - Enters[New] + 1e-3);
+							}
 							return;
 						}
 						bFits = false;
@@ -1042,6 +1099,10 @@ namespace
 				{
 					if (!bCanWait || Later <= Leave || IsNever(Later))
 					{
+						if (!bCanWait && Later > Leave && !IsNever(Later))
+						{
+							NoteLater(Index, Leave, Later - Leave);
+						}
 						RejectedTail += Cause == INDEX_NONE ? 1 : 0;
 						return;
 					}
@@ -1056,6 +1117,7 @@ namespace
 				}
 				FState Next;
 				Next.bOffRoute = State.bOffRoute || LeavesAt >= 0.f;
+				Next.bHasStood = State.bHasStood || State.bStopped;
 				Next.Node = Run.Last();
 				Next.First = Run[0];
 				Next.Step = State.Step + Run.Num();
@@ -1466,6 +1528,10 @@ namespace
 		int32 RejectedStay = 0;
 		int32 RejectedClimb = 0;
 		int32 RejectedJunction = 0;
+		// SearchLeavingLater: the earliest the train may leave from where it stands in this search, and the first later
+		// departure a move found would fit at. [world s]
+		double DepartFloor = 0.0;
+		double LaterDepart = ATSippNever;
 	};
 }
 

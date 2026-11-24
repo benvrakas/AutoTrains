@@ -42,9 +42,11 @@ namespace
 	constexpr int32 MaxShifts = 24;
 	// A wait shorter than this isn't one. [s]
 	constexpr double MinWaitSeconds = 0.5;
-	// A standing train whose way on is taken further along tries leaving later from where it stands this many times
-	// (Docs/Debugging.md, "1.9.0").
+	// A standing train tries this many departures from where it stands, each with an equal share of the state limit
+	// (Docs/Debugging.md, "1.9.0", "1.14.0").
 	constexpr int32 DepartPasses = 4;
+	// A search for another route over the whole network gets this share of the state limit.
+	constexpr int32 RouteSearchShare = 4;
 	// A move shorter than this is none, and a train slower than this at a track end stops there instead. [cm] [cm/s]
 	constexpr float MinMove = 1.f;
 	constexpr float MinPassSpeed = 50.f;
@@ -200,11 +202,12 @@ namespace
 	// The connections of a run of track.
 	using FRun = TArray<int32, TInlineAllocator<16>>;
 
+	// A state in the search queue, by its arrival plus the least time left to the end of the route (A*).
 	struct FQueued
 	{
-		double Arrive = 0.0;
+		double Key = 0.0;
 		int32 State = INDEX_NONE;
-		bool operator<(const FQueued& Other) const { return Arrive < Other.Arrive; }
+		bool operator<(const FQueued& Other) const { return Key < Other.Key; }
 	};
 
 	// One train's safe-interval search over (track end, speed, window) states with the train's own motion, body and
@@ -232,7 +235,16 @@ namespace
 				: FurthestClear != INDEX_NONE ? FurthestClear : FurthestStopped != INDEX_NONE ? FurthestStopped : FurthestAny;
 			Build(Stand, Final != INDEX_NONE, Out);
 			Out.StandKind = Final != INDEX_NONE ? 0 : Stand == 0 && StandsClear() ? 1 : Stand == FurthestClear ? 2 : Stand == FurthestStopped ? 3 : 4;
-			Out.States = States.Num();
+			// No way: held up by the booking that ended the attempt that got furthest; with none named and the state limit
+			// reached, the search ran out of room.
+			if (Final == INDEX_NONE && BestBlockedBy != INDEX_NONE)
+			{
+				Out.BlockedBy = BestBlockedBy;
+				Out.BlockedAt = BestBlockedAt;
+				Out.bBlockedByRank = bBestBlockedByRank;
+			}
+			Out.bOutOfRoom = Final == INDEX_NONE && Out.BlockedBy == INDEX_NONE && bHitBudget;
+			Out.States = SearchedStates;
 			Out.RejectedMotion = RejectedMotion;
 			Out.RejectedTail = RejectedTail;
 			Out.RejectedStay = RejectedStay;
@@ -257,18 +269,47 @@ namespace
 		int32 SearchLeavingLater(const TArray<int32>& InRoute, bool bInFree, bool bInGoalAtEnd)
 		{
 			DepartFloor = 0.0;
+			SearchedStates = 0;
+			bHitBudget = false;
+			BestBlockedBy = INDEX_NONE;
+			BestBlockedAt = INDEX_NONE;
+			bBestBlockedByRank = false;
+			int32 BestStep = -2;
+			StateBudget = bInFree ? FMath::Max(Cycle.MaxStates / RouteSearchShare, 1) : Train.bStanding ? FMath::Max(Cycle.MaxStates / DepartPasses, 1) : Cycle.MaxStates;
 			int32 Final = INDEX_NONE;
 			for (int32 Pass = 0; Pass < DepartPasses; ++Pass)
 			{
 				LaterDepart = ATSippNever;
 				Final = Search(InRoute, bInFree, bInGoalAtEnd);
-				if (Final != INDEX_NONE || !Train.bStanding || IsNever(LaterDepart) || LaterDepart <= DepartFloor)
+				SearchedStates += States.Num();
+				if (Final != INDEX_NONE)
+				{
+					break;
+				}
+				// The booking that ended this attempt furthest along.
+				for (const FState& State : States)
+				{
+					if (State.BlockedBy != INDEX_NONE && State.Step > BestStep)
+					{
+						BestStep = State.Step;
+						BestBlockedBy = State.BlockedBy;
+						BestBlockedAt = State.BlockedAt;
+						bBestBlockedByRank = State.bBlockedByRank;
+					}
+				}
+				if (!Train.bStanding || IsNever(LaterDepart) || LaterDepart <= DepartFloor)
 				{
 					break;
 				}
 				DepartFloor = LaterDepart;
 			}
 			return Final;
+		}
+
+		// The least time from State to the end of the route at the train's top speed (0 searching the whole network).
+		double TimeLeft(const FState& State) const
+		{
+			return bFree || RouteEnd <= 0.f ? 0.0 : FMath::Max(RouteEnd - State.Pos, 0.f) / Top;
 		}
 
 		// The departure from where the train is of the plan leading to state Index (its first move's Leave).
@@ -313,6 +354,11 @@ namespace
 			Start.Arrive = Cycle.Now;
 			Start.Leave = Cycle.Now;
 			States.Add(Start);
+			RouteEnd = 0.f;
+			for (int32 Step = 0; !bFree && Step < InRoute.Num(); ++Step)
+			{
+				RouteEnd = Step == 0 ? FMath::Max(Train.FirstEnd, MinMove) : RouteEnd + Graph.Length[Graph.TrackOf[InRoute[Step]]];
+			}
 			FurthestStopped = Train.bStanding ? 0 : INDEX_NONE;
 			FurthestClear = FurthestStopped;
 			FurthestAny = 0;
@@ -345,8 +391,9 @@ namespace
 					RejectedStay += State.bStopped ? 1 : 0;
 					continue;
 				}
-				if (States.Num() >= Cycle.MaxStates)
+				if (States.Num() >= StateBudget)
 				{
+					bHitBudget = true;
 					break;
 				}
 				const int32 Before = States.Num();
@@ -358,7 +405,7 @@ namespace
 					if (Reached.Arrive < Stored)
 					{
 						Stored = Reached.Arrive;
-						Queue.HeapPush({Reached.Arrive, Index});
+						Queue.HeapPush({Reached.Arrive + TimeLeft(Reached), Index});
 					}
 				}
 			}
@@ -1533,6 +1580,16 @@ namespace
 		// departure a move found would fit at. [world s]
 		double DepartFloor = 0.0;
 		double LaterDepart = ATSippNever;
+		// SearchLeavingLater: states one search may make, states made over all its departures, whether one stopped at
+		// that limit, and the booking that ended the attempt that got furthest (its train, resource, by rank).
+		int32 StateBudget = 0;
+		int32 SearchedStates = 0;
+		bool bHitBudget = false;
+		int32 BestBlockedBy = INDEX_NONE;
+		int32 BestBlockedAt = INDEX_NONE;
+		bool bBestBlockedByRank = false;
+		// Where the front is at the end of the route's last step. [cm]
+		float RouteEnd = 0.f;
 	};
 }
 

@@ -14,7 +14,7 @@
 const FString UATConfig::TrafficControlKey = TEXT("TrafficControl");
 const FString UATConfig::ReroutingKey = TEXT("Rerouting");
 const FString UATConfig::PhaseThroughKey = TEXT("PhaseThrough");
-const FString UATConfig::AggressiveKey = TEXT("AggressiveTiming");
+const FString UATConfig::GhostDeadlocksKey = TEXT("GhostDeadlocks");
 const FString UATConfig::HillHelpKey = TEXT("HillHelp");
 const FString UATConfig::DetailedLogKey = TEXT("DetailedLog");
 
@@ -36,10 +36,6 @@ namespace
 		static const TArray<FNumberSetting> Settings = {
 			{TEXT("SafetyMarginSeconds"), &FATSettings::SafetyMargin, 0.f, 10.f, LOCTEXT("SafetyMargin", "Safety margin (seconds)"),
 				LOCTEXT("SafetyMarginTip", "Time, 0 to 10 seconds, kept between two trains using the same track or switch. 0 lets a train in as soon as the one before it has cleared; raise it if trains clip each other.")},
-			{TEXT("TopSpeedKmh"), &FATSettings::TopSpeedKmh, 0.f, 500.f, LOCTEXT("TopSpeed", "Top speed (km/h)"),
-				LOCTEXT("TopSpeedTip", "Top speed of every self-driving train, 0 to 500 km/h, while traffic control is on. 0 keeps each train's own top speed. Above the speed at which a locomotive's traction runs out (about 120 km/h on flat track), its traction is stretched up to this speed and it draws that much more power.")},
-			{TEXT("AccelerationMultiplier"), &FATSettings::Acceleration, 0.25f, 5.f, LOCTEXT("Acceleration", "Acceleration (x)"),
-				LOCTEXT("AccelerationTip", "Traction of self-driving trains' locomotives, 0.25 to 5 times their own, while traffic control is on: they accelerate that much faster and draw that much more power. Braking isn't changed.")},
 			{TEXT("RerouteMinGainSeconds"), &FATSettings::RerouteMinGainSeconds, 0.f, 600.f, LOCTEXT("RerouteGain", "Reroute: minimum time saved (seconds)"),
 				LOCTEXT("RerouteGainTip", "A train only takes another route if it gets there at least this much sooner, 0 to 600 seconds. Higher keeps trains on their usual route more often.")},
 			{TEXT("RerouteMinGainPercent"), &FATSettings::RerouteMinGainPercent, 0.f, 100.f, LOCTEXT("RerouteShare", "Reroute: minimum share saved (%)"),
@@ -48,14 +44,12 @@ namespace
 				LOCTEXT("RerouteHoldTip", "After taking another route, a train doesn't change route again for this long, 0 to 600 seconds.")},
 			{TEXT("LookaheadMetres"), &FATSettings::LookaheadMetres, 0.f, 2000.f, LOCTEXT("Lookahead", "Lookahead (m)"),
 				LOCTEXT("LookaheadTip", "Track a train is given past its braking distance and its own length, 0 to 2000 m. More lets trains run faster towards traffic; less keeps track free for others.")},
-			{TEXT("StopDistanceMetres"), &FATSettings::StopDistanceMetres, 1.f, 100.f, LOCTEXT("StopDistance", "Stop distance (m)"),
-				LOCTEXT("StopDistanceTip", "How far a waiting train stops short of track it hasn't been given, 1 to 100 m. Before a switch it keeps the switch's fouling zone plus this.")},
 			{TEXT("SwitchClearanceMetres"), &FATSettings::SwitchClearanceMetres, 1.f, 10.f, LOCTEXT("SwitchClearance", "Track clearance (m)"),
 				LOCTEXT("SwitchClearanceTip", "How close, 1 to 10 m, the centre lines of two tracks may come before trains on them count as in each other's way. A switch's branches block each other only until they are this far apart, and where two tracks cross only the stretch where they come this close counts. Smaller lets trains slip past each other closer to switches (they may clip); larger keeps them further apart.")},
-			{TEXT("NormalBrakingPercent"), &FATSettings::NormalBrakingPercent, 30.f, 100.f, LOCTEXT("NormalBraking", "Normal braking (%)"),
-				LOCTEXT("NormalBrakingTip", "How hard trains brake for normal stops, 30 to 100% of the braking they plan with. Higher stops later and gets there sooner; lower is gentler and leaves room for error.")},
 			{TEXT("DefaultStaySeconds"), &FATSettings::DefaultStaySeconds, 0.f, 600.f, LOCTEXT("DefaultStay", "Station stay estimate (seconds)"),
 				LOCTEXT("DefaultStayTip", "How long a train is expected to stay at a stop set to fully load or unload, 0 to 600 seconds, until it has been seen there; after that its own last stay there counts. Stops that load or unload once take the freight platforms' fixed time, or the stop's set duration when there's no cargo to move.")},
+			{TEXT("GhostAfterSeconds"), &FATSettings::GhostAfterSeconds, 10.f, 600.f, LOCTEXT("GhostAfter", "Pass through a deadlock after (seconds)"),
+				LOCTEXT("GhostAfterTip", "How long trains stay deadlocked, 10 to 600 seconds, before one of them passes through the others (when that's on).")},
 			{TEXT("RouteSearchSeconds"), &FATSettings::RouteSearchSeconds, 1.f, 60.f, LOCTEXT("RouteSearch", "Route search interval (seconds)"),
 				LOCTEXT("RouteSearchTip", "How often each train looks for a faster route, 1 to 60 seconds. Shorter finds better routes sooner; longer costs less planning time on big networks.")},
 			{TEXT("RouteSearchLateSeconds"), &FATSettings::RouteSearchLateSeconds, 1.f, 300.f, LOCTEXT("RouteSearchLate", "Route search when late (seconds)"),
@@ -163,9 +157,9 @@ UATConfig::UATConfig()
 	AddBool(PhaseThroughKey, TEXT("PhaseThrough"), LOCTEXT("PhaseThrough", "Trains pass through each other"),
 		LOCTEXT("PhaseThroughTip", "While traffic control is on, trains that touch pass through each other instead of crashing and derailing, so a misjudged gap only looks like a clip."),
 		Defaults.bPhaseThrough);
-	AddBool(AggressiveKey, TEXT("AggressiveTiming"), LOCTEXT("Aggressive", "Aggressive timing"),
-		LOCTEXT("AggressiveTip", "Tighter margins: trains plan braking closer to what they really manage. Best with trains passing through each other. Off is more cautious."),
-		Defaults.bAggressive);
+	AddBool(GhostDeadlocksKey, TEXT("GhostDeadlocks"), LOCTEXT("GhostDeadlocks", "Clear deadlocks by passing through (beta)"),
+		LOCTEXT("GhostDeadlocksTip", "A safeguard while Auto Trains is in beta: when trains have been stuck waiting for each other in a circle for the set time, one of them drives on through the others until it is clear of the jam. Each case is written to the log and to FactoryGame/Saved/AutoTrains/faults.log so it can be reported."),
+		Defaults.bGhostDeadlocks);
 	AddBool(HillHelpKey, TEXT("HillHelp"), LOCTEXT("HillHelp", "Help stalled trains up hills"),
 		LOCTEXT("HillHelpTip", "A train that has slowed down on a climb too steep for its locomotives to get going again gets extra traction, up to the set limit, until it is moving and the slope under it is one it can manage. Trains are planned not to wait on such climbs; this is for when one has to anyway."),
 		Defaults.bHillHelp);
@@ -393,7 +387,7 @@ bool UATConfig::Read(const UObject* WorldContext, FATSettings& OutSettings)
 	OutSettings.bTrafficControl = ReadBool(Root, TrafficControlKey, Defaults.bTrafficControl);
 	OutSettings.bRerouting = ReadBool(Root, ReroutingKey, Defaults.bRerouting);
 	OutSettings.bPhaseThrough = ReadBool(Root, PhaseThroughKey, Defaults.bPhaseThrough);
-	OutSettings.bAggressive = ReadBool(Root, AggressiveKey, Defaults.bAggressive);
+	OutSettings.bGhostDeadlocks = ReadBool(Root, GhostDeadlocksKey, Defaults.bGhostDeadlocks);
 	OutSettings.bHillHelp = ReadBool(Root, HillHelpKey, Defaults.bHillHelp);
 	OutSettings.bDetailedLog = ReadBool(Root, DetailedLogKey, Defaults.bDetailedLog);
 	for (const FNumberSetting& Setting : GetNumberSettings())

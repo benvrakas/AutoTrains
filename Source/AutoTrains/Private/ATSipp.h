@@ -221,6 +221,8 @@ struct FATSippResult
 	int32 BlockedAt = INDEX_NONE;
 	// Whether BlockedBy's booking counted only because that train plans first.
 	bool bBlockedByRank = false;
+	// Failed with no booking named and the search stopped at its state limit: a planner fault to report.
+	bool bOutOfRoom = false;
 	// A train booked first on a resource this one can't stop short of any more, and that resource.
 	int32 CommittedWith = INDEX_NONE;
 	int32 CommittedAt = INDEX_NONE;

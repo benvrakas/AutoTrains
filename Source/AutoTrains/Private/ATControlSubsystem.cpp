@@ -113,7 +113,6 @@ void AATControlSubsystem::AfterTickAtc(AFGTrain* Train, float DeltaSeconds)
 	if (AATTrafficSubsystem* Traffic = AATTrafficSubsystem::Get(this))
 	{
 		Traffic->ApplyAuthority(Train, DeltaSeconds);
-		Traffic->ApplySpeedSettings(Train, DeltaSeconds);
 	}
 	State.FinalTargetSpeed = Atc.TargetSpeed;
 

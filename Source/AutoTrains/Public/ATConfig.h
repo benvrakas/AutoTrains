@@ -11,7 +11,9 @@ struct FATSettings
 	bool bTrafficControl = true;
 	bool bRerouting = true;
 	bool bPhaseThrough = true;
-	bool bAggressive = true;
+	// Trains deadlocked for GhostAfterSeconds pass through each other to clear the jam (a beta safeguard).
+	bool bGhostDeadlocks = true;
+	float GhostAfterSeconds = 60.f;
 	// A train too slow to climb the slope under it gets extra traction, up to HillHelpMax times its own, until it can.
 	bool bHillHelp = true;
 	float HillHelpMax = 4.f;
@@ -21,10 +23,6 @@ struct FATSettings
 	bool bDetailedLog = false;
 	// Time kept between two trains' bookings of the same track or switch. [s]
 	float SafetyMargin = 0.f;
-	// Top speed of every self-driving train, 0 for each train's own. [km/h]
-	float TopSpeedKmh = 0.f;
-	// Multiplier on how fast self-driving trains gain speed.
-	float Acceleration = 1.f;
 	// Rerouting: a new route must save at least this much time and this share of the trip, and a train keeps a new
 	// route this long. [s] [%] [s]
 	float RerouteMinGainSeconds = 30.f;
@@ -32,13 +30,9 @@ struct FATSettings
 	float RerouteHoldSeconds = 60.f;
 	// Track a train is granted past its braking distance and its length. [m]
 	float LookaheadMetres = 100.f;
-	// How far a train stops short of the end of its granted track; before a switch, its fouling zone plus this. [m]
-	float StopDistanceMetres = 10.f;
 	// How close the centre lines of two tracks may come before trains on them would touch: a switch's branches foul it
 	// until they are this far apart, and crossing tracks conflict only where they come this close. [m]
 	float SwitchClearanceMetres = 3.f;
-	// Share of its planned braking a train's normal stops use. [%]
-	float NormalBrakingPercent = 85.f;
 	// Stay assumed at a fully load or unload stop until one there has been measured. [s]
 	float DefaultStaySeconds = 40.f;
 	// How often trains are read, planned and given track. [s]
@@ -70,7 +64,7 @@ public:
 	static const FString TrafficControlKey;
 	static const FString ReroutingKey;
 	static const FString PhaseThroughKey;
-	static const FString AggressiveKey;
+	static const FString GhostDeadlocksKey;
 	static const FString HillHelpKey;
 	static const FString DetailedLogKey;
 

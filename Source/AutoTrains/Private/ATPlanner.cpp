@@ -733,6 +733,21 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 		}
 	}
 	bool bBlocked = false;
+	// Passing through a deadlock: its way ahead whatever else is there.
+	if (State.GhostUntil >= 0.0)
+	{
+		for (int32 Index = 0; Index < State.Route.Num(); ++Index)
+		{
+			State.Claims.Add(State.Route[Index].Track);
+			if (State.Route[Index].EndDistance - State.FrontAhead >= Need)
+			{
+				break;
+			}
+		}
+		UpdateAuthority(State);
+		UpdateFollowLeaders(State);
+		return;
+	}
 	// The plan waits somewhere ahead and doesn't move off right away.
 	const bool bPlanWaits = State.PlanWaitAt >= 0.f && State.PlanDepart > Now + PlanWaitGraceSeconds;
 	// A track climbing too steeply for the train to get going on again: granted all the way up or not at all.
@@ -1678,10 +1693,15 @@ void AATTrafficSubsystem::ApplyPlan(FATTrafficTrain& State, const FATSippCycle& 
 		// With no train in the way named: why the search ended.
 		const FATSippTrain& Input = Cycle.Trains[Slot];
 		const FString Why = !Input.bGoal ? FString(TEXT("its route runs past the network copy"))
-			: Result.States >= Cycle.MaxStates ? FString::Printf(TEXT("the search stopped at its limit of %d states"), Cycle.MaxStates)
+			: Result.bOutOfRoom ? FString::Printf(TEXT("the search ran out of room (%d states over its departures) with no train named"), Result.States)
 			: FString::Printf(TEXT("no move on from route step %d"), Result.StandStep);
 		Failure = Result.BlockedAt != INDEX_NONE ? FString::Printf(TEXT("no way on past %s for %s"), *Name(Result.BlockedAt), *NameOf(TrainOf(Result.BlockedBy)))
 			: FString::Printf(TEXT("no way to its goal: %s"), *Why);
+	}
+	if (Result.bFailed && !Cycle.Trains.IsValidIndex(Result.BlockedBy))
+	{
+		++mPlanUnnamed;
+		mPlanOutOfRoom += Result.bOutOfRoom ? 1 : 0;
 	}
 	// Failing for long: what holds it up, why it isn't moved up before that train, and who is booked next on what it
 	// stands on (Docs/Debugging.md, "1.13.3").
@@ -1726,8 +1746,9 @@ void AATTrafficSubsystem::ApplyPlan(FATTrafficTrain& State, const FATSippCycle& 
 			}
 			Places += FString::Printf(TEXT("%s%s: %s"), Places.IsEmpty() ? TEXT("") : TEXT("; "), *Name(Resource), Others.IsEmpty() ? TEXT("nobody else") : *Others);
 		}
-		UE_LOG(LogAutoTrains, Log, TEXT("planner: STUCKPLAN %s: its plans have failed for %.0f s (rank %d, %s, %d states, %d tail windows missed, stands at route step %d); held up by %s; what it stands on and who else is booked there: %s"),
-			*NameOf(Train), Now - State.PlanFailedSince, Input.Rank, Input.bStanding ? TEXT("standing") : TEXT("moving"), Result.States, Result.RejectedTail, Result.StandStep, *By,
+		UE_LOG(LogAutoTrains, Log, TEXT("planner: STUCKPLAN %s: its plans have failed for %.0f s (rank %d, %s, %d states%s, %d tail windows missed, stands at route step %d); held up by %s; what it stands on and who else is booked there: %s"),
+			*NameOf(Train), Now - State.PlanFailedSince, Input.Rank, Input.bStanding ? TEXT("standing") : TEXT("moving"), Result.States, Result.bOutOfRoom ? TEXT(", out of room") : TEXT(""),
+			Result.RejectedTail, Result.StandStep, *By,
 			Places.IsEmpty() ? TEXT("nothing") : *Places);
 	}
 	if (Failure != State.PlanFailure)
@@ -1745,7 +1766,8 @@ void AATTrafficSubsystem::ApplyPlan(FATTrafficTrain& State, const FATSippCycle& 
 	const FString Committed = Result.CommittedWith != INDEX_NONE ? FString::Printf(TEXT("%s at %s"), *NameOf(TrainOf(Result.CommittedWith)), *Name(Result.CommittedAt)) : FString();
 	if (Committed != State.PlanCommitted)
 	{
-		if (!Committed.IsEmpty())
+		// Trains passing through a deadlock run into others on purpose.
+		if (!Committed.IsEmpty() && State.GhostUntil < 0.0)
 		{
 			++mPlanCommitted;
 			// How each train stands to the place now: on it, holding it from its grant, its speed.
@@ -1940,10 +1962,14 @@ void AATTrafficSubsystem::UpdatePlannedTraffic(float DeltaSeconds)
 	for (const FATTrafficTrain* Checked : Driving)
 	{
 		const FATTrafficTrain& State = *Checked;
+		if (State.GhostUntil >= 0.0)
+		{
+			continue;
+		}
 		for (const TPair<const AFGTrain*, FATTrafficTrain*>& Pair : mStateOf)
 		{
 			const FATTrafficTrain& Other = *Pair.Value;
-			if (&Other == &State || State.FollowedTrains.Contains(Other.Train) || Other.FollowedTrains.Contains(State.Train))
+			if (&Other == &State || Other.GhostUntil >= 0.0 || State.FollowedTrains.Contains(Other.Train) || Other.FollowedTrains.Contains(State.Train))
 			{
 				continue;
 			}
@@ -2049,10 +2075,11 @@ void AATTrafficSubsystem::UpdatePlannedTraffic(float DeltaSeconds)
 		{
 			Bookings += Pair.Value.Num();
 		}
-		UE_LOG(LogAutoTrains, Log, TEXT("planner: last %.0f s: %d trains (%d driving), %d bookings now, %.2f ms per update; %d cycles, %.1f ms each on a worker, %d updates waited for one, %d trains moved up after a failed plan; %d plans, %d with a wait, %d failed, %d committed conflicts, %d reroutes, %d departures predicted"),
+		UE_LOG(LogAutoTrains, Log, TEXT("planner: last %.0f s: %d trains (%d driving), %d bookings now, %.2f ms per update; %d cycles, %.1f ms each on a worker, %d updates waited for one, %d trains moved up after a failed plan; %d plans, %d with a wait, %d failed, %d failed plans naming no train (%d out of room), %d committed conflicts, %d reroutes, %d departures predicted"),
 			PlanSummarySeconds, mStateOf.Num(), Driving.Num(), Bookings, mPlanUpdates > 0 ? mPlanSeconds * 1000.0 / mPlanUpdates : 0.0, mCycles,
-			mCycles > 0 ? mCycleMilliseconds / mCycles : 0.0, mCyclesLate, mPlanReorders, mPlans, mPlanWaits, mPlanFailures, mPlanCommitted, mPlanReroutes, mPlanPredictions);
-		mPlans = mPlanWaits = mPlanFailures = mPlanCommitted = mPlanReroutes = mPlanPredictions = mPlanUpdates = mCycles = mCyclesLate = mPlanReorders = 0;
+			mCycles > 0 ? mCycleMilliseconds / mCycles : 0.0, mCyclesLate, mPlanReorders, mPlans, mPlanWaits, mPlanFailures, mPlanUnnamed, mPlanOutOfRoom, mPlanCommitted,
+			mPlanReroutes, mPlanPredictions);
+		mPlans = mPlanWaits = mPlanFailures = mPlanUnnamed = mPlanOutOfRoom = mPlanCommitted = mPlanReroutes = mPlanPredictions = mPlanUpdates = mCycles = mCyclesLate = mPlanReorders = 0;
 		mCycleMilliseconds = 0.0;
 		mPlanSeconds = 0.0;
 		mPlanSummaryAt = Now + PlanSummarySeconds;
@@ -2123,7 +2150,8 @@ void AATTrafficSubsystem::LogWaitDump(const FATTrafficTrain& State, double Now) 
 
 void AATTrafficSubsystem::LogCrossingEntries(const FATTrafficTrain& State, const TSet<int32>& WasOn, double Now) const
 {
-	if (!State.bManaged)
+	// Trains passing through a deadlock run onto others' zones on purpose.
+	if (!State.bManaged || State.GhostUntil >= 0.0)
 	{
 		return;
 	}
@@ -2146,6 +2174,10 @@ FString AATTrafficSubsystem::DescribeCrossing(const FATTrafficTrain& State, int3
 	TArray<FString> Parts;
 	Parts.Add(State.OccupiedCrossings.Contains(Crossing) ? TEXT("stands on it") : TEXT("doesn't stand on it"));
 	Parts.Add(State.ClaimedCrossings.Contains(Crossing) ? TEXT("holds it") : TEXT("doesn't hold it"));
+	if (State.GhostUntil >= 0.0)
+	{
+		Parts.Add(TEXT("passing through a deadlock"));
+	}
 	for (int32 Index = 0; Index < State.Route.Num(); ++Index)
 	{
 		const FATRouteStep& Step = State.Route[Index];

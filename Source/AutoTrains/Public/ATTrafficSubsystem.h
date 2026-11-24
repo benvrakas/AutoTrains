@@ -42,21 +42,15 @@ struct FATVehicleSpot
 	float HalfLength = 0.f;
 };
 
-// A vehicle's own top speed and, for a locomotive, its traction curve, maximum tractive effort and power draw, kept
-// while the acceleration and top speed settings change them.
+// A locomotive's own traction curve, maximum tractive effort and power draw, kept while hill help scales them.
 struct FATVehicleBase
 {
 	FRichCurve Traction;
 	TWeakObjectPtr<UCurveFloat> TractionAsset;
 	float MaxTractiveEffort = 0.f;
 	FFloatInterval PowerConsumption;
-	// Top speed the game allows the vehicle, and the speed at which its traction runs out. [km/h]
-	float MaxVelocity = 0.f;
-	float TractionTop = 0.f;
-	// Traction force scale, traction speed scale, and the top speed set. [km/h]
+	// Traction force scale set.
 	float Scale = 1.f;
-	float SpeedScale = 1.f;
-	float MaxVelocitySet = 0.f;
 };
 
 // One track on a train's route, from the track its front is on to its goal.
@@ -283,6 +277,9 @@ struct FATTrafficTrain
 	TMap<int32, int32> CrossingIndexOf;
 	// In a cycle of trains waiting for each other.
 	bool bDeadlocked = false;
+	// Passing through a deadlock: until when at most (world seconds, -1 if not) and how far it still drives so. [cm]
+	double GhostUntil = -1.0;
+	float GhostLeft = 0.f;
 	// The track or switch the train waits at.
 	const AFGBuildableRailroadTrack* BlockedAtTrack = nullptr;
 	int32 BlockedAtJoint = INDEX_NONE;
@@ -325,9 +322,6 @@ public:
 
 	// Called after the game's AFGTrain::TickAtc for managed trains; caps the target speed to the train's authority.
 	void ApplyAuthority(AFGTrain* Train, float DeltaSeconds);
-
-	// Called after ApplyAuthority: applies the top speed setting to a self-driving train.
-	void ApplySpeedSettings(AFGTrain* Train, float DeltaSeconds);
 
 	// For other mods, by reflection (FindFunction and ProcessEvent), on the server's game thread.
 
@@ -434,6 +428,8 @@ private:
 	void UpdateAuthority(FATTrafficTrain& State) const;
 	void RefreshClaimedJoints(FATTrafficTrain& State) const;
 	void LogDeadlocks();
+	// Lets one train of a deadlock that lasted Seconds pass through the others, and reports it as a fault.
+	void GhostThrough(const TArray<const FATTrafficTrain*>& Chain, double Seconds);
 	// Whether the train it waits for stands on or holds the place it waits at (true if either is unknown).
 	bool IsWayTaken(const FATTrafficTrain& State) const;
 	// Logs what a long-waiting train waits for: its booking and every booking at that resource, with their trains.
@@ -552,13 +548,11 @@ private:
 	// Acceleration estimate from the consist's tractive effort and mass, times Share. [cm/s^2]
 	static float GetAcceleration(const FATTrafficTrain& State, float Share);
 
-	// Scales the traction force and power draw of every locomotive of Train by Scale and, for a TopSpeed above the
-	// speed at which a locomotive's traction runs out, stretches its traction curve to TopSpeed, with the power draw
-	// scaled the same, and lets every vehicle run that fast (Scale 1 and TopSpeed 0 give them back their own); then
-	// has the train recalculate its consist. [km/h]
-	void ApplyLocomotivePower(AFGTrain* Train, float Scale, float TopSpeed);
-	static void SetVehicleScale(AFGRailroadVehicle& Vehicle, FATVehicleBase& Base, float Scale, float SpeedScale, float MaxVelocity);
-	// Gives every changed vehicle its own traction, power and top speed back.
+	// Scales the traction force and power draw of every locomotive of Train by Scale (1 gives them back their own); then
+	// has the train recalculate its consist.
+	void ApplyLocomotivePower(AFGTrain* Train, float Scale);
+	static void SetVehicleScale(AFGRailroadVehicle& Vehicle, FATVehicleBase& Base, float Scale);
+	// Gives every changed locomotive its own traction and power back.
 	void RestoreLocomotivePower();
 
 	// Space-time planner (ATPlanner.cpp). A resource is a track (conflicting with the tracks crossing it) or a switch
@@ -729,6 +723,9 @@ private:
 	int32 mPlans = 0;
 	int32 mPlanWaits = 0;
 	int32 mPlanFailures = 0;
+	// Failed plans that named no train, and those of them whose search stopped at the state limit.
+	int32 mPlanUnnamed = 0;
+	int32 mPlanOutOfRoom = 0;
 	int32 mPlanCommitted = 0;
 	int32 mPlanReroutes = 0;
 	int32 mPlanPredictions = 0;
@@ -748,7 +745,7 @@ private:
 	// Pairs of tracks the game counts as overlapping that were logged as not crossing.
 	TSet<FString> mLoggedClearPairs;
 
-	// Vehicles the acceleration and top speed settings have changed.
+	// Locomotives hill help has changed.
 	TMap<TWeakObjectPtr<AFGRailroadVehicle>, FATVehicleBase> mVehicleBase;
 
 	bool mEnabled = false;

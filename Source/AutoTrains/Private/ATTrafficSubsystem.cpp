@@ -1438,8 +1438,6 @@ float AATTrafficSubsystem::GetGapToVehicles(const AFGTrain* Train, const FATTraf
 	return -1.f;
 }
 
-}
-
 bool AATTrafficSubsystem::IsWayTaken(const FATTrafficTrain& State) const
 {
 	const FATTrafficTrain* Blocker = mTrains.Find(State.BlockedBy);

@@ -403,10 +403,8 @@ public:
 private:
 	// Applies the Mods menu settings; a changed switch overrides what /at set for this session.
 	void ApplySettings();
-	// From the settings: how far trains stop short of track they haven't been given [cm], and the share of their planned
-	// braking normal stops use.
-	float GetStopDistance() const { return mSettings.StopDistanceMetres * 100.f; }
-	float GetNormalBrakingShare() const { return mSettings.NormalBrakingPercent / 100.f; }
+	// How far trains stop short of track they haven't been given; before a switch, its fouling zone plus this. [cm]
+	static float GetStopDistance() { return 1000.f; }
 	void UpdateTraffic(float DeltaSeconds);
 	void ReadTrain(FATTrafficTrain& State, AFGTrain* Train) const;
 	void ReleasePassedClaims(FATTrafficTrain& State) const;

@@ -224,13 +224,17 @@ namespace
 		}
 
 		// Plans the train along Route (bLastIsGoal: its last step is the goal). With no way there it stands for good: where it
-		// stands if it stands clear of every switch and crossing, else at its furthest stop there (Docs/Debugging.md, "1.8.0").
+		// stands if it stands clear of every switch and crossing, else at its furthest stop clear of them on which no train
+		// planned before it is booked later, else at its furthest stop there (Docs/Debugging.md, "1.8.0", "1.11.0").
 		void Plan(const TArray<int32>& InRoute, bool bLastIsGoal, FATSippResult& Out)
 		{
 			const int32 Final = SearchLeavingLater(InRoute, false, bLastIsGoal);
 			const int32 Stand = Final != INDEX_NONE ? Final : StandsClear() ? 0
-				: FurthestClear != INDEX_NONE ? FurthestClear : FurthestStopped != INDEX_NONE ? FurthestStopped : FurthestAny;
+				: FurthestFree != INDEX_NONE ? FurthestFree : FurthestClear != INDEX_NONE ? FurthestClear
+				: FurthestStopped != INDEX_NONE ? FurthestStopped : FurthestAny;
 			Build(Stand, Final != INDEX_NONE, Out);
+			Out.StandKind = Final != INDEX_NONE ? 0 : Stand == 0 && StandsClear() ? 1 : Stand == FurthestFree ? 2 : Stand == FurthestClear ? 3
+				: Stand == FurthestStopped ? 4 : 5;
 			Out.States = States.Num();
 			Out.RejectedMotion = RejectedMotion;
 			Out.RejectedTail = RejectedTail;
@@ -314,6 +318,7 @@ namespace
 			States.Add(Start);
 			FurthestStopped = Train.bStanding ? 0 : INDEX_NONE;
 			FurthestClear = FurthestStopped;
+			FurthestFree = INDEX_NONE;
 			FurthestAny = 0;
 			if (InRoute.Num() == 0)
 			{
@@ -364,8 +369,9 @@ namespace
 			return INDEX_NONE;
 		}
 
-		// Keeps the furthest stop reached, the furthest with the body clear of every switch and crossing, and the furthest
-		// state of any kind, for a plan that can't reach the goal.
+		// Keeps the furthest stop reached, the furthest with the body clear of every switch and crossing, the furthest of
+		// those where nothing under the body is booked later by a train planned before it (it may stand there for good),
+		// and the furthest state of any kind, for a plan that can't reach the goal.
 		void Note(int32 Index)
 		{
 			const FState& State = States[Index];
@@ -374,13 +380,22 @@ namespace
 			{
 				FurthestStopped = Index;
 			}
-			if (State.bStopped && Better(FurthestClear))
+			if (State.bStopped && (Better(FurthestClear) || Better(FurthestFree)))
 			{
 				bool bOnSwitch = false;
-				ForEachOpen(Index, State.Pos, [&](const FOpenResource& Open) { bOnSwitch = bOnSwitch || Open.Resource >= Graph.Length.Num(); });
-				if (!bOnSwitch)
+				bool bBookedLater = false;
+				ForEachOpen(Index, State.Pos, [&](const FOpenResource& Open)
+				{
+					bOnSwitch = bOnSwitch || Open.Resource >= Graph.Length.Num();
+					bBookedLater = bBookedLater || !IsNever(Open.Gap.ClearHi);
+				});
+				if (!bOnSwitch && Better(FurthestClear))
 				{
 					FurthestClear = Index;
+				}
+				if (!bOnSwitch && !bBookedLater && Better(FurthestFree))
+				{
+					FurthestFree = Index;
 				}
 			}
 			if (Better(FurthestAny))
@@ -1520,6 +1535,7 @@ namespace
 		TSet<int32> ReachedTracks;
 		int32 FurthestStopped = INDEX_NONE;
 		int32 FurthestClear = INDEX_NONE;
+		int32 FurthestFree = INDEX_NONE;
 		int32 FurthestAny = 0;
 		// Moves left out because the train can't reach the speed, its tail can't keep to a window, the stay at the goal
 		// doesn't fit, or it would stall on a climb, for the log.

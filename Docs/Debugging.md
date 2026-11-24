@@ -1188,6 +1188,25 @@ About 35 plans failed per minute in normal running.
 Watch on the next runs: `planner: ... is planned before`, `trains moved up after a failed plan` in the summary, the
 failed count, DEADLOCK and `passed through` lines, waits over 300 s in WAIT dumps.
 
+## 1.11.0: a failed plan stands only where no train planned before it is booked later
+
+Test server pairs C, E and F (as-is halves, 2026-11-24): each ended in a two-train deadlock at Red Jungle Encased Uranium
+Cell In 1. Pair F, 10:54 UTC: "Copper Ingot" docked there at 10:54:16 with a next leg through switch 640, predicted and
+booked from its departure on ("booked first on switch 640 ... clear in 28 s"). "Sulfur, Silica", bound for the same
+station, stood 208 m before that switch. Its plans failed ("no way to its goal: no move on from route step 1..3"), and a
+failed plan stood at `FurthestClear`: the furthest stop clear of every switch and crossing, no matter whether a train
+planned before it needed that place later. So it drove up 170 m to the end of track 2145909247, onto the docked train's
+way out, and booked that from now to never. "Copper Ingot" then had "no slot" on track 2147008015 while "Sulfur, Silica"
+stood on 2145911014; neither moved again.
+
+A failed plan's search state ignores the end of its window (`FGap::ClearHi`, the next booking in scope): the window
+says how long the train may stay there, but a failed plan stays for good. `Note` now also keeps `FurthestFree`, the
+furthest stop clear of switches and crossings where every resource under the body has an open-ended window (no train
+planned before it, nor a docked train's predicted leg, nor a committed or locked booking is there later). `Plan` stands
+there first, then at `FurthestClear`, `FurthestStopped` and `FurthestAny` as before. The `no way` line says which:
+"it stands at its furthest stop no train planned before it needs later", "... which a train planned before it needs
+later" (`FurthestClear`, a place that may still deadlock) and so on (`FATSippResult::StandKind`).
+
 ## 1.10.0: the track a moving train can't stop short of is granted without a plan slot
 
 Test server pair D (ST 0.40.0 + AT 1.9.0, 2026-11-24 08:46 UTC, emptied half): 7 s after the map loaded, SmartTrains

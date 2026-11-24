@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.11.0
+
+- **A train that has to wait no longer waits in another train's way out.** When a train couldn't get all the way into
+  its station yet (another train was docked there), Auto Trains let it drive up as far as it could and wait there.
+  That spot could be the track the docked train leaves by, so neither train could ever move again. On the test server
+  this stopped two trains outside the same station in three runs in a row. Now a waiting train drives only as far as
+  the last spot no other train is planned to pass through later.
+
 ## 1.10.0
 
 - **A train whose route changes at speed brakes like a train.** When another mod or a player gave a moving train a new

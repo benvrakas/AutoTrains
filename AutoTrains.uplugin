@@ -1,7 +1,7 @@
 {
 	"FileVersion": 3,
 	"Version": 1,
-	"VersionName": "1.10.0",
+	"VersionName": "1.11.0",
 	"SemVersion": "1.10.0",
 	"GameVersion": ">=520140",
 	"FriendlyName": "Auto Trains",

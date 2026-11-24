@@ -214,6 +214,10 @@ struct FATSippResult
 	// BlockedBy's booking on BlockedAt (INDEX_NONE if unknown).
 	bool bFailed = false;
 	int32 StandStep = -1;
+	// Where a failed plan stands: 1 where it is (clear of every switch and crossing), 2 its furthest stop so clear on
+	// which no train planned before it is booked later, 3 its furthest stop so clear, 4 its furthest stop, 5 its furthest
+	// state; 0 for a plan that reaches its goal.
+	int32 StandKind = 0;
 	int32 BlockedBy = INDEX_NONE;
 	int32 BlockedAt = INDEX_NONE;
 	// Whether BlockedBy's booking counted only because that train plans first.

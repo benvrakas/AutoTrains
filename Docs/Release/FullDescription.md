@@ -111,7 +111,10 @@ doesn't cost frame time.
 
 - **Fastest route.** The search covers the whole network, so a train that would wait a long time on its usual route
   takes another one, even a longer one, when that gets it there clearly sooner. Rerouting is conservative: a new route
-  must save a set time and share of the trip (settings below), and it's kept for a while.
+  must save a set time (setting below) and a fifth of the trip, and it's kept for at least a minute.
+- **A plan or a reason.** A train that stands only sets off once it can drive all the way to its stop without
+  stopping again; it tries one departure after another, each later than what held up the last. When none works, it
+  names the train whose booking stopped it, and that train lets it go first from then on.
 - **Timetables known ahead.** A docked train's departure is booked ahead, so no train queues in the way another needs
   to leave. A train stopping at a dead-end station holds the track back to the last switch until it has backed out,
   so push-pull trains never meet head-on on single track. A stop set to load or unload once takes the freight platforms' fixed transfer time when there is cargo to
@@ -148,28 +151,16 @@ replanning.
 | **Traffic control** | On | Auto Trains drives every self-driving train. Off gives the game's signals back. |
 | **Congestion rerouting** | On | Trains take another route when it gets them there sooner than waiting on theirs. |
 | **Trains pass through each other** | On | While traffic control is on, trains that touch pass through each other instead of crashing. A misjudged gap then only looks like a clip. |
-| **Aggressive timing** | On | Tighter margins: trains plan braking closer to what they really manage. Off is more cautious. |
+| **Clear deadlocks by passing through (beta)** | On | A safeguard while the mod is in beta: when trains have waited for each other in a circle for the set time, one of them drives on through the others until it is clear of the jam. Each case is written to the log and to `faults.log` so it can be reported. |
+| **Pass through a deadlock after (seconds)** | 60 | How long trains stay deadlocked, 10 to 600 s, before one passes through the others. |
 | **Safety margin (seconds)** | 0 | Time, 0 to 10 s, kept between two trains using the same track or switch. 0 lets a train in as soon as the one before it has cleared; raise it if trains clip each other. |
-| **Top speed (km/h)** | 0 | Top speed of every self-driving train, up to 500 km/h. 0 keeps each train's own. Above the speed at which a locomotive's traction runs out (about 120 km/h on flat track), its traction is stretched up to the setting and it draws that much more power. |
-| **Acceleration (x)** | 1 | Traction of self-driving trains' locomotives, 0.25 to 5 times their own: they accelerate that much faster and draw that much more power from the grid. Braking isn't changed. |
 | **Reroute: minimum time saved (seconds)** | 30 | A train only takes another route if it gets there at least this much sooner. Higher keeps trains on their usual route. |
-| **Reroute: minimum share saved (%)** | 20 | ...and if it saves at least this share of the trip's time. |
-| **Reroute: keep a new route for (seconds)** | 60 | After taking another route, a train doesn't change again for this long. |
 | **Lookahead (m)** | 100 | Track a train is given past its braking distance. More lets trains run faster towards traffic; less keeps track free for others. |
-| **Stop distance (m)** | 10 | How far a waiting train stops short of track it hasn't been given (before a switch, the switch's fouling zone plus this). |
 | **Track clearance (m)** | 3 | How close the centre lines of two tracks may come before trains on them count as in each other's way. A switch's branches block each other only until they are this far apart, and where two tracks cross only the stretch where they come this close counts, so a train can wait right before a crossing. Smaller lets trains slip past each other closer to switches (they may clip); larger keeps them further apart. |
-| **Normal braking (%)** | 85 | How hard trains brake for normal stops, as a share of the braking they plan with. |
 | **Station stay estimate (seconds)** | 40 | How long a train is expected to stay at a stop set to fully load or unload, until it has been seen there; after that its own last stay there counts. Stops that load or unload once take the freight platforms' fixed time, or the stop's set duration when there's no cargo to move. |
-| **Help stalled trains up hills** | On | A train that has slowed down on a climb too steep for its locomotives to get going again gets extra traction until it is over the steep part. Trains are planned not to wait on such climbs; this is for when one has to anyway. A train that stands while it is told to go gets the same help on any slope. |
-| **Hill help: most extra traction (x)** | 4 | The most traction a stalled train gets on a climb, 1 to 10 times its own. Raise it if heavy trains still stall on very steep ramps. |
-| **Hill help: stall time (seconds)** | 4 | A train that stands this long while it is told to go gets more traction, and more again each time this passes, 1 to 60 seconds. |
+| **Help stalled trains up hills** | On | A train that has slowed down on a climb too steep for its locomotives to get going again gets extra traction, up to four times its own, until it is over the steep part. Trains are planned not to wait on such climbs; this is for when one has to anyway. A train that stands while it is told to go gets the same help on any slope. |
 | **Route search interval (seconds)** | 5 | How often each train looks for a faster route. Shorter finds better routes sooner; longer costs less planning time on big networks. |
-| **Route search when late (seconds)** | 15 | A train looks for another route at once when its planned arrival has got this much later since its last search. |
-| **Route search while stuck (seconds)** | 1 | How often a train whose plan finds no way looks for another route. |
-| **Track refresh (seconds)** | 30 | How often the whole track network is read again. Track built or removed is usually picked up within 2 seconds anyway. |
-| **Deadlock: count trains waiting longer than (seconds)** | 20 | How long a train has to wait before it counts when looking for deadlocks. |
 | **Plan search limit (states)** | 200000 | Most steps one train's plan may search. Lower uses less CPU and memory on huge networks; long or busy routes may then find no way more often. |
-| **Slope lookahead (m)** | 300 | How far ahead of a train the slope is averaged for its braking. |
 | **Update interval (seconds)** | 0.25 | How often trains are planned and given track. Shorter reacts faster but costs more on big networks. |
 | **Detailed log** | Off | Writes much more to FactoryGame.log: what each train waits for, its station stays and next legs, how it speeds up and brakes, and every plan that finds no way. Also records every train's speed and control 5 times a second to a CSV file in `%LOCALAPPDATA%\FactoryGame\Saved\AutoTrains`. Turn it on to report a problem. |
 
@@ -236,7 +227,7 @@ Type them in the game chat. A `<train>` is its number from `/at list`, or part o
 | `/at reroute on` / `off` | Congestion rerouting on or off. Same as the Congestion rerouting setting. |
 | `/at autopilot <train> on` / `off` | Self-driving for one train. |
 | `/at autopilot all on` / `off` | Self-driving for every train. |
-| `/at set <setting> <value>` | Changes a setting, e.g. `/at set DetailedLog on` or `/at set DeadlockWaitSeconds 30`. The key's case doesn't matter, and a unique part of a key or name works. It is saved to the server's `Configs/AutoTrains.cfg`. |
+| `/at set <setting> <value>` | Changes a setting, e.g. `/at set DetailedLog on` or `/at set GhostAfterSeconds 120`. The key's case doesn't matter, and a unique part of a key or name works. It is saved to the server's `Configs/AutoTrains.cfg`. |
 
 **One-off jobs** (host or server admin)
 

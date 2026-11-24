@@ -1188,6 +1188,50 @@ About 35 plans failed per minute in normal running.
 Watch on the next runs: `planner: ... is planned before`, `trains moved up after a failed plan` in the summary, the
 failed count, DEADLOCK and `passed through` lines, waits over 300 s in WAIT dumps.
 
+## 1.14.0: core trim; standing-train search names its blocker; deadlock pass-through back as a safeguard
+
+Pair N (ST 0.43.0 + AT 1.13.3): STUCKPLAN reports were almost all standing trains, mostly "held up by no train named";
+in the emptied half 298 of 353 of those were searches stopped at the 200000-state limit (`PlanSearchLimit`) before
+any departure was found. The search was plain Dijkstra over (step, speed band, window) states by arrival time;
+since 1.9.0 a standing train may wait only at its start, but the search still branched over every speed band at
+every decision point of the whole route, and a failed search's blocker was that of the stand state (the start),
+which no move from the start had noted. With no blocker the priority adjustment (`bBlockedByRank`) never fired.
+
+Rules this keeps: every train has a plan or names the booking that stops it; a search that runs out of room with
+none named is a fault, counted and logged.
+
+`FPlanner` changes (ATSipp.cpp):
+- A* on the route: the queue key is arrival plus `TimeLeft` (front to the end of the route's last step at the train's
+  top speed `Top`, which bounds every move's peak, so the estimate never overstates and the first goal popped is still
+  the earliest arrival). Searches over the whole network (`bFree`, rerouting) keep the plain arrival.
+- `SearchLeavingLater` is the departure-time search: each pass searches from one departure floor (the start may still
+  take the next windows of the way on), and a failed pass's `LaterDepart` (the earliest later departure at which a move
+  that didn't fit would fit) is the next floor, up to `DepartPasses` (4). A standing train's pass gets a quarter of
+  the state limit (`StateBudget`), so every departure gets tried; a moving train's single pass gets all of it; a
+  route search over the whole network gets a quarter (`RouteSearchShare`).
+- The best attempt: after each failed pass, the furthest state (by route step) that noted a blocking booking. A plan
+  that finds no way reports that booking (`BlockedBy`, `BlockedAt`, `bBlockedByRank`), so priority adjustment can put
+  the train before the one in its way. With none named and the limit reached, `FATSippResult::bOutOfRoom`.
+- The `no way` line says "the search ran out of room (N states over its departures) with no train named"; STUCKPLAN
+  says "out of room"; the minute summary has "N failed plans naming no train (M out of room)".
+
+Deadlock pass-through (restored from 1.8.0, `GhostThrough`; memory: a beta safeguard, not a stopgap): on by default
+(`GhostDeadlocks`), after `GhostAfterSeconds` (60) of the same deadlock ring one train, the first whose way isn't
+taken by the train it waits for, drives on through the others (granted its way ahead whatever else is there, no
+follow limit, phase-through on) until it has driven its length plus 300 m or for 120 s. Each time a Warning
+`DEADLOCK PASSED THROUGH` lists every train of the ring with its track, wait, what it waits for and its plan's failure,
+also appended to `Saved/AutoTrains/faults.log`. Each firing is a bug to fix in the planning.
+
+Trimmed: the Top speed and Acceleration settings (they rescaled the locomotives' traction curve and top speed:
+`ApplyLocomotivePower` now only scales traction for hill help; `ApplySpeedSettings`, `GetTractionTop` and the speed
+stretch are gone); Aggressive timing (the brake shares are fixed at its default 0.95 / 0.8). These Mods menu numbers
+are now constants (`ATTuning` in ATTrafficSubsystem.h, or the accessors there): stop distance 10 m, normal braking 85 %,
+reroute minimum share 20 % and hold 60 s, route search when late 15 s and while stuck 1 s, track refresh 30 s,
+deadlock wait 20 s, slope lookahead 300 m, hill help most 4x and stall 4 s. Kept as settings: traffic control,
+rerouting and its minimum time saved, phase-through, deadlock pass-through and its time, hill help on/off, detailed
+log, safety margin, lookahead, track clearance, station stay estimate, route search interval, plan search limit and
+update interval. The functions SmartTrains calls (`External*`) are unchanged.
+
 ## 1.13.3: STUCKPLAN report
 
 Emptied-half standstills in pairs G, J and M (2026-11-24) start the same way: the unmanaged "Train" (Dune Desert

@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.14.0
+
+- **Trimmed to the core.** Auto Trains is now safe interval planning for many trains, made to fit how Satisfactory's
+  trains really move, and nothing else.
+- **A train standing in a station no longer waits there for good.** A standing train sets off only once it can drive
+  all the way to its stop without stopping again. On long routes through busy traffic its search used to run out of
+  room before it found such a departure, so it gave up without naming the train in its way. Nothing could then
+  resolve it, and it held up the trains behind it. Now the search heads for the goal first and tries one departure
+  after another, each later than what held up the last. When none works, it names the train whose booking stopped
+  its best try, and that train lets it go first.
+- **Back: clearing deadlocks by passing through (beta), on by default.** It is a safeguard while the mod is in beta:
+  trains that have waited for each other in a circle for a minute (setting) let one of them drive on through the
+  others. Each time, the trains, where they stand and what their plans said are written to the log and to
+  `faults.log`, so it can be reported and the cause fixed.
+- **Removed settings:** Top speed and Acceleration (they changed the trains' own power), and Aggressive timing (its
+  tighter braking is now always used). Stop distance (10 m), Normal braking (85%), Reroute minimum share (20%) and
+  keep time (60 s), Route search when late (15 s) and while stuck (1 s), Track refresh (30 s), Deadlock wait (20 s),
+  Slope lookahead (300 m), Hill help's most extra traction (4x) and stall time (4 s) are now fixed at those values.
+- **More logging:** the planner's minute summary counts failed plans that named no train, and those that ran out of
+  room.
+
 ## 1.13.3
 
 - **More logging:** a train that can't get a plan for over a minute is reported in detail every minute: what holds

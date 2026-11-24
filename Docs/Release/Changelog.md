@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.13.2
+
+- **Reverted: the turning-loop handling (1.13.0, 1.13.1).** The station it was made for turned out not to be a
+  closed turning loop, and no station on the test map was one, so it only cost planning time. Trains plan as in
+  1.12.1.
+
 ## 1.13.1
 
 - **More logging:** for each station trains head to, the log says whether it counts as a turning loop at the end of

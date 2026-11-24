@@ -1188,6 +1188,15 @@ About 35 plans failed per minute in normal running.
 Watch on the next runs: `planner: ... is planned before`, `trains moved up after a failed plan` in the summary, the
 failed count, DEADLOCK and `passed through` lines, waits over 300 s in WAIT dumps.
 
+## 1.13.2: 1.13.x reverted
+
+Pair L (ST 0.43.0 + AT 1.13.1): Red Jungle Encased Uranium Cell In 1 "isn't closed in (over 256 tracks without its
+route)", and no goal anywhere was found to be a balloon loop, so `FindStem` (a bounded search per driving train per
+cycle on the game thread) only cost time. Sources back to 1.12.1. The deadlocks at that station stopped with
+SmartTrains 0.43.0 (pairs K and L: none as is, against 7 of the 9 as-is runs before): park drives no longer dock and
+leave at once, and parked trains there are no longer moved out and back (several of those deadlocks involved a drive
+to park, e.g. pair H's "to Red Jungle Encased Uranium Cell Out 1"). Pairs K and L: as is 190 / 187, emptied 266 / 266.
+
 ## 1.13.1: why a goal is or isn't a balloon loop
 
 Pair K (ST 0.43.0 + AT 1.13.0, 2026-11-24): as is 190 car unloads, emptied 266, no deadlock and no wait >= 300 s in

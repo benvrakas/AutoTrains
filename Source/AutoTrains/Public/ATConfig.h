@@ -14,20 +14,14 @@ struct FATSettings
 	// Trains deadlocked for GhostAfterSeconds pass through each other to clear the jam (a beta safeguard).
 	bool bGhostDeadlocks = true;
 	float GhostAfterSeconds = 60.f;
-	// A train too slow to climb the slope under it gets extra traction, up to HillHelpMax times its own, until it can.
+	// A train too slow to climb the slope under it gets extra traction until it can (ATTuning::HillHelpMax).
 	bool bHillHelp = true;
-	float HillHelpMax = 4.f;
-	// A train told to go that stands this long, on any slope, gets more hill help, again each time this passes. [s]
-	float HillStallSeconds = 4.f;
 	// Writes every train's waits, departures, acceleration and braking to FactoryGame.log, and telemetry to a CSV file.
 	bool bDetailedLog = false;
 	// Time kept between two trains' bookings of the same track or switch. [s]
 	float SafetyMargin = 0.f;
-	// Rerouting: a new route must save at least this much time and this share of the trip, and a train keeps a new
-	// route this long. [s] [%] [s]
+	// Rerouting: a new route must save at least this much time. [s]
 	float RerouteMinGainSeconds = 30.f;
-	float RerouteMinGainPercent = 20.f;
-	float RerouteHoldSeconds = 60.f;
 	// Track a train is granted past its braking distance and its length. [m]
 	float LookaheadMetres = 100.f;
 	// How close the centre lines of two tracks may come before trains on them would touch: a switch's branches foul it
@@ -37,19 +31,10 @@ struct FATSettings
 	float DefaultStaySeconds = 40.f;
 	// How often trains are read, planned and given track. [s]
 	float UpdateIntervalSeconds = 0.25f;
-	// Route search: every train this often, at once when its planned arrival has got this much later since its last
-	// search, and this often while its plan finds no way. [s]
+	// Every train searches for a faster route this often. [s]
 	float RouteSearchSeconds = 5.f;
-	float RouteSearchLateSeconds = 15.f;
-	float RouteSearchStuckSeconds = 1.f;
-	// How often the track network is read again in full. [s]
-	float TrackRefreshSeconds = 30.f;
-	// How long a train waits before it counts for deadlock detection. [s]
-	float DeadlockWaitSeconds = 20.f;
 	// Most search states one plan may use.
 	float PlanSearchLimit = 200000.f;
-	// How far ahead a train's slope is averaged for its braking. [m]
-	float SlopeLookaheadMetres = 300.f;
 };
 
 // Auto Trains' mod configuration: switches and numbers shown in the Mods menu and Satisfactory Mod Manager.

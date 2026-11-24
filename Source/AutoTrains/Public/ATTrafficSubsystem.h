@@ -42,6 +42,29 @@ struct FATVehicleSpot
 	float HalfLength = 0.f;
 };
 
+// Fixed planning and control constants (once Mods menu settings).
+namespace ATTuning
+{
+	// A train searches for another route at once when its planned arrival has got this much later since its last search. [s]
+	constexpr float RouteSearchLateSeconds = 15.f;
+	// How often a train whose plan finds no way searches for another route. [s]
+	constexpr float RouteSearchStuckSeconds = 1.f;
+	// A train keeps a new route at least this long. [s]
+	constexpr float RerouteHoldSeconds = 60.f;
+	// A new route must save at least this share of the trip besides RerouteMinGainSeconds. [%]
+	constexpr float RerouteMinGainPercent = 20.f;
+	// How often the track network is read again in full. [s]
+	constexpr float TrackRefreshSeconds = 30.f;
+	// How far ahead a train's slope is averaged for its braking. [m]
+	constexpr float SlopeLookaheadMetres = 300.f;
+	// A train told to go that stands this long on a climb gets more hill help, again each time this passes. [s]
+	constexpr float HillStallSeconds = 4.f;
+	// Hill help gives a train at most this many times its own traction.
+	constexpr float HillHelpMax = 4.f;
+	// How long a train waits before it counts for deadlock and stall detection. [s]
+	constexpr float DeadlockWaitSeconds = 20.f;
+}
+
 // A locomotive's own traction curve, maximum tractive effort and power draw, kept while hill help scales them.
 struct FATVehicleBase
 {

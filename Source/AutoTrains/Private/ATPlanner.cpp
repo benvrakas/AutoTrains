@@ -1039,14 +1039,14 @@ bool AATTrafficSubsystem::IsSearchDue(FATTrafficTrain& State, float DeltaSeconds
 	State.RerouteTimer -= DeltaSeconds;
 	if (!State.PlanFailure.IsEmpty())
 	{
-		State.RerouteTimer = FMath::Min(State.RerouteTimer, mSettings.RouteSearchStuckSeconds);
+		State.RerouteTimer = FMath::Min(State.RerouteTimer, ATTuning::RouteSearchStuckSeconds);
 	}
-	const bool bWorse = State.SearchedArrival >= 0.0 && !IsOpen(State.SearchedArrival) && State.PlanArrival - State.SearchedArrival > mSettings.RouteSearchLateSeconds;
+	const bool bWorse = State.SearchedArrival >= 0.0 && !IsOpen(State.SearchedArrival) && State.PlanArrival - State.SearchedArrival > ATTuning::RouteSearchLateSeconds;
 	if ((State.RerouteTimer > 0.f && !bWorse) || State.RerouteCooldown > 0.f || State.Route.Num() < 3)
 	{
 		return false;
 	}
-	State.RerouteTimer = State.PlanFailure.IsEmpty() ? mSettings.RouteSearchSeconds : mSettings.RouteSearchStuckSeconds;
+	State.RerouteTimer = State.PlanFailure.IsEmpty() ? mSettings.RouteSearchSeconds : ATTuning::RouteSearchStuckSeconds;
 	State.SearchedArrival = State.PlanArrival;
 	return true;
 }
@@ -1093,7 +1093,7 @@ void AATTrafficSubsystem::FillSippTrain(const FATTrafficTrain& State, const FATS
 	if (State.FullTraction > 0.f)
 	{
 		Out.Climb = State.FullTraction / FMath::Max(State.Mass, 1.f);
-		Out.StartClimb = Out.Climb * (mSettings.bHillHelp ? mSettings.HillHelpMax : 1.f);
+		Out.StartClimb = Out.Climb * (mSettings.bHillHelp ? ATTuning::HillHelpMax : 1.f);
 		// Helped now, or on a climb too steep for its own traction: the hill help lasts until it is over the climb, so
 		// the whole plan counts on it.
 		if (mSettings.bHillHelp && (State.HillBoost > 1.f || ClimbGravity * State.Grade * State.Mass > State.FullTraction * HillStartShare))
@@ -1349,7 +1349,7 @@ void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds, bool bW
 			Out.Commit = GetRouteCommit(State);
 			Out.bSearch = !bDrive && IsSearchDue(State, DeltaSeconds) && Out.Commit < Out.Route.Num() - 2;
 			Out.MinGainSeconds = mSettings.RerouteMinGainSeconds;
-			Out.MinGainPercent = mSettings.RerouteMinGainPercent;
+			Out.MinGainPercent = ATTuning::RerouteMinGainPercent;
 			continue;
 		}
 		if (Turns[Slot].Kind == 3)
@@ -1863,7 +1863,7 @@ void AATTrafficSubsystem::ApplyReroute(FATTrafficTrain& State, const FATSippCycl
 	const bool bApplied = FATRouter::ApplyPath(Train, Path, Goal);
 	++State.Reroutes;
 	++mPlanReroutes;
-	State.RerouteCooldown = mSettings.RerouteHoldSeconds;
+	State.RerouteCooldown = ATTuning::RerouteHoldSeconds;
 	State.SearchedArrival = -1.0;
 	UE_LOG(LogAutoTrains, Log, TEXT("planner: %s rerouted after %s: %s -> %.0f s to its goal, %d -> %d tracks, applied %s (route search: %d states, %.2f ms on a worker)"),
 		*NameOf(Train), *ResourceName(State.Route[Commit].Track, INDEX_NONE), IsOpen(Result.OldArrival) ? TEXT("no way") : *FString::Printf(TEXT("%.0f s"), Result.OldArrival - Cycle.Now),
@@ -2683,7 +2683,7 @@ int32 AATTrafficSubsystem::ExternalGetTroubledTrains(TArray<AFGTrain*>& OutTrain
 		{
 			Add(TEXT("Deadlock"), State.WaitingSeconds);
 		}
-		else if (State.bManaged && State.UnnamedWaitSeconds >= mSettings.DeadlockWaitSeconds)
+		else if (State.bManaged && State.UnnamedWaitSeconds >= ATTuning::DeadlockWaitSeconds)
 		{
 			Add(TEXT("Stuck"), State.UnnamedWaitSeconds);
 		}

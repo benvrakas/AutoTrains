@@ -410,7 +410,7 @@ FString AATTrafficSubsystem::SetRerouteEnabled(bool bEnabled)
 void AATTrafficSubsystem::UpdateTraffic(float DeltaSeconds)
 {
 	const double Now = FPlatformTime::Seconds();
-	if (Now - mConflictsBuiltAt > mSettings.TrackRefreshSeconds || (mConflictsStale && Now - mConflictsBuiltAt > ConflictRebuildMinSeconds))
+	if (Now - mConflictsBuiltAt > ATTuning::TrackRefreshSeconds || (mConflictsStale && Now - mConflictsBuiltAt > ConflictRebuildMinSeconds))
 	{
 		RebuildConflicts();
 	}
@@ -742,7 +742,7 @@ void AATTrafficSubsystem::ReadTrain(FATTrafficTrain& State, AFGTrain* Train) con
 	{
 		const FATRouteStep& Step = State.Route[Index];
 		const float Ahead = Step.EndDistance - State.FrontAhead;
-		if (Ahead >= mSettings.SlopeLookaheadMetres * 100.f || Index == State.Route.Num() - 1)
+		if (Ahead >= ATTuning::SlopeLookaheadMetres * 100.f || Index == State.Route.Num() - 1)
 		{
 			if (Ahead > 0.f && Step.Exit)
 			{
@@ -905,7 +905,7 @@ void AATTrafficSubsystem::WatchLostPath(FATTrafficTrain& State, double Now) cons
 		return;
 	}
 	State.LostSince = State.LostSince < 0.0 ? Now : State.LostSince;
-	if (State.bLostReported || Now - State.LostSince < mSettings.DeadlockWaitSeconds)
+	if (State.bLostReported || Now - State.LostSince < ATTuning::DeadlockWaitSeconds)
 	{
 		return;
 	}
@@ -1494,7 +1494,7 @@ void AATTrafficSubsystem::LogDeadlocks()
 	for (const TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Pair : mTrains)
 	{
 		const FATTrafficTrain& Start = Pair.Value;
-		if (!Start.bManaged || Start.WaitingSeconds < mSettings.DeadlockWaitSeconds || InCycle.Contains(&Start))
+		if (!Start.bManaged || Start.WaitingSeconds < ATTuning::DeadlockWaitSeconds || InCycle.Contains(&Start))
 		{
 			continue;
 		}
@@ -1504,7 +1504,7 @@ void AATTrafficSubsystem::LogDeadlocks()
 		{
 			Chain.Add(Current);
 			Current = mTrains.Find(Current->BlockedBy);
-			if (Current && (!Current->bManaged || Current->WaitingSeconds < mSettings.DeadlockWaitSeconds))
+			if (Current && (!Current->bManaged || Current->WaitingSeconds < ATTuning::DeadlockWaitSeconds))
 			{
 				Current = nullptr;
 			}
@@ -1559,7 +1559,7 @@ void AATTrafficSubsystem::LogDeadlocks()
 	// train with no train to wait for all that time (STUCK), and a train waiting for one nobody drives, parked or driven
 	// by hand (BLOCKED). Each is logged when it first shows up, with the trains whose chains end at it; a stuck train
 	// looks for another way at once.
-	auto IsWaiting = [this](const FATTrafficTrain* State) { return State && State->bManaged && State->WaitingSeconds >= mSettings.DeadlockWaitSeconds; };
+	auto IsWaiting = [this](const FATTrafficTrain* State) { return State && State->bManaged && State->WaitingSeconds >= ATTuning::DeadlockWaitSeconds; };
 	auto IsUndriven = [](const FATTrafficTrain* State)
 	{
 		const AFGTrain* Train = State ? State->Train.Get() : nullptr;
@@ -1587,7 +1587,7 @@ void AATTrafficSubsystem::LogDeadlocks()
 			}
 			Root = Next;
 		}
-		const bool bStuck = Root->UnnamedWaitSeconds >= mSettings.DeadlockWaitSeconds;
+		const bool bStuck = Root->UnnamedWaitSeconds >= ATTuning::DeadlockWaitSeconds;
 		if (!bStuck && !IsUndriven(mTrains.Find(Root->BlockedBy)))
 		{
 			continue;
@@ -2193,8 +2193,8 @@ void AATTrafficSubsystem::UpdateHillHelp(FATTrafficTrain& State, double Now) con
 	}
 	// Help starts once it is slow and wants to go on, or stands though told to go on any slope; it is raised, never
 	// lowered, while it lasts.
-	const bool bStalled = Now - State.StandSince >= mSettings.HillStallSeconds;
-	const float Needed = FMath::Min(FMath::Max(Pull * HillHelpHeadroom / State.FullTraction, bStalled && !bBraking ? State.HillBoost * HillStallStep : 0.f), mSettings.HillHelpMax);
+	const bool bStalled = Now - State.StandSince >= ATTuning::HillStallSeconds;
+	const float Needed = FMath::Min(FMath::Max(Pull * HillHelpHeadroom / State.FullTraction, bStalled && !bBraking ? State.HillBoost * HillStallStep : 0.f), ATTuning::HillHelpMax);
 	if (State.HillBoost == 1.f && !bStalled && !(bWants && State.Speed < HillHelpSpeed && Pull > State.FullTraction * HillStallShare))
 	{
 		return;

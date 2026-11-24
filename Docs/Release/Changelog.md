@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.13.1
+
+- **More logging:** for each station trains head to, the log says whether it counts as a turning loop at the end of
+  a single track, and if not, why.
+
 ## 1.13.0
 
 - **Stations on a turning loop at the end of a single track.** Where trains reach a station over a single track, go

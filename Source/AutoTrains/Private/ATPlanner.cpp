@@ -552,12 +552,13 @@ void AATTrafficSubsystem::PredictDeparture(FATTrafficTrain& State, double Now)
 		bLead ? TEXT("its lead locomotive") : TEXT("another locomotive (the other way)"));
 }
 
-bool AATTrafficSubsystem::FindStem(const FATSippGraph& Graph, const TArray<int32>& Route, TSet<int32>& OutStem, float& OutLoop) const
+bool AATTrafficSubsystem::FindStem(const FATSippGraph& Graph, const TArray<int32>& Route, TSet<int32>& OutStem, float& OutLoop, FString& OutWhy) const
 {
 	OutStem.Reset();
 	OutLoop = 0.f;
 	if (Route.Num() < 2)
 	{
+		OutWhy = TEXT("route too short to tell");
 		return false;
 	}
 	// The route's tracks, and per track the route step whose track it is left backwards through (its connection the
@@ -592,6 +593,7 @@ bool AATTrafficSubsystem::FindStem(const FATSippGraph& Graph, const TArray<int32
 		}
 		if (++Expanded > MaxLoopTracks)
 		{
+			OutWhy = FString::Printf(TEXT("the way on past it isn't closed in (over %d tracks without its route)"), MaxLoopTracks);
 			return false;
 		}
 		if (Graph.OneWay[Item.Value])
@@ -627,6 +629,7 @@ bool AATTrafficSubsystem::FindStem(const FATSippGraph& Graph, const TArray<int32
 	}
 	if (Merge == INDEX_NONE)
 	{
+		OutWhy = FString::Printf(TEXT("the way on past it is closed in (%d tracks) but doesn't lead back onto its route the other way"), Expanded);
 		return false;
 	}
 	// The stem: from the step it rejoins back along the route up to the first switch it can turn off at backwards,
@@ -650,6 +653,8 @@ bool AATTrafficSubsystem::FindStem(const FATSippGraph& Graph, const TArray<int32
 		}
 	}
 	OutLoop = MergeAt;
+	OutWhy = FString::Printf(TEXT("a balloon loop: closed in (%d tracks), back onto its route %.0f m on, %d places of the stem held"), Expanded, MergeAt / 100.f,
+		OutStem.Num());
 	return true;
 }
 
@@ -1434,12 +1439,23 @@ void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds, bool bW
 			Out.GoalDwell = bDrive ? ATSippNever : GetExpectedStay(Train, State.GoalStation.Get(), GetStopRules(Train, TimeTable ? TimeTable->GetCurrentStop() : INDEX_NONE, State.GoalStation.Get(), Rules), -1);
 			Out.Commit = GetRouteCommit(State);
 			Out.bSearch = !bDrive && IsSearchDue(State, DeltaSeconds) && Out.Commit < Out.Route.Num() - 2;
-			if (!bDrive && Out.bGoal && FindStem(Graph, Out.Route, Out.Stem, Out.LoopOut) && State.StemGoal != Out.Route.Last())
+			FString StemWhy;
+			if (!bDrive && Out.bGoal && FindStem(Graph, Out.Route, Out.Stem, Out.LoopOut, StemWhy) && State.StemGoal != Out.Route.Last())
 			{
 				UE_LOG(LogAutoTrains, Verbose, TEXT("planner: %s drives to %s, whose only way out runs back over its way in: %d places of that stem held until it is back out (%.0f m around the loop)"),
 					*NameOf(Train), *StationName(State.GoalStation.Get()), Out.Stem.Num(), Out.LoopOut / 100.f);
 			}
 			State.StemGoal = Out.Stem.Num() > 0 ? Out.Route.Last() : INDEX_NONE;
+			// What the check found, once per goal station and finding (the first time a train heads there from afar).
+			if (!StemWhy.IsEmpty() && State.GoalStation.IsValid() && Out.Route.Num() > 20)
+			{
+				FString& Logged = mStemLogged.FindOrAdd(FObjectKey(State.GoalStation.Get()));
+				if (Logged != StemWhy)
+				{
+					Logged = StemWhy;
+					UE_LOG(LogAutoTrains, Log, TEXT("planner: %s, as %s heads there: %s"), *StationName(State.GoalStation.Get()), *NameOf(Train), *StemWhy);
+				}
+			}
 			Out.MinGainSeconds = mSettings.RerouteMinGainSeconds;
 			Out.MinGainPercent = mSettings.RerouteMinGainPercent;
 			continue;

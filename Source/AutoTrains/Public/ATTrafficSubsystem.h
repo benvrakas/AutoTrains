@@ -634,8 +634,8 @@ private:
 	void FillSippTrain(const FATTrafficTrain& State, const FATSippGraph& Graph, const TMap<const AFGTrain*, int32>& SlotOf, FATSippTrain& Out) const;
 	// For a route (connections of Graph) whose goal station's only way out runs back over the route: the resources of
 	// the stem it drives back out over (FATSippTrain::Stem) and how far it drives from the goal to the stem [cm].
-	// Returns false for any other goal.
-	bool FindStem(const FATSippGraph& Graph, const TArray<int32>& Route, TSet<int32>& OutStem, float& OutLoop) const;
+	// Returns false for any other goal; OutWhy says which it is.
+	bool FindStem(const FATSippGraph& Graph, const TArray<int32>& Route, TSet<int32>& OutStem, float& OutLoop, FString& OutWhy) const;
 	// Keeps a self-driving train's plan from a cycle for its grants, and takes its new route if the cycle rerouted it.
 	void ApplyPlan(FATTrafficTrain& State, const FATSippCycle& Cycle, int32 Slot);
 	void ApplyReroute(FATTrafficTrain& State, const FATSippCycle& Cycle, int32 Slot);
@@ -748,6 +748,8 @@ private:
 	// crossing one another train holds.
 	FString mLastDoubleHold;
 	TSet<FString> mLoggedCrossings;
+	// Goal stations whose balloon-loop check (FindStem) was logged, with what it found.
+	TMap<FObjectKey, FString> mStemLogged;
 	// Pairs of tracks the game counts as overlapping that were logged as not crossing.
 	TSet<FString> mLoggedClearPairs;
 

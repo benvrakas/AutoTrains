@@ -1188,6 +1188,14 @@ About 35 plans failed per minute in normal running.
 Watch on the next runs: `planner: ... is planned before`, `trains moved up after a failed plan` in the summary, the
 failed count, DEADLOCK and `passed through` lines, waits over 300 s in WAIT dumps.
 
+## 1.13.1: why a goal is or isn't a balloon loop
+
+Pair K (ST 0.43.0 + AT 1.13.0, 2026-11-24): as is 190 car unloads, emptied 266, no deadlock and no wait >= 300 s in
+either half, but not one `whose only way out runs back over its way in` line: `FindStem` never found a balloon, so the
+result owes nothing to 1.13.0. `FindStem` now says why (`OutWhy`), logged once per goal station and finding (Log, not
+Verbose) for a route of over 20 tracks: "the way on past it isn't closed in (over 256 tracks without its route)", "...
+is closed in (N tracks) but doesn't lead back onto its route the other way", or "a balloon loop: ...".
+
 ## 1.13.0: a balloon loop's stem is held like a dead end's
 
 Red Jungle Encased Uranium Cell In 1 (deadlocks in pairs C, E, F, G, H, I, all as is): trains come in over a single

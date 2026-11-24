@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.13.0
+
+- **Stations on a turning loop at the end of a single track.** Where trains reach a station over a single track, go
+  round a loop through it and leave back over the same single track, a train heading in could meet one coming out
+  and neither could move. Now a train going there keeps that single track for itself until it has come back out,
+  and other trains wait before it, as they already did for dead-end stations.
+
 ## 1.12.1
 
 - **Reverted: booking a train's way out of its station in advance (1.12.0).** On the test server it made many more

@@ -1188,6 +1188,27 @@ About 35 plans failed per minute in normal running.
 Watch on the next runs: `planner: ... is planned before`, `trains moved up after a failed plan` in the summary, the
 failed count, DEADLOCK and `passed through` lines, waits over 300 s in WAIT dumps.
 
+## 1.13.0: a balloon loop's stem is held like a dead end's
+
+Red Jungle Encased Uranium Cell In 1 (deadlocks in pairs C, E, F, G, H, I, all as is): trains come in over a single
+track (2145911014 / 2145900466, then 2145909247 and switch 640), go round through the station and leave over
+2147008015 back onto the same single track. Every way out of the station runs back over the way in, like a dead end
+that is left forwards. A dead end was already held from its last switch on until the train has backed out
+(`IsDeadEnd`, `StayFits`, `Build`); a balloon loop wasn't, so a train heading in was planned onto the stem while one in
+the station would leave over it (1.12.0's general way-out booking failed: too broad, and it stopped at the station's
+own split).
+
+`FindStem` (game thread, each cycle for each driving train with a goal): from the goal connection, driving on without
+using the route's tracks, at most `MaxLoopTracks` (256) tracks: if that closes in and gets back onto a route track the
+other way (left through the connection the route entered it by), the goal is on a balloon loop; the nearest such
+track is where it rejoins the stem (`LoopOut`: the distance from the goal to there). The stem: that route step and
+back along the route up to the first switch it can turn off at backwards, with the switches between and the crossing
+zones (`FATSippTrain::Stem`). `StayFits` then also needs every stem resource under the plan free until
+`StemClear` (arrival + stay + driving `LoopOut` plus back to that resource plus its length from standstill), and
+`Build` holds the stem passes that long with no exit/via, so the booking isn't one the same way: a train following it
+in would meet it head-on, so it waits before the stem. The `drives to ..., whose only way out runs back over its way
+in` line logs each such goal once.
+
 ## 1.12.1: 1.12.0 reverted; planning as in 1.10.0
 
 Pair I (ST 0.42.0 + AT 1.12.0, 2026-11-24 14:12-15:25 UTC): as is 162 car unloads, emptied 220 (H: 183 / 248, F:

@@ -273,6 +273,8 @@ struct FATTrafficTrain
 	TWeakObjectPtr<AFGBuildableRailroadStation> PredictedStation;
 	int32 PredictedStop = INDEX_NONE;
 	double PredictedAt = -1e9;
+	// The goal connection a balloon-loop stem was last logged for (INDEX_NONE if none).
+	int32 StemGoal = INDEX_NONE;
 	// The route step of each track on the route (first time), of each switch and of each crossing zone, by track, by
 	// joint and by crossing.
 	TMap<const AFGBuildableRailroadTrack*, int32> RouteIndexOf;
@@ -630,6 +632,10 @@ private:
 	// Fills a cycle train from State's route: motion, the resources it holds, can't stop short of or has behind it, and
 	// which trains go first or come after it on its line.
 	void FillSippTrain(const FATTrafficTrain& State, const FATSippGraph& Graph, const TMap<const AFGTrain*, int32>& SlotOf, FATSippTrain& Out) const;
+	// For a route (connections of Graph) whose goal station's only way out runs back over the route: the resources of
+	// the stem it drives back out over (FATSippTrain::Stem) and how far it drives from the goal to the stem [cm].
+	// Returns false for any other goal.
+	bool FindStem(const FATSippGraph& Graph, const TArray<int32>& Route, TSet<int32>& OutStem, float& OutLoop) const;
 	// Keeps a self-driving train's plan from a cycle for its grants, and takes its new route if the cycle rerouted it.
 	void ApplyPlan(FATTrafficTrain& State, const FATSippCycle& Cycle, int32 Slot);
 	void ApplyReroute(FATTrafficTrain& State, const FATSippCycle& Cycle, int32 Slot);

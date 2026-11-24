@@ -185,6 +185,11 @@ struct FATSippTrain
 	bool bFrontOnJunction = false;
 	double MinDepart = 0.0;
 	double GoalDwell = 0.0;
+	// A goal station whose only way out runs back over the way in (a balloon loop at the end of a single-track stem):
+	// the resources of that stem on its route, held from its arrival until it has driven back out over them, and how far
+	// it drives from the goal around the loop to where it rejoins the stem [cm]. Empty for any other goal.
+	TSet<int32> Stem;
+	float LoopOut = 0.f;
 	// Only asked about: planned after every other train, never moved up before one.
 	bool bProbe = false;
 	// Route search: whether to look for a faster route beyond route step Commit, and the gain a new one needs. [s] [%]

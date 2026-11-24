@@ -148,6 +148,8 @@ namespace
 
 	// A leg check nobody asked for again within this long is dropped. [s]
 	constexpr double LegCheckForgetSeconds = 60.0;
+	// Most tracks the way on past a goal may have and still count as closed in (a balloon loop). [tracks]
+	constexpr int32 MaxLoopTracks = 256;
 
 	FString SecondsText(double Seconds)
 	{
@@ -548,6 +550,107 @@ void AATTrafficSubsystem::PredictDeparture(FATTrafficTrain& State, double Now)
 	UE_LOG(LogAutoTrains, Verbose, TEXT("planner: %s docked at %s, expected to stay %.0f s; next leg to %s: %d tracks, %.0f m, leaving with %s"), *NameOf(Train),
 		*StationName(Docked), GetExpectedStay(Train, Docked, &State.DockRules, State.DockTransfer), *StationName(Next), State.PredictedRoute.Num(), BestLength / 100.f,
 		bLead ? TEXT("its lead locomotive") : TEXT("another locomotive (the other way)"));
+}
+
+bool AATTrafficSubsystem::FindStem(const FATSippGraph& Graph, const TArray<int32>& Route, TSet<int32>& OutStem, float& OutLoop) const
+{
+	OutStem.Reset();
+	OutLoop = 0.f;
+	if (Route.Num() < 2)
+	{
+		return false;
+	}
+	// The route's tracks, and per track the route step whose track it is left backwards through (its connection the
+	// route entered it by).
+	TSet<int32> RouteTracks;
+	TMap<int32, int32> BackOut;
+	for (int32 Step = 0; Step < Route.Num(); ++Step)
+	{
+		RouteTracks.Add(Graph.TrackOf[Route[Step]]);
+		if (Step < Route.Num() - 1 && Graph.OppositeOf.IsValidIndex(Route[Step]) && Graph.OppositeOf[Route[Step]] != INDEX_NONE)
+		{
+			BackOut.Add(Graph.OppositeOf[Route[Step]], Step);
+		}
+	}
+	// Driving on from the goal without using the route's tracks: closed in (few tracks, none leading elsewhere) and back
+	// onto the route the other way, it is a balloon loop; the nearest such way back is where it rejoins the stem.
+	TMap<int32, float> Best;
+	TArray<TPair<float, int32>> Open;
+	const auto Less = [](const TPair<float, int32>& A, const TPair<float, int32>& B) { return A.Key < B.Key; };
+	Open.HeapPush({0.f, Route.Last()}, Less);
+	Best.Add(Route.Last(), 0.f);
+	int32 Expanded = 0;
+	int32 Merge = INDEX_NONE;
+	float MergeAt = 0.f;
+	while (Open.Num() > 0)
+	{
+		TPair<float, int32> Item;
+		Open.HeapPop(Item, Less);
+		if (Item.Key > Best.FindRef(Item.Value))
+		{
+			continue;
+		}
+		if (++Expanded > MaxLoopTracks)
+		{
+			return false;
+		}
+		if (Graph.OneWay[Item.Value])
+		{
+			continue;
+		}
+		for (const int32 Entry : Graph.Attached[Item.Value])
+		{
+			const int32 Next = Graph.OppositeOf.IsValidIndex(Entry) ? Graph.OppositeOf[Entry] : INDEX_NONE;
+			if (Next == INDEX_NONE)
+			{
+				continue;
+			}
+			if (RouteTracks.Contains(Graph.TrackOf[Next]))
+			{
+				// Onto the route: backwards it rejoins the stem (entering that track, the front is where the stem begins);
+				// the same way it would only drive the route again.
+				if (BackOut.Contains(Next) && (Merge == INDEX_NONE || Item.Key < MergeAt))
+				{
+					Merge = BackOut[Next];
+					MergeAt = Item.Key;
+				}
+				continue;
+			}
+			const float Cost = Item.Key + Graph.Length[Graph.TrackOf[Next]];
+			float& Known = Best.FindOrAdd(Next, MAX_flt);
+			if (Cost < Known)
+			{
+				Known = Cost;
+				Open.HeapPush({Cost, Next}, Less);
+			}
+		}
+	}
+	if (Merge == INDEX_NONE)
+	{
+		return false;
+	}
+	// The stem: from the step it rejoins back along the route up to the first switch it can turn off at backwards,
+	// with the switches between and the crossing zones on it.
+	for (int32 Step = Merge; Step >= 0; --Step)
+	{
+		const int32 Track = Graph.TrackOf[Route[Step]];
+		OutStem.Add(Track);
+		for (const FATSippZone& Zone : Graph.ZonesOf[Track])
+		{
+			OutStem.Add(Zone.Resource);
+		}
+		if (Step > 0 && Graph.JointOf[Route[Step - 1]] != INDEX_NONE)
+		{
+			OutStem.Add(Graph.JointResource(Graph.JointOf[Route[Step - 1]]));
+		}
+		const int32 Back = Graph.OppositeOf[Route[Step]];
+		if (Back == INDEX_NONE || Graph.Attached[Back].Num() > 1)
+		{
+			break;
+		}
+	}
+	OutLoop = MergeAt;
+	return true;
 }
 
 bool AATTrafficSubsystem::FindLeg(const FATTrafficTrain& State, AFGBuildableRailroadStation* To, TArray<FATRouteStep>& OutRoute, float& OutLength, bool& bOutLead) const
@@ -1331,6 +1434,12 @@ void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds, bool bW
 			Out.GoalDwell = bDrive ? ATSippNever : GetExpectedStay(Train, State.GoalStation.Get(), GetStopRules(Train, TimeTable ? TimeTable->GetCurrentStop() : INDEX_NONE, State.GoalStation.Get(), Rules), -1);
 			Out.Commit = GetRouteCommit(State);
 			Out.bSearch = !bDrive && IsSearchDue(State, DeltaSeconds) && Out.Commit < Out.Route.Num() - 2;
+			if (!bDrive && Out.bGoal && FindStem(Graph, Out.Route, Out.Stem, Out.LoopOut) && State.StemGoal != Out.Route.Last())
+			{
+				UE_LOG(LogAutoTrains, Verbose, TEXT("planner: %s drives to %s, whose only way out runs back over its way in: %d places of that stem held until it is back out (%.0f m around the loop)"),
+					*NameOf(Train), *StationName(State.GoalStation.Get()), Out.Stem.Num(), Out.LoopOut / 100.f);
+			}
+			State.StemGoal = Out.Stem.Num() > 0 ? Out.Route.Last() : INDEX_NONE;
 			Out.MinGainSeconds = mSettings.RerouteMinGainSeconds;
 			Out.MinGainPercent = mSettings.RerouteMinGainPercent;
 			continue;

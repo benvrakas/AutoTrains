@@ -684,7 +684,32 @@ namespace
 				}
 				bFits = bFits && Clear <= Open.Gap.ClearHi && Clear >= Open.Gap.ClearLo;
 			});
+			// Its only way out runs back over the stem it came in on: that stays free until it has driven back out over it
+			// (Docs/Debugging.md, "1.13.0").
+			if (bFits && Train.Stem.Num() > 0 && !IsNever(Train.GoalDwell))
+			{
+				ForEachOpen(Index, -MAX_flt, [&](const FOpenResource& Open)
+				{
+					if (!bFits || !Train.Stem.Contains(Open.Resource))
+					{
+						return;
+					}
+					const double Clear = StemClear(State.Arrive, State.Pos, Open.StartAt);
+					if (Clear > Open.Gap.ClearHi)
+					{
+						NoteBlock(Index, Open.Gap.HiBy, Open.Resource, Open.Gap.bHiByRank);
+						bFits = false;
+					}
+				});
+			}
 			return bFits;
+		}
+
+		// When it has driven back out over a stem resource beginning at Start [cm], arriving at the goal at Arrive with its
+		// front at Goal: after the stay, around the loop and back to there, plus its length.
+		double StemClear(double Arrive, float Goal, float Start) const
+		{
+			return Arrive + Train.GoalDwell + RestTime(Train.LoopOut + FMath::Max(Goal - Start, 0.f) + Train.Length, Top, Accel);
 		}
 
 		void Expand(int32 Index)
@@ -1333,6 +1358,20 @@ namespace
 					if (Pass.ClearAt > Last.Pos || Start >= SwitchAt)
 					{
 						Pass.Clear = FMath::Max(Pass.Clear, Last.Arrive + Train.GoalDwell + RestTime(FMath::Max(Last.Pos - Start, 0.f), Top, Accel));
+					}
+				}
+			}
+			// At a balloon loop: the stem held until it has driven back out over it, against every train (a train following
+			// it in would meet it head-on, so the booking isn't one the same way).
+			if (bReached && !IsNever(Train.GoalDwell) && Train.Stem.Num() > 0)
+			{
+				for (FATSippPass& Pass : Out.Passes)
+				{
+					if (Pass.Step != INDEX_NONE && Train.Stem.Contains(Pass.Resource))
+					{
+						Pass.Clear = FMath::Max(Pass.Clear, StemClear(Last.Arrive, Last.Pos, Pass.EnterAt));
+						Pass.Exit = INDEX_NONE;
+						Pass.Via = INDEX_NONE;
 					}
 				}
 			}

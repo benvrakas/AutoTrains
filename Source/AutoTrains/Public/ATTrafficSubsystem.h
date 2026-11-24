@@ -249,6 +249,9 @@ struct FATTrafficTrain
 	double SearchedArrival = -1.0;
 	// When the log last said a route search of this train found nothing. [s]
 	double SearchNoneLoggedAt = -1000.0;
+	// Since when its plans have failed without a break (below 0 while they don't), and when that was last reported.
+	double PlanFailedSince = -1.0;
+	double StuckPlanLoggedAt = -1000.0;
 	// Why the last plan failed and which train it is committed against, empty if neither; a summary for /at traffic.
 	FString PlanFailure;
 	FString PlanCommitted;

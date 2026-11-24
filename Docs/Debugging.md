@@ -1188,6 +1188,18 @@ About 35 plans failed per minute in normal running.
 Watch on the next runs: `planner: ... is planned before`, `trains moved up after a failed plan` in the summary, the
 failed count, DEADLOCK and `passed through` lines, waits over 300 s in WAIT dumps.
 
+## 1.13.3: STUCKPLAN report
+
+Emptied-half standstills in pairs G, J and M (2026-11-24) start the same way: the unmanaged "Train" (Dune Desert
+Rubber In 1 <-> Blue Crater Rubber Out 1, next leg 284 tracks / 6582 m) leaves Dune Desert Rubber In 1 and within 3 s
+its plan fails ("no move on from route step -1", 138-142 tail windows missed), "waits for ? before track 2147192345,
+0 m ahead: its plan has no slot there yet", and never gets a plan again; its route searches hit the 200000-state
+limit every 30 s. The priority adjustment never moved it up, and the log didn't say why. `ApplyPlan` now logs
+`STUCKPLAN` once a minute for a train whose plans have failed for over `StuckPlanSeconds` (60 s): its rank, whether it
+stands, the tail windows missed, the train named as holding it up with its kind and rank and why it isn't moved up
+before it, and for up to 12 resources it is locked on, every other booking there (kind, rank, enter and clear from now,
+locked / held / committed).
+
 ## 1.13.2: 1.13.x reverted
 
 Pair L (ST 0.43.0 + AT 1.13.1): Red Jungle Encased Uranium Cell In 1 "isn't closed in (over 256 tracks without its

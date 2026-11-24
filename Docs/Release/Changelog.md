@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.13.3
+
+- **More logging:** a train that can't get a plan for over a minute is reported in detail every minute: what holds
+  it up, and who else is booked where it stands.
+
 ## 1.13.2
 
 - **Reverted: the turning-loop handling (1.13.0, 1.13.1).** The station it was made for turned out not to be a

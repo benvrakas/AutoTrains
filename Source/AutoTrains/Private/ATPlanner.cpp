@@ -148,6 +148,8 @@ namespace
 
 	// A leg check nobody asked for again within this long is dropped. [s]
 	constexpr double LegCheckForgetSeconds = 60.0;
+	// A train whose plans have failed this long is reported in detail, again every this long. [s]
+	constexpr double StuckPlanSeconds = 60.0;
 
 	FString SecondsText(double Seconds)
 	{
@@ -1680,6 +1682,53 @@ void AATTrafficSubsystem::ApplyPlan(FATTrafficTrain& State, const FATSippCycle& 
 			: FString::Printf(TEXT("no move on from route step %d"), Result.StandStep);
 		Failure = Result.BlockedAt != INDEX_NONE ? FString::Printf(TEXT("no way on past %s for %s"), *Name(Result.BlockedAt), *NameOf(TrainOf(Result.BlockedBy)))
 			: FString::Printf(TEXT("no way to its goal: %s"), *Why);
+	}
+	// Failing for long: what holds it up, why it isn't moved up before that train, and who is booked next on what it
+	// stands on (Docs/Debugging.md, "1.13.3").
+	State.PlanFailedSince = !Result.bFailed ? -1.0 : State.PlanFailedSince < 0.0 ? Now : State.PlanFailedSince;
+	if (Result.bFailed && Now - State.PlanFailedSince >= StuckPlanSeconds && Now - State.StuckPlanLoggedAt >= StuckPlanSeconds)
+	{
+		State.StuckPlanLoggedAt = Now;
+		const FATSippTrain& Input = Cycle.Trains[Slot];
+		auto KindName = [](EATSippKind Kind) { return Kind == EATSippKind::Moving ? TEXT("driving") : Kind == EATSippKind::Predicted ? TEXT("docked") : TEXT("not driven"); };
+		auto TimeText = [Now](double T) { return IsOpen(T) ? FString(TEXT("never")) : FString::Printf(TEXT("%+.0f s"), T - Now); };
+		FString By = TEXT("no train named");
+		if (Cycle.Trains.IsValidIndex(Result.BlockedBy))
+		{
+			const FATSippTrain& Other = Cycle.Trains[Result.BlockedBy];
+			const TCHAR* NotUp = !Result.bBlockedByRank ? TEXT("its booking counts whatever the order")
+				: Other.Kind != EATSippKind::Moving ? TEXT("that train isn't driving")
+				: Input.First.Contains(Result.BlockedBy) ? TEXT("that train goes first anyway (ahead on its route)")
+				: Other.MovedAheadOf.Contains(Slot) ? TEXT("that train was moved up before it this leg")
+				: Cycle.Reordered.Contains(TPair<int32, int32>(Slot, Result.BlockedBy)) ? TEXT("moved up before it from the next cycle")
+				: TEXT("another train was moved up this cycle, or one between them goes first");
+			By = FString::Printf(TEXT("%s (%s, rank %d) on %s: not moved up, %s"), *NameOf(TrainOf(Result.BlockedBy)), KindName(Other.Kind), Other.Rank,
+				Result.BlockedAt != INDEX_NONE ? *Name(Result.BlockedAt) : TEXT("an unknown place"), NotUp);
+		}
+		FString Places;
+		int32 Listed = 0;
+		for (const int32 Resource : Input.Locked)
+		{
+			if (Listed++ >= 12 || !Cycle.Table.ByResource.IsValidIndex(Resource))
+			{
+				break;
+			}
+			FString Others;
+			for (const FATSippBooking& Booking : Cycle.Table.ByResource[Resource])
+			{
+				if (Booking.Owner == Slot || !Cycle.Trains.IsValidIndex(Booking.Owner))
+				{
+					continue;
+				}
+				Others += FString::Printf(TEXT("%s%s (%s, rank %d) %s to %s%s%s%s"), Others.IsEmpty() ? TEXT("") : TEXT(", "), *NameOf(TrainOf(Booking.Owner)),
+					KindName(Booking.Kind), Cycle.Trains[Booking.Owner].Rank, *TimeText(Booking.Enter), *TimeText(Booking.Clear), Booking.bLocked ? TEXT(" locked") : TEXT(""),
+					Booking.bHeld ? TEXT(" held") : TEXT(""), Booking.bCommitted ? TEXT(" committed") : TEXT(""));
+			}
+			Places += FString::Printf(TEXT("%s%s: %s"), Places.IsEmpty() ? TEXT("") : TEXT("; "), *Name(Resource), Others.IsEmpty() ? TEXT("nobody else") : *Others);
+		}
+		UE_LOG(LogAutoTrains, Log, TEXT("planner: STUCKPLAN %s: its plans have failed for %.0f s (rank %d, %s, %d states, %d tail windows missed, stands at route step %d); held up by %s; what it stands on and who else is booked there: %s"),
+			*NameOf(Train), Now - State.PlanFailedSince, Input.Rank, Input.bStanding ? TEXT("standing") : TEXT("moving"), Result.States, Result.RejectedTail, Result.StandStep, *By,
+			Places.IsEmpty() ? TEXT("nothing") : *Places);
 	}
 	if (Failure != State.PlanFailure)
 	{

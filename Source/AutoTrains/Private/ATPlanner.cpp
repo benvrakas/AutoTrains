@@ -550,6 +550,54 @@ void AATTrafficSubsystem::PredictDeparture(FATTrafficTrain& State, double Now)
 		bLead ? TEXT("its lead locomotive") : TEXT("another locomotive (the other way)"));
 }
 
+void AATTrafficSubsystem::FindWayOut(FATTrafficTrain& State, const FATSippGraph& Graph, int32 Goal)
+{
+	// The next stop at another station than the goal, after the timetable's current stop.
+	AFGTrain* Train = State.Train.Get();
+	AFGRailroadTimeTable* TimeTable = Train ? Train->GetTimeTable() : nullptr;
+	TArray<FTimeTableStop> Stops;
+	if (TimeTable)
+	{
+		TimeTable->GetStops(Stops);
+	}
+	const AFGBuildableRailroadStation* Here = State.GoalStation.Get();
+	AFGBuildableRailroadStation* Next = nullptr;
+	const int32 Current = Stops.Num() > 0 ? FMath::Clamp(TimeTable->GetCurrentStop(), 0, Stops.Num() - 1) : 0;
+	for (int32 Offset = 1; Offset <= Stops.Num() && !Next && Here; ++Offset)
+	{
+		const FTimeTableStop& Stop = Stops[(Current + Offset) % Stops.Num()];
+		AFGBuildableRailroadStation* Station = Stop.Station ? Stop.Station->GetStation() : nullptr;
+		Next = Station && Station != Here ? Station : nullptr;
+	}
+	if (State.WayOutGraph == &Graph && State.WayOutFrom == Goal && State.WayOutTo.Get() == Next)
+	{
+		return;
+	}
+	State.WayOutGraph = &Graph;
+	State.WayOutFrom = Goal;
+	State.WayOutTo = Next;
+	State.WayOut.Reset();
+	const AFGBuildableRailroadTrack* NextTrack = Next ? Next->GetTrackPosition().Track.Get() : nullptr;
+	const int32* GoalTrack = NextTrack ? Graph.TrackIndex.Find(NextTrack) : nullptr;
+	TArray<int32> Nodes;
+	if (!GoalTrack || !Graph.TrackOf.IsValidIndex(Goal) || ShortestWay(Graph, {Goal}, INDEX_NONE, *GoalTrack, &Nodes) < 0.f)
+	{
+		return;
+	}
+	// Driving on with the train's front: up to the first track that splits ahead, where a train coming the other way
+	// could pass it.
+	for (int32 Index = 1; Index < Nodes.Num(); ++Index)
+	{
+		State.WayOut.Add(Nodes[Index]);
+		if (Graph.Attached[Nodes[Index]].Num() > 1)
+		{
+			break;
+		}
+	}
+	UE_LOG(LogAutoTrains, Verbose, TEXT("planner: %s's way out of %s towards %s: %d tracks booked after its stay"), *NameOf(Train), *StationName(Here),
+		*StationName(Next), State.WayOut.Num());
+}
+
 bool AATTrafficSubsystem::FindLeg(const FATTrafficTrain& State, AFGBuildableRailroadStation* To, TArray<FATRouteStep>& OutRoute, float& OutLength, bool& bOutLead) const
 {
 	OutRoute.Reset();
@@ -1331,6 +1379,11 @@ void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds, bool bW
 			Out.GoalDwell = bDrive ? ATSippNever : GetExpectedStay(Train, State.GoalStation.Get(), GetStopRules(Train, TimeTable ? TimeTable->GetCurrentStop() : INDEX_NONE, State.GoalStation.Get(), Rules), -1);
 			Out.Commit = GetRouteCommit(State);
 			Out.bSearch = !bDrive && IsSearchDue(State, DeltaSeconds) && Out.Commit < Out.Route.Num() - 2;
+			if (!bDrive && Out.bGoal && Out.Route.Num() > 0)
+			{
+				FindWayOut(State, Graph, Out.Route.Last());
+				Out.WayOut = State.WayOut;
+			}
 			Out.MinGainSeconds = mSettings.RerouteMinGainSeconds;
 			Out.MinGainPercent = mSettings.RerouteMinGainPercent;
 			continue;

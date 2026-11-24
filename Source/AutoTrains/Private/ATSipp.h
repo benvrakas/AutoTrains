@@ -119,6 +119,9 @@ struct FATSippPass
 	bool bLocked = false;
 	bool bHeld = false;
 	bool bCommitted = false;
+	// On the way out of its goal station after its stay (FATSippTrain::WayOut): booked like a docked train's next leg
+	// (EATSippKind::Predicted), never granted from.
+	bool bWayOut = false;
 };
 
 enum class EATSippTurn : uint8
@@ -185,6 +188,9 @@ struct FATSippTrain
 	bool bFrontOnJunction = false;
 	double MinDepart = 0.0;
 	double GoalDwell = 0.0;
+	// The connections of its way out of the goal station towards its next stop, up to the first track that splits ahead
+	// (where a train coming the other way could pass it); booked after its stay when the plan reaches the goal.
+	TArray<int32> WayOut;
 	// Only asked about: planned after every other train, never moved up before one.
 	bool bProbe = false;
 	// Route search: whether to look for a faster route beyond route step Commit, and the gain a new one needs. [s] [%]

@@ -144,11 +144,13 @@ namespace
 
 	// What entering a resource at a time commits the train to: its tail clears it no earlier than ClearLo (a train
 	// ahead the same way, LoBy) and no later than ClearHi (the next booking, HiBy's, counting only because its train
-	// plans first if bHiByRank); Key tells the windows apart.
+	// plans first if bHiByRank); Key tells the windows apart. FixedHi: the same counting only bookings that stay put when
+	// its train is planned again (not a moving train's plan slot).
 	struct FGap
 	{
 		double ClearLo = -ATSippNever;
 		double ClearHi = ATSippNever;
+		double FixedHi = ATSippNever;
 		int32 LoBy = INDEX_NONE;
 		int32 HiBy = INDEX_NONE;
 		bool bHiByRank = false;
@@ -224,8 +226,8 @@ namespace
 		}
 
 		// Plans the train along Route (bLastIsGoal: its last step is the goal). With no way there it stands for good: where it
-		// stands if it stands clear of every switch and crossing, else at its furthest stop clear of them on which no train
-		// planned before it is booked later, else at its furthest stop there (Docs/Debugging.md, "1.8.0", "1.11.0").
+		// stands if it stands clear of every switch and crossing, else at its furthest stop clear of them that no booking
+		// staying put needs later, else at its furthest stop there (Docs/Debugging.md, "1.8.0", "1.11.0", "1.11.1").
 		void Plan(const TArray<int32>& InRoute, bool bLastIsGoal, FATSippResult& Out)
 		{
 			const int32 Final = SearchLeavingLater(InRoute, false, bLastIsGoal);
@@ -370,8 +372,9 @@ namespace
 		}
 
 		// Keeps the furthest stop reached, the furthest with the body clear of every switch and crossing, the furthest of
-		// those where nothing under the body is booked later by a train planned before it (it may stand there for good),
-		// and the furthest state of any kind, for a plan that can't reach the goal.
+		// those where nothing under the body is booked later in a way that stays put (a docked train's way out, what a train
+		// holds, is committed to or stands on; it may stand there for good), and the furthest state of any kind, for a plan
+		// that can't reach the goal.
 		void Note(int32 Index)
 		{
 			const FState& State = States[Index];
@@ -387,7 +390,7 @@ namespace
 				ForEachOpen(Index, State.Pos, [&](const FOpenResource& Open)
 				{
 					bOnSwitch = bOnSwitch || Open.Resource >= Graph.Length.Num();
-					bBookedLater = bBookedLater || !IsNever(Open.Gap.ClearHi);
+					bBookedLater = bBookedLater || !IsNever(Open.Gap.FixedHi);
 				});
 				if (!bOnSwitch && Better(FurthestClear))
 				{
@@ -488,6 +491,10 @@ namespace
 				const bool bByRank = !bFirst && Booking.Kind == EATSippKind::Moving && !Booking.bHeld && !Booking.bCommitted;
 				auto LowerHi = [&](double Hi)
 				{
+					if (!bByRank && Hi < Out.FixedHi)
+					{
+						Out.FixedHi = Hi;
+					}
 					if (Hi < Out.ClearHi)
 					{
 						Out.ClearHi = Hi;

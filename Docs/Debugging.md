@@ -1188,6 +1188,19 @@ About 35 plans failed per minute in normal running.
 Watch on the next runs: `planner: ... is planned before`, `trains moved up after a failed plan` in the summary, the
 failed count, DEADLOCK and `passed through` lines, waits over 300 s in WAIT dumps.
 
+## 1.11.1: only bookings that stay put keep a failed plan's stand back
+
+Test server pair G (ST 0.42.0 + AT 1.11.0, 2026-11-24 12:39 UTC): emptied half 112 car unloads (F: 271), trains standing
+with a trip grew from 7 to 36, 4 deadlock logs, planner cycles from 0.5 to 2.9 s; WAIT lines "its plan has no slot
+there yet" 787 (F: 2), "no way" lines with "stands at its furthest stop no train planned before it needs later" 592.
+1.11.0 counted every booking in scope, so also the plan slots of moving trains planned first, which are planned again
+every cycle and would plan around the stand. In traffic nearly every stop ahead has such a slot later, so failed
+trains stood far back, short of what they could reach, and held up the trains behind them ("no slot" there).
+
+`FGap::FixedHi` is `ClearHi` counting only bookings that aren't by rank (`bByRank`: a moving train's plan slot, not
+held or committed): a docked train's predicted leg, standing trains, held, committed and locked bookings. `FurthestFree`
+uses it. The Red Jungle case of pair F (a docked train's predicted way out) is still covered.
+
 ## 1.11.0: a failed plan stands only where no train planned before it is booked later
 
 Test server pairs C, E and F (as-is halves, 2026-11-24): each ended in a two-train deadlock at Red Jungle Encased Uranium

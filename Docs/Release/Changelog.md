@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.11.1
+
+- **Fixed: 1.11.0 held waiting trains back too far.** It kept a waiting train out of every spot any other train's plan
+  passed through later, even plans that are redone around it. Trains then waited far back and blocked each other
+  across the network. Now only a spot that a docked train leaves by, or that a train stands on, holds or is already
+  committed to, counts.
+
 ## 1.11.0
 
 - **A train that has to wait no longer waits in another train's way out.** When a train couldn't get all the way into

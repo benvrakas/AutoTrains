@@ -1,8 +1,8 @@
 {
 	"FileVersion": 3,
 	"Version": 1,
-	"VersionName": "1.11.0",
-	"SemVersion": "1.11.0",
+	"VersionName": "1.11.1",
+	"SemVersion": "1.11.1",
 	"GameVersion": ">=520140",
 	"FriendlyName": "Auto Trains",
 	"Description": "Train traffic without block or path signals: self-driving trains book the track ahead in time, slow down, wait or reroute so they never collide.",

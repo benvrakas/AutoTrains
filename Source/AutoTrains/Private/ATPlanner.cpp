@@ -1686,8 +1686,8 @@ void AATTrafficSubsystem::ApplyPlan(FATTrafficTrain& State, const FATSippCycle& 
 		if (!Failure.IsEmpty())
 		{
 			++mPlanFailures;
-			static const TCHAR* const Stands[] = { TEXT("at its goal"), TEXT("where it is"), TEXT("at its furthest stop no train planned before it needs later"),
-				TEXT("at its furthest stop clear of switches and crossings, which a train planned before it needs later"), TEXT("at its furthest stop"),
+			static const TCHAR* const Stands[] = { TEXT("at its goal"), TEXT("where it is"), TEXT("at its furthest stop no fixed booking needs later"),
+				TEXT("at its furthest stop clear of switches and crossings, which a fixed booking needs later"), TEXT("at its furthest stop"),
 				TEXT("as far as it gets") };
 			UE_LOG(LogAutoTrains, Verbose, TEXT("planner: %s: %s; it stands %s until that train has passed (%d states; left out: %d moves out of its reach, %d tail windows missed, %d stays at the goal that don't fit, %d moves it would stall on a climb, %d waits across a junction)"),
 				*NameOf(Train), *Failure, Stands[FMath::Clamp(Result.StandKind, 0, 5)], Result.States, Result.RejectedMotion, Result.RejectedTail, Result.RejectedStay, Result.RejectedClimb, Result.RejectedJunction);

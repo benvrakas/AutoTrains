@@ -706,10 +706,10 @@ namespace
 		}
 
 		// When it has driven back out over a stem resource beginning at Start [cm], arriving at the goal at Arrive with its
-		// front at Goal: after the stay, around the loop and back to there, plus its length.
-		double StemClear(double Arrive, float Goal, float Start) const
+		// front at GoalPos: after the stay, around the loop and back to there, plus its length.
+		double StemClear(double Arrive, float GoalPos, float Start) const
 		{
-			return Arrive + Train.GoalDwell + RestTime(Train.LoopOut + FMath::Max(Goal - Start, 0.f) + Train.Length, Top, Accel);
+			return Arrive + Train.GoalDwell + RestTime(Train.LoopOut + FMath::Max(GoalPos - Start, 0.f) + Train.Length, Top, Accel);
 		}
 
 		void Expand(int32 Index)

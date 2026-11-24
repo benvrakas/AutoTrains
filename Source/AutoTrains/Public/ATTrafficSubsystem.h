@@ -405,6 +405,8 @@ private:
 	void ApplySettings();
 	// How far trains stop short of track they haven't been given; before a switch, its fouling zone plus this. [cm]
 	static float GetStopDistance() { return 1000.f; }
+	// Share of its planned braking a train's normal stops use.
+	static float GetNormalBrakingShare() { return 0.85f; }
 	void UpdateTraffic(float DeltaSeconds);
 	void ReadTrain(FATTrafficTrain& State, AFGTrain* Train) const;
 	void ReleasePassedClaims(FATTrafficTrain& State) const;

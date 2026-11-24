@@ -160,8 +160,6 @@ replanning.
 | **Track clearance (m)** | 3 | How close the centre lines of two tracks may come before trains on them count as in each other's way. A switch's branches block each other only until they are this far apart, and where two tracks cross only the stretch where they come this close counts, so a train can wait right before a crossing. Smaller lets trains slip past each other closer to switches (they may clip); larger keeps them further apart. |
 | **Normal braking (%)** | 85 | How hard trains brake for normal stops, as a share of the braking they plan with. |
 | **Station stay estimate (seconds)** | 40 | How long a train is expected to stay at a stop set to fully load or unload, until it has been seen there; after that its own last stay there counts. Stops that load or unload once take the freight platforms' fixed time, or the stop's set duration when there's no cargo to move. |
-| **Clear deadlocks by passing through (beta)** | On | Trains stuck waiting for each other in a circle drive on through each other after the set time; each case is written to FactoryGame/Saved/AutoTrains/faults.log. |
-| **Pass through a deadlock after (seconds)** | 60 | How long a deadlock lasts before its trains pass through each other. |
 | **Help stalled trains up hills** | On | A train that has slowed down on a climb too steep for its locomotives to get going again gets extra traction until it is over the steep part. Trains are planned not to wait on such climbs; this is for when one has to anyway. A train that stands while it is told to go gets the same help on any slope. |
 | **Hill help: most extra traction (x)** | 4 | The most traction a stalled train gets on a climb, 1 to 10 times its own. Raise it if heavy trains still stall on very steep ramps. |
 | **Hill help: stall time (seconds)** | 4 | A train that stands this long while it is told to go gets more traction, and more again each time this passes, 1 to 60 seconds. |
@@ -170,8 +168,6 @@ replanning.
 | **Route search while stuck (seconds)** | 1 | How often a train whose plan finds no way looks for another route. |
 | **Track refresh (seconds)** | 30 | How often the whole track network is read again. Track built or removed is usually picked up within 2 seconds anyway. |
 | **Deadlock: count trains waiting longer than (seconds)** | 20 | How long a train has to wait before it counts when looking for deadlocks. |
-| **Deadlock pass-through distance (m)** | 300 | A train passing through a deadlock does so until it has driven its own length and this much further. |
-| **Deadlock pass-through time limit (seconds)** | 120 | A train passes through a deadlock for at most this long. |
 | **Plan search limit (states)** | 200000 | Most steps one train's plan may search. Lower uses less CPU and memory on huge networks; long or busy routes may then find no way more often. |
 | **Slope lookahead (m)** | 300 | How far ahead of a train the slope is averaged for its braking. |
 | **Update interval (seconds)** | 0.25 | How often trains are planned and given track. Shorter reacts faster but costs more on big networks. |

@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.9.0
+
+- **Removed: passing through deadlocks.** Trains stuck waiting for each other in a circle used to drive through each
+  other after a minute. With 1.8.0 a train that can't get a plan goes first in the next round and a stopped train
+  without a full plan stays where it is, so such circles no longer form in the first place; and when one did, letting
+  one train through rarely cleared it (it formed again from the waits that were left). The **Clear deadlocks by
+  passing through**, **Pass through a deadlock after**, **Deadlock pass-through distance** and **time limit** settings
+  are gone. Deadlocks are still found and logged, and STUCK and BLOCKED reports still go to `faults.log`.
+- Trains that touch still pass through each other instead of derailing (**Trains pass through each other**).
+
 ## 1.8.0
 
 - **Fixed: gridlocks that grew instead of clearing.** When a train found no way only because another train was

@@ -18,7 +18,7 @@ In FullDescription.md.
 
 Auto Trains doesn't connect to the internet. In multiplayer all traffic control runs on the host; players see the
 trains through the game's own connection. There's no telemetry or analytics: the Detailed log setting writes a CSV file to
-your own computer only, and deadlocks cleared by passing through are written to `faults.log` there.
+your own computer only, and trains stuck for good are written to `faults.log` there.
 
 # AI USAGE TRANSPARENCY
 

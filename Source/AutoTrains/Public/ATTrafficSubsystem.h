@@ -273,12 +273,6 @@ struct FATTrafficTrain
 	TWeakObjectPtr<AFGBuildableRailroadStation> PredictedStation;
 	int32 PredictedStop = INDEX_NONE;
 	double PredictedAt = -1e9;
-	// While it drives to a station: its way out of it towards the next stop (FATSippTrain::WayOut), as connections of
-	// the network copy it was found on, from the goal connection WayOutFrom to station WayOutTo.
-	TArray<int32> WayOut;
-	const void* WayOutGraph = nullptr;
-	int32 WayOutFrom = INDEX_NONE;
-	TWeakObjectPtr<AFGBuildableRailroadStation> WayOutTo;
 	// The route step of each track on the route (first time), of each switch and of each crossing zone, by track, by
 	// joint and by crossing.
 	TMap<const AFGBuildableRailroadTrack*, int32> RouteIndexOf;
@@ -636,9 +630,6 @@ private:
 	// Fills a cycle train from State's route: motion, the resources it holds, can't stop short of or has behind it, and
 	// which trains go first or come after it on its line.
 	void FillSippTrain(const FATTrafficTrain& State, const FATSippGraph& Graph, const TMap<const AFGTrain*, int32>& SlotOf, FATSippTrain& Out) const;
-	// Sets State's way out of the station at the end of its route (Goal, a connection of Graph) towards its next stop
-	// after that one, found again only when the goal, the next stop or the network copy changed.
-	void FindWayOut(FATTrafficTrain& State, const FATSippGraph& Graph, int32 Goal);
 	// Keeps a self-driving train's plan from a cycle for its grants, and takes its new route if the cycle rerouted it.
 	void ApplyPlan(FATTrafficTrain& State, const FATSippCycle& Cycle, int32 Slot);
 	void ApplyReroute(FATTrafficTrain& State, const FATSippCycle& Cycle, int32 Slot);

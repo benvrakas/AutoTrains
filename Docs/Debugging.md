@@ -1188,6 +1188,17 @@ About 35 plans failed per minute in normal running.
 Watch on the next runs: `planner: ... is planned before`, `trains moved up after a failed plan` in the summary, the
 failed count, DEADLOCK and `passed through` lines, waits over 300 s in WAIT dumps.
 
+## 1.12.1: 1.12.0 reverted; planning as in 1.10.0
+
+Pair I (ST 0.42.0 + AT 1.12.0, 2026-11-24 14:12-15:25 UTC): as is 162 car unloads, emptied 220 (H: 183 / 248, F:
+169 / 271); emptied failed plans per minute 80.4 (F 29.6), 214 waits >= 300 s and 4 deadlock logs in the emptied half
+(F: none); as is 6 deadlock logs, again at Red Jungle Encased Uranium Cell In 1 (14:42 UTC). Way outs were found 1611
+/ 2399 times (each graph rebuild re-finds them all). Two faults: booking every driving train's way out as
+`EATSippKind::Predicted` (hard for every train, from minutes ahead with an unplanned start time) made many more plans
+fail; and at Red Jungle the station track's own end splits, so the way out was one track (towards a known next stop)
+or none, never the single track 2145911014 beyond the merge. The sources are back to 1.10.0 (`FindWayOut`,
+`AddWayOut`, `bWayOut`, `WayOut` removed); only the stand kind in the `no way` line stays.
+
 ## 1.12.0: a driving train's way out of its station is booked with its arrival; 1.11.x reverted
 
 Pairs G (1.11.0) and H (1.11.1) both deadlocked at Red Jungle Encased Uranium Cell In 1 again (G 12:12 UTC, H 13:41

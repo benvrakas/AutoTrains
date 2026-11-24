@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.12.1
+
+- **Reverted: booking a train's way out of its station in advance (1.12.0).** On the test server it made many more
+  plans fail and caused new standstills, and it didn't stop the one it was meant for. Trains plan as in 1.10.0 again.
+
 ## 1.12.0
 
 - **Trains no longer meet head-on outside a station.** Where trains leave a station over the same single track

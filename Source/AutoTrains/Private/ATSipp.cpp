@@ -224,8 +224,7 @@ namespace
 		}
 
 		// Plans the train along Route (bLastIsGoal: its last step is the goal). With no way there it stands for good: where it
-		// stands if it stands clear of every switch and crossing, else at its furthest stop there (Docs/Debugging.md,
-		// "1.8.0"; "1.12.0" for why not only where no other train needs it later).
+		// stands if it stands clear of every switch and crossing, else at its furthest stop there (Docs/Debugging.md, "1.8.0").
 		void Plan(const TArray<int32>& InRoute, bool bLastIsGoal, FATSippResult& Out)
 		{
 			const int32 Final = SearchLeavingLater(InRoute, false, bLastIsGoal);
@@ -233,10 +232,6 @@ namespace
 				: FurthestClear != INDEX_NONE ? FurthestClear : FurthestStopped != INDEX_NONE ? FurthestStopped : FurthestAny;
 			Build(Stand, Final != INDEX_NONE, Out);
 			Out.StandKind = Final != INDEX_NONE ? 0 : Stand == 0 && StandsClear() ? 1 : Stand == FurthestClear ? 2 : Stand == FurthestStopped ? 3 : 4;
-			if (Final != INDEX_NONE)
-			{
-				AddWayOut(Final, Out);
-			}
 			Out.States = States.Num();
 			Out.RejectedMotion = RejectedMotion;
 			Out.RejectedTail = RejectedTail;
@@ -1379,58 +1374,6 @@ namespace
 			FindCommittedConflict(Out);
 		}
 
-		// The way out of the goal station (Train.WayOut) after the stay, from standstill, as passes booked like a docked
-		// train's next leg: trains planned before this one plan around it too, so none waits where it has to pass
-		// (Docs/Debugging.md, "1.12.0").
-		void AddWayOut(int32 Final, FATSippResult& Out) const
-		{
-			const FState& Last = States[Final];
-			if (Train.WayOut.Num() == 0 || IsNever(Train.GoalDwell) || Train.Route.Num() == 0 || Last.Node != Train.Route.Last())
-			{
-				return;
-			}
-			const double Leave = Last.Arrive + Train.GoalDwell;
-			auto TimeAt = [&](float Pos) { return Pos <= Last.NodePos ? Last.Arrive : Leave + RestTime(Pos - Last.NodePos, Top, Accel); };
-			auto Add = [&](int32 Resource, int32 Exit, int32 Via, float EnterAt, float ClearAt)
-			{
-				FATSippPass Pass;
-				Pass.Resource = Resource;
-				Pass.Exit = Exit;
-				Pass.Via = Via;
-				Pass.EnterAt = EnterAt;
-				Pass.ClearAt = ClearAt;
-				Pass.Enter = TimeAt(EnterAt);
-				Pass.Clear = TimeAt(ClearAt);
-				Pass.bWayOut = true;
-				Out.Passes.Add(Pass);
-			};
-			float From = Last.NodePos;
-			int32 Previous = Last.Node;
-			for (const int32 Node : Train.WayOut)
-			{
-				if (!Graph.TrackOf.IsValidIndex(Node))
-				{
-					return;
-				}
-				const int32 Joint = Graph.JointOf[Previous];
-				if (Joint != INDEX_NONE)
-				{
-					Add(Graph.JointResource(Joint), Node, Previous, From - Graph.FoulOf[Previous], From + Train.Length + Graph.JointFoul[Joint]);
-				}
-				const int32 Track = Graph.TrackOf[Node];
-				Add(Track, Node, INDEX_NONE, From, From + Graph.Length[Track] + Train.Length);
-				for (const FATSippZone& Zone : Graph.ZonesOf[Track])
-				{
-					float ZoneFrom = 0.f;
-					float ZoneTo = 0.f;
-					ZoneSpan(Node, Zone, ZoneFrom, ZoneTo);
-					Add(Zone.Resource, Node, INDEX_NONE, From + ZoneFrom, From + ZoneTo + Train.Length);
-				}
-				From += Graph.Length[Track];
-				Previous = Node;
-			}
-		}
-
 		// Committed: from the furthest pass the train owns (else from where it is) up to the first
 		// place it can stand where its whole body is on nothing a train planned before it has booked from its arrival on.
 		void MarkCommitted(const TArray<int32>& Chain, int32 Final, FATSippResult& Out) const
@@ -1696,7 +1639,7 @@ void ATSipp::Run(FATSippCycle& Cycle)
 			Booking.Clear = Pass.Clear;
 			Booking.Exit = Pass.Exit;
 			Booking.Via = Pass.Via;
-			Booking.Kind = Pass.bWayOut ? EATSippKind::Predicted : Train.Kind;
+			Booking.Kind = Train.Kind;
 			Booking.bLocked = Pass.bLocked;
 			Booking.bHeld = Pass.bHeld;
 			Booking.bCommitted = Pass.bCommitted;

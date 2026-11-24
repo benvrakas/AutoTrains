@@ -148,8 +148,6 @@ namespace
 
 	// A leg check nobody asked for again within this long is dropped. [s]
 	constexpr double LegCheckForgetSeconds = 60.0;
-	// Longest way out of a station booked ahead (a line that never splits, a loop). [tracks]
-	constexpr int32 MaxWayOutTracks = 64;
 
 	FString SecondsText(double Seconds)
 	{
@@ -550,72 +548,6 @@ void AATTrafficSubsystem::PredictDeparture(FATTrafficTrain& State, double Now)
 	UE_LOG(LogAutoTrains, Verbose, TEXT("planner: %s docked at %s, expected to stay %.0f s; next leg to %s: %d tracks, %.0f m, leaving with %s"), *NameOf(Train),
 		*StationName(Docked), GetExpectedStay(Train, Docked, &State.DockRules, State.DockTransfer), *StationName(Next), State.PredictedRoute.Num(), BestLength / 100.f,
 		bLead ? TEXT("its lead locomotive") : TEXT("another locomotive (the other way)"));
-}
-
-void AATTrafficSubsystem::FindWayOut(FATTrafficTrain& State, const FATSippGraph& Graph, int32 Goal)
-{
-	// The next stop at another station than the goal, after the timetable's current stop.
-	AFGTrain* Train = State.Train.Get();
-	AFGRailroadTimeTable* TimeTable = Train ? Train->GetTimeTable() : nullptr;
-	TArray<FTimeTableStop> Stops;
-	if (TimeTable)
-	{
-		TimeTable->GetStops(Stops);
-	}
-	const AFGBuildableRailroadStation* Here = State.GoalStation.Get();
-	AFGBuildableRailroadStation* Next = nullptr;
-	const int32 Current = Stops.Num() > 0 ? FMath::Clamp(TimeTable->GetCurrentStop(), 0, Stops.Num() - 1) : 0;
-	for (int32 Offset = 1; Offset <= Stops.Num() && !Next && Here; ++Offset)
-	{
-		const FTimeTableStop& Stop = Stops[(Current + Offset) % Stops.Num()];
-		AFGBuildableRailroadStation* Station = Stop.Station ? Stop.Station->GetStation() : nullptr;
-		Next = Station && Station != Here ? Station : nullptr;
-	}
-	if (State.WayOutGraph == &Graph && State.WayOutFrom == Goal && State.WayOutTo.Get() == Next)
-	{
-		return;
-	}
-	State.WayOutGraph = &Graph;
-	State.WayOutFrom = Goal;
-	State.WayOutTo = Next;
-	State.WayOut.Reset();
-	if (!Graph.TrackOf.IsValidIndex(Goal))
-	{
-		return;
-	}
-	// Driving on with the train's front, up to the first track that splits ahead (where a train coming the other way
-	// could pass it): that far the way is the same whatever the next stop. Where the goal's own end splits, the branch
-	// towards the next stop; with no next stop known, none.
-	const AFGBuildableRailroadTrack* NextTrack = Next ? Next->GetTrackPosition().Track.Get() : nullptr;
-	const int32* NextIndex = NextTrack ? Graph.TrackIndex.Find(NextTrack) : nullptr;
-	int32 Node = Goal;
-	while (State.WayOut.Num() < MaxWayOutTracks && !Graph.OneWay[Node])
-	{
-		const TArray<int32>& Attached = Graph.Attached[Node];
-		const int32 Entry = Attached.Num() == 1 ? Attached[0] : INDEX_NONE;
-		if (Attached.Num() > 1 && NextIndex)
-		{
-			TArray<int32> Nodes;
-			if (ShortestWay(Graph, {Node}, INDEX_NONE, *NextIndex, &Nodes) >= 0.f && Nodes.Num() > 1)
-			{
-				State.WayOut.Add(Nodes[1]);
-			}
-			break;
-		}
-		const int32 After = Graph.OppositeOf.IsValidIndex(Entry) ? Graph.OppositeOf[Entry] : INDEX_NONE;
-		if (After == INDEX_NONE)
-		{
-			break;
-		}
-		State.WayOut.Add(After);
-		if (Graph.Attached[After].Num() > 1)
-		{
-			break;
-		}
-		Node = After;
-	}
-	UE_LOG(LogAutoTrains, Verbose, TEXT("planner: %s's way out of %s (next stop %s): %d tracks booked after its stay"), *NameOf(Train), *StationName(Here),
-		Next ? *StationName(Next) : TEXT("not known yet"), State.WayOut.Num());
 }
 
 bool AATTrafficSubsystem::FindLeg(const FATTrafficTrain& State, AFGBuildableRailroadStation* To, TArray<FATRouteStep>& OutRoute, float& OutLength, bool& bOutLead) const
@@ -1399,11 +1331,6 @@ void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds, bool bW
 			Out.GoalDwell = bDrive ? ATSippNever : GetExpectedStay(Train, State.GoalStation.Get(), GetStopRules(Train, TimeTable ? TimeTable->GetCurrentStop() : INDEX_NONE, State.GoalStation.Get(), Rules), -1);
 			Out.Commit = GetRouteCommit(State);
 			Out.bSearch = !bDrive && IsSearchDue(State, DeltaSeconds) && Out.Commit < Out.Route.Num() - 2;
-			if (!bDrive && Out.bGoal && Out.Route.Num() > 0)
-			{
-				FindWayOut(State, Graph, Out.Route.Last());
-				Out.WayOut = State.WayOut;
-			}
 			Out.MinGainSeconds = mSettings.RerouteMinGainSeconds;
 			Out.MinGainPercent = mSettings.RerouteMinGainPercent;
 			continue;

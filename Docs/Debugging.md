@@ -1188,6 +1188,22 @@ About 35 plans failed per minute in normal running.
 Watch on the next runs: `planner: ... is planned before`, `trains moved up after a failed plan` in the summary, the
 failed count, DEADLOCK and `passed through` lines, waits over 300 s in WAIT dumps.
 
+## 1.10.0: the track a moving train can't stop short of is granted without a plan slot
+
+Test server pair D (ST 0.40.0 + AT 1.9.0, 2026-11-24 08:46 UTC, emptied half): 7 s after the map loaded, SmartTrains
+gave a new job to a train driving at 110 km/h ("idle at Dune Desert Computer Out 1"). Its new route left the old one at
+the next switch; `GrantFromPlan` granted nothing past what it held, since the planner had no slot for the new route
+yet (`CanEnter`: "its plan has no slot there yet"), and the train was force-braked at 435 m/s2 to a stand inside the
+junction, nose to nose with "Rotor, Crystal Oscillator, Copper Ingot". Without the 1.8.0 pass-through that stayed; trains
+waiting with "no slot" grew from 2 to 30 over the half hour (906 such WAIT lines against 10 in pair C), car unloads fell
+from 265 to 158, and the planner cycle grew to 4 s.
+
+`CanEnter` now takes `bCommitted`: the route steps up to `GetRouteCommit` (those it can't stop short of at its speed now,
+the same steps the planner treats as committed) are entered without a plan slot. Others' bookings, grants and standing
+trains still refuse them, so a train that would run into another still brakes as hard as it must. The 2 s grace for
+"the game has no path for it" (`NoPathGraceSeconds`) covers the moment before the game has the new path at all; this
+covers the moment after, before the planner has a slot on it.
+
 ## 1.9.0: a train waits only where it first stands; no deadlock pass-through
 
 VM pair 18 (ST 0.37.0 + AT 1.8.0, 2026-11-24 UTC, emptied half): from about 00:58 trains queued around Dune Desert

@@ -601,14 +601,16 @@ bool AATTrafficSubsystem::FindLeg(const FATTrafficTrain& State, AFGBuildableRail
 	return OutRoute.Num() > 0;
 }
 
-bool AATTrafficSubsystem::CanEnter(FATTrafficTrain& Self, const FResourceKey& Key, int32 Index, double Enter, bool bHeldBefore,
+bool AATTrafficSubsystem::CanEnter(FATTrafficTrain& Self, const FResourceKey& Key, int32 Index, double Enter, bool bHeldBefore, bool bCommitted,
 	const UFGRailroadTrackConnectionComponent* Via, const UFGRailroadTrackConnectionComponent* Exit, double Now, const FATTrafficTrain*& OutBlocker,
 	FString& OutWhy) const
 {
 	const AFGTrain* SelfTrain = Self.Train.Get();
-	// Without a slot in its plan nothing new is given, but what it held from its last grant it keeps.
+	// Without a slot in its plan nothing new is given, but what it held from its last grant it keeps, and what it can't
+	// stop short of any more it enters anyway: refusing that only brakes it harder than it can (a moving train whose
+	// route just changed has no plan for the new route yet). Others' bookings and holds below still apply.
 	const bool bUnplanned = IsOpen(Enter);
-	if (bUnplanned && !bHeldBefore)
+	if (bUnplanned && !bHeldBefore && !bCommitted)
 	{
 		OutBlocker = mTrains.Find(Self.PlanWaitFor);
 		OutWhy = TEXT("its plan has no slot there yet");
@@ -745,6 +747,8 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 	};
 	// The route step the climb ahead of the last one granted starts at, INDEX_NONE if that isn't on one.
 	int32 ClimbStart = INDEX_NONE;
+	// The last route step it can't stop short of at its speed now (Docs/Debugging.md, "1.10.0").
+	const int32 Commit = GetRouteCommit(State);
 	for (int32 Index = 0; Index < State.Route.Num() && !bBlocked; ++Index)
 	{
 		const FATRouteStep& Step = State.Route[Index];
@@ -771,7 +775,7 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 		{
 			FResourceKey Key;
 			Key.Joint = Joint;
-			if (!CanEnter(State, Key, Index, JointEnter(Joint), HeldJoints.Contains(Joint), Entry, Step.Exit, Now, Blocker, Why))
+			if (!CanEnter(State, Key, Index, JointEnter(Joint), HeldJoints.Contains(Joint), Index <= Commit, Entry, Step.Exit, Now, Blocker, Why))
 			{
 				Where = FString::Printf(TEXT("the switch before %s"), *ResourceName(Step.Track, INDEX_NONE));
 				bBlocked = true;
@@ -781,7 +785,7 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 		{
 			FResourceKey Key;
 			Key.Track = Step.Track;
-			if (!CanEnter(State, Key, Index, TrackEnter(Step.Track), HeldTracks.Contains(Step.Track), nullptr, Step.Exit, Now, Blocker, Why))
+			if (!CanEnter(State, Key, Index, TrackEnter(Step.Track), HeldTracks.Contains(Step.Track), Index <= Commit, nullptr, Step.Exit, Now, Blocker, Why))
 			{
 				Where = ResourceName(Step.Track, INDEX_NONE);
 				bBlocked = true;
@@ -826,7 +830,7 @@ void AATTrafficSubsystem::GrantFromPlan(FATTrafficTrain& State, double Now)
 				}
 				FResourceKey Key;
 				Key.Crossing = Zone.Value;
-				if (!CanEnter(State, Key, Index, CrossingEnter(Zone.Value), HeldCrossings.Contains(Zone.Value), nullptr, Step.Exit, Now, Blocker, Why))
+				if (!CanEnter(State, Key, Index, CrossingEnter(Zone.Value), HeldCrossings.Contains(Zone.Value), Index <= Commit, nullptr, Step.Exit, Now, Blocker, Why))
 				{
 					Where = ResourceName(nullptr, INDEX_NONE, Zone.Value);
 					State.AuthorityCut = End - Zone.Key + GetStopDistance();

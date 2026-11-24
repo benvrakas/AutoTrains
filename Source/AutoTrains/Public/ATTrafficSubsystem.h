@@ -687,10 +687,12 @@ private:
 	// enter now: booked for it, no other train booked there first or standing there, except one it follows the same way.
 	void GrantFromPlan(FATTrafficTrain& State, double Now);
 	// Returns true if Self may enter Key, at its route step Index, with its booking entering at Enter (bHeldBefore: it
-	// was granted it last time): nobody else owns it, and it kept it or no train that doesn't own it goes first by the
-	// plan; otherwise sets the train in the way and why. A train it follows the same way is added to its followed trains.
-	bool CanEnter(FATTrafficTrain& Self, const FResourceKey& Key, int32 Index, double Enter, bool bHeldBefore, const UFGRailroadTrackConnectionComponent* Via,
-		const UFGRailroadTrackConnectionComponent* Exit, double Now, const FATTrafficTrain*& OutBlocker, FString& OutWhy) const;
+	// was granted it last time; bCommitted: it can't stop short of it any more): nobody else owns it, and it kept it or
+	// no train that doesn't own it goes first by the plan; otherwise sets the train in the way and why. A train it follows
+	// the same way is added to its followed trains.
+	bool CanEnter(FATTrafficTrain& Self, const FResourceKey& Key, int32 Index, double Enter, bool bHeldBefore, bool bCommitted,
+		const UFGRailroadTrackConnectionComponent* Via, const UFGRailroadTrackConnectionComponent* Exit, double Now, const FATTrafficTrain*& OutBlocker,
+		FString& OutWhy) const;
 	// Returns true if Other has a vehicle on the switch's fouling zone or crossing zone Key on a track that isn't on
 	// Self's route or under Self.
 	bool HasVehicleOffRoute(const FATTrafficTrain& Other, const FATTrafficTrain& Self, const FResourceKey& Key) const;

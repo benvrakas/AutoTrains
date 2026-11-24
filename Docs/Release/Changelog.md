@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.10.0
+
+- **A train whose route changes at speed brakes like a train.** When another mod or a player gave a moving train a new
+  destination, Auto Trains had no plan for the new route yet and let the train go no further, so it stopped from full
+  speed within a few metres. On the test server one train stopped that way from 110 km/h inside a junction, nose to
+  nose with another, and some 25 trains queued up behind them over the next half hour. Now the track a train can no
+  longer stop short of is its own until it is planned, unless another train stands there, holds it or is booked there
+  first.
+
 ## 1.9.0
 
 - **Trains wait only where they stand.** A train used to drive off as soon as its plan let it and then wait on the

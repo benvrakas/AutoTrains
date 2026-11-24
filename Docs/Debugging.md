@@ -1188,6 +1188,31 @@ About 35 plans failed per minute in normal running.
 Watch on the next runs: `planner: ... is planned before`, `trains moved up after a failed plan` in the summary, the
 failed count, DEADLOCK and `passed through` lines, waits over 300 s in WAIT dumps.
 
+## 1.12.0: a driving train's way out of its station is booked with its arrival; 1.11.x reverted
+
+Pairs G (1.11.0) and H (1.11.1) both deadlocked at Red Jungle Encased Uranium Cell In 1 again (G 12:12 UTC, H 13:41
+UTC). Pair H emptied 248 car unloads (F: 271) with failed plans per minute up from 29.6 to 48.8 and full brakes from 20
+to 43; as is 183 (F: 169; its deadlock came late in the run). Pair G at 12:11:41: "Sulfur, Silica" already stood on
+the single track (216 m before switch 640) when "Copper Ingot" docked at 12:11:38 and its next leg was predicted. That
+station's trains leave over the track the others arrive on (out through 2147008015 onto 2145911014 / 2145900466, in
+over the same track and 2145909247, switch 640). The way out was booked only from docking (`PredictDeparture`), too late:
+the arriving train was planned onto it while the other was still driving in. Pair H: the leaving train's next stop
+was a drive to park chosen at the end of its stay (SmartTrains 0.42.0), so not even a next stop was known while it
+drove in. Where a failed plan stands was never the cause; `FurthestFree` and `FGap::FixedHi` are removed (the stand
+kind stays in the `no way` line: where it is, furthest stop clear of switches and crossings, furthest stop, as far as
+it gets).
+
+`FindWayOut` (game thread, cached per goal connection, next stop and network copy): from the goal connection the
+train's front leaves the station track through, the tracks driving on up to and including the first whose far end
+splits (`Attached` > 1), where a train coming the other way could pass it; at most `MaxWayOutTracks` (64). That far
+the way is the same whatever the next stop, so it is booked with none known too. Only where the goal's own end splits
+does the next stop (`ShortestWay`) pick the branch; with none known, nothing is booked. The `way out of ... tracks
+booked after its stay` line logs each new one. `FPlanner::AddWayOut` adds it to a plan that reaches its goal: passes
+timed from the arrival plus `GoalDwell`, pulling away from standstill (`RestTime`), with `bWayOut`; their bookings are
+`EATSippKind::Predicted`, so every train plans around them (in every train's scope, never by rank), as around a docked
+train's next leg; `ApplyPlan` grants nothing from them (`Step` INDEX_NONE). Not covered: a train that leaves its station
+backwards (push-pull reversing), whose way out is booked forward.
+
 ## 1.11.1: only bookings that stay put keep a failed plan's stand back
 
 Test server pair G (ST 0.42.0 + AT 1.11.0, 2026-11-24 12:39 UTC): emptied half 112 car unloads (F: 271), trains standing

@@ -148,6 +148,8 @@ namespace
 
 	// A leg check nobody asked for again within this long is dropped. [s]
 	constexpr double LegCheckForgetSeconds = 60.0;
+	// Longest way out of a station booked ahead (a line that never splits, a loop). [tracks]
+	constexpr int32 MaxWayOutTracks = 64;
 
 	FString SecondsText(double Seconds)
 	{
@@ -577,25 +579,43 @@ void AATTrafficSubsystem::FindWayOut(FATTrafficTrain& State, const FATSippGraph&
 	State.WayOutFrom = Goal;
 	State.WayOutTo = Next;
 	State.WayOut.Reset();
-	const AFGBuildableRailroadTrack* NextTrack = Next ? Next->GetTrackPosition().Track.Get() : nullptr;
-	const int32* GoalTrack = NextTrack ? Graph.TrackIndex.Find(NextTrack) : nullptr;
-	TArray<int32> Nodes;
-	if (!GoalTrack || !Graph.TrackOf.IsValidIndex(Goal) || ShortestWay(Graph, {Goal}, INDEX_NONE, *GoalTrack, &Nodes) < 0.f)
+	if (!Graph.TrackOf.IsValidIndex(Goal))
 	{
 		return;
 	}
-	// Driving on with the train's front: up to the first track that splits ahead, where a train coming the other way
-	// could pass it.
-	for (int32 Index = 1; Index < Nodes.Num(); ++Index)
+	// Driving on with the train's front, up to the first track that splits ahead (where a train coming the other way
+	// could pass it): that far the way is the same whatever the next stop. Where the goal's own end splits, the branch
+	// towards the next stop; with no next stop known, none.
+	const AFGBuildableRailroadTrack* NextTrack = Next ? Next->GetTrackPosition().Track.Get() : nullptr;
+	const int32* NextIndex = NextTrack ? Graph.TrackIndex.Find(NextTrack) : nullptr;
+	int32 Node = Goal;
+	while (State.WayOut.Num() < MaxWayOutTracks && !Graph.OneWay[Node])
 	{
-		State.WayOut.Add(Nodes[Index]);
-		if (Graph.Attached[Nodes[Index]].Num() > 1)
+		const TArray<int32>& Attached = Graph.Attached[Node];
+		const int32 Entry = Attached.Num() == 1 ? Attached[0] : INDEX_NONE;
+		if (Attached.Num() > 1 && NextIndex)
+		{
+			TArray<int32> Nodes;
+			if (ShortestWay(Graph, {Node}, INDEX_NONE, *NextIndex, &Nodes) >= 0.f && Nodes.Num() > 1)
+			{
+				State.WayOut.Add(Nodes[1]);
+			}
+			break;
+		}
+		const int32 After = Graph.OppositeOf.IsValidIndex(Entry) ? Graph.OppositeOf[Entry] : INDEX_NONE;
+		if (After == INDEX_NONE)
 		{
 			break;
 		}
+		State.WayOut.Add(After);
+		if (Graph.Attached[After].Num() > 1)
+		{
+			break;
+		}
+		Node = After;
 	}
-	UE_LOG(LogAutoTrains, Verbose, TEXT("planner: %s's way out of %s towards %s: %d tracks booked after its stay"), *NameOf(Train), *StationName(Here),
-		*StationName(Next), State.WayOut.Num());
+	UE_LOG(LogAutoTrains, Verbose, TEXT("planner: %s's way out of %s (next stop %s): %d tracks booked after its stay"), *NameOf(Train), *StationName(Here),
+		Next ? *StationName(Next) : TEXT("not known yet"), State.WayOut.Num());
 }
 
 bool AATTrafficSubsystem::FindLeg(const FATTrafficTrain& State, AFGBuildableRailroadStation* To, TArray<FATRouteStep>& OutRoute, float& OutLength, bool& bOutLead) const
@@ -1739,11 +1759,10 @@ void AATTrafficSubsystem::ApplyPlan(FATTrafficTrain& State, const FATSippCycle& 
 		if (!Failure.IsEmpty())
 		{
 			++mPlanFailures;
-			static const TCHAR* const Stands[] = { TEXT("at its goal"), TEXT("where it is"), TEXT("at its furthest stop no fixed booking needs later"),
-				TEXT("at its furthest stop clear of switches and crossings, which a fixed booking needs later"), TEXT("at its furthest stop"),
-				TEXT("as far as it gets") };
+			static const TCHAR* const Stands[] = { TEXT("at its goal"), TEXT("where it is"), TEXT("at its furthest stop clear of switches and crossings"),
+				TEXT("at its furthest stop"), TEXT("as far as it gets") };
 			UE_LOG(LogAutoTrains, Verbose, TEXT("planner: %s: %s; it stands %s until that train has passed (%d states; left out: %d moves out of its reach, %d tail windows missed, %d stays at the goal that don't fit, %d moves it would stall on a climb, %d waits across a junction)"),
-				*NameOf(Train), *Failure, Stands[FMath::Clamp(Result.StandKind, 0, 5)], Result.States, Result.RejectedMotion, Result.RejectedTail, Result.RejectedStay, Result.RejectedClimb, Result.RejectedJunction);
+				*NameOf(Train), *Failure, Stands[FMath::Clamp(Result.StandKind, 0, 4)], Result.States, Result.RejectedMotion, Result.RejectedTail, Result.RejectedStay, Result.RejectedClimb, Result.RejectedJunction);
 		}
 		State.PlanFailure = Failure;
 	}

@@ -144,13 +144,11 @@ namespace
 
 	// What entering a resource at a time commits the train to: its tail clears it no earlier than ClearLo (a train
 	// ahead the same way, LoBy) and no later than ClearHi (the next booking, HiBy's, counting only because its train
-	// plans first if bHiByRank); Key tells the windows apart. FixedHi: the same counting only bookings that stay put when
-	// its train is planned again (not a moving train's plan slot).
+	// plans first if bHiByRank); Key tells the windows apart.
 	struct FGap
 	{
 		double ClearLo = -ATSippNever;
 		double ClearHi = ATSippNever;
-		double FixedHi = ATSippNever;
 		int32 LoBy = INDEX_NONE;
 		int32 HiBy = INDEX_NONE;
 		bool bHiByRank = false;
@@ -226,17 +224,15 @@ namespace
 		}
 
 		// Plans the train along Route (bLastIsGoal: its last step is the goal). With no way there it stands for good: where it
-		// stands if it stands clear of every switch and crossing, else at its furthest stop clear of them that no booking
-		// staying put needs later, else at its furthest stop there (Docs/Debugging.md, "1.8.0", "1.11.0", "1.11.1").
+		// stands if it stands clear of every switch and crossing, else at its furthest stop there (Docs/Debugging.md,
+		// "1.8.0"; "1.12.0" for why not only where no other train needs it later).
 		void Plan(const TArray<int32>& InRoute, bool bLastIsGoal, FATSippResult& Out)
 		{
 			const int32 Final = SearchLeavingLater(InRoute, false, bLastIsGoal);
 			const int32 Stand = Final != INDEX_NONE ? Final : StandsClear() ? 0
-				: FurthestFree != INDEX_NONE ? FurthestFree : FurthestClear != INDEX_NONE ? FurthestClear
-				: FurthestStopped != INDEX_NONE ? FurthestStopped : FurthestAny;
+				: FurthestClear != INDEX_NONE ? FurthestClear : FurthestStopped != INDEX_NONE ? FurthestStopped : FurthestAny;
 			Build(Stand, Final != INDEX_NONE, Out);
-			Out.StandKind = Final != INDEX_NONE ? 0 : Stand == 0 && StandsClear() ? 1 : Stand == FurthestFree ? 2 : Stand == FurthestClear ? 3
-				: Stand == FurthestStopped ? 4 : 5;
+			Out.StandKind = Final != INDEX_NONE ? 0 : Stand == 0 && StandsClear() ? 1 : Stand == FurthestClear ? 2 : Stand == FurthestStopped ? 3 : 4;
 			if (Final != INDEX_NONE)
 			{
 				AddWayOut(Final, Out);
@@ -324,7 +320,6 @@ namespace
 			States.Add(Start);
 			FurthestStopped = Train.bStanding ? 0 : INDEX_NONE;
 			FurthestClear = FurthestStopped;
-			FurthestFree = INDEX_NONE;
 			FurthestAny = 0;
 			if (InRoute.Num() == 0)
 			{
@@ -375,10 +370,8 @@ namespace
 			return INDEX_NONE;
 		}
 
-		// Keeps the furthest stop reached, the furthest with the body clear of every switch and crossing, the furthest of
-		// those where nothing under the body is booked later in a way that stays put (a docked train's way out, what a train
-		// holds, is committed to or stands on; it may stand there for good), and the furthest state of any kind, for a plan
-		// that can't reach the goal.
+		// Keeps the furthest stop reached, the furthest with the body clear of every switch and crossing, and the furthest
+		// state of any kind, for a plan that can't reach the goal.
 		void Note(int32 Index)
 		{
 			const FState& State = States[Index];
@@ -387,22 +380,13 @@ namespace
 			{
 				FurthestStopped = Index;
 			}
-			if (State.bStopped && (Better(FurthestClear) || Better(FurthestFree)))
+			if (State.bStopped && Better(FurthestClear))
 			{
 				bool bOnSwitch = false;
-				bool bBookedLater = false;
-				ForEachOpen(Index, State.Pos, [&](const FOpenResource& Open)
-				{
-					bOnSwitch = bOnSwitch || Open.Resource >= Graph.Length.Num();
-					bBookedLater = bBookedLater || !IsNever(Open.Gap.FixedHi);
-				});
-				if (!bOnSwitch && Better(FurthestClear))
+				ForEachOpen(Index, State.Pos, [&](const FOpenResource& Open) { bOnSwitch = bOnSwitch || Open.Resource >= Graph.Length.Num(); });
+				if (!bOnSwitch)
 				{
 					FurthestClear = Index;
-				}
-				if (!bOnSwitch && !bBookedLater && Better(FurthestFree))
-				{
-					FurthestFree = Index;
 				}
 			}
 			if (Better(FurthestAny))
@@ -495,10 +479,6 @@ namespace
 				const bool bByRank = !bFirst && Booking.Kind == EATSippKind::Moving && !Booking.bHeld && !Booking.bCommitted;
 				auto LowerHi = [&](double Hi)
 				{
-					if (!bByRank && Hi < Out.FixedHi)
-					{
-						Out.FixedHi = Hi;
-					}
 					if (Hi < Out.ClearHi)
 					{
 						Out.ClearHi = Hi;
@@ -1598,7 +1578,6 @@ namespace
 		TSet<int32> ReachedTracks;
 		int32 FurthestStopped = INDEX_NONE;
 		int32 FurthestClear = INDEX_NONE;
-		int32 FurthestFree = INDEX_NONE;
 		int32 FurthestAny = 0;
 		// Moves left out because the train can't reach the speed, its tail can't keep to a window, the stay at the goal
 		// doesn't fit, or it would stall on a climb, for the log.

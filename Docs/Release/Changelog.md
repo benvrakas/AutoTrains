@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.12.0
+
+- **Trains no longer meet head-on outside a station.** Where trains leave a station over the same single track
+  others arrive on, a train used to book its way out only once it had docked. By then a train heading in could
+  already be on that track, and neither could move again. Now a train's way out of the station, up to where the line
+  first splits, is booked as soon as it heads there, and trains on their way in wait before the single track.
+- **Reverted: where a train waits when it can't get through (1.11.0, 1.11.1).** It didn't fix the case above and
+  made trains wait further back than needed.
+
 ## 1.11.1
 
 - **Fixed: 1.11.0 held waiting trains back too far.** It kept a waiting train out of every spot any other train's plan

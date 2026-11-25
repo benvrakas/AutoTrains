@@ -68,9 +68,10 @@ namespace
 			}
 			Hud->SetTrain(Train);
 			Hud->AddToViewport(5);
+			// Position first: setting it puts the anchors back to the top left corner.
+			Hud->SetPositionInViewport(HudOffset, false);
 			Hud->SetAnchorsInViewport(FAnchors(1.f, 0.f));
 			Hud->SetAlignmentInViewport(FVector2D(1.f, 0.f));
-			Hud->SetPositionInViewport(HudOffset, false);
 			GHud = Hud;
 		}
 		else if (Train)

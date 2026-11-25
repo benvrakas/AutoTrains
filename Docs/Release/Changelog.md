@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.15.1
+
+- **Fixed: the ride strip never showed.** It was placed off the left edge of the screen. It now sits at the top right
+  while you ride a train Auto Trains drives.
+
 ## 1.15.0
 
 - **Trains plan waits where they block nobody.** A moving train used to plan at most one stop on its way (1.9.0), so

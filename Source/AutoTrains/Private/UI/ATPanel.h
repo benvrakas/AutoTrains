@@ -14,7 +14,7 @@ class UPanelWidget;
 class UTextBlock;
 class UVerticalBox;
 
-// Auto Trains' look: dark panels with FICSIT orange, in the game's font (Docs/Architecture.md, "UI").
+// Auto Trains' look: dark panels with FICSIT orange, in the game's font (Docs/UI.md).
 namespace ATStyle
 {
 	extern const FLinearColor Orange;

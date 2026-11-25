@@ -141,10 +141,25 @@ The method follows the safe interval planning of Phillips and Likhachev (2011) a
 its head. Auto Trains adds real train motion, whole-network route choice, learned station stays and continuous
 replanning.
 
+### In game
+
+- **Locomotive menu:** an Auto Trains card under the timetable shows what the train is doing: driving, waiting,
+  docked or stuck; its speed and the speed its plan asks for (it slows down or speeds up to keep its slot instead of
+  stopping); its next stop with the planned arrival; and the train it waits for, with how long. **Show me** puts your
+  compass marker on the train in the way.
+- **While you ride** a self-driving train, a small strip at the top right of the screen shows the same: state, speed
+  against the plan's speed, next stop and arrival, and what it waits for.
+- **`/at monitor`** opens the traffic monitor: how many trains drive, wait or are docked, the planner's round time
+  against its budget, jams passed through, and every train in trouble or waiting long, each with **Show me**.
+- **Admins are told in chat** when the deadlock safeguard lets a train pass through a jam, as that is a bug to report.
+
 ### Settings (Mods menu)
 
 <details>
 <summary><b>All settings and their defaults</b> (click to open)</summary>
+
+The switches come first; the numbers below them are marked **Advanced** in the Mods menu: tuning most players leave
+alone.
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -182,13 +197,10 @@ side of the track (back to back) allows both ways.
 
 ### Works with
 
-- **[SmartTrains](https://ficsit.app/mod/SmartTrains)** (beta) gives your platforms a role and the items they
-  handle, and sends trains from where items pile up to where they're needed. Auto Trains drives them. Before a
-  train leaves a station, SmartTrains asks Auto Trains whether its first leg can be driven now, around every other
-  train, including trains coming the other way on a single track; if not, the train waits in the station. Station
-  queues and travel times feed its trip timing, how busy the way into a station is helps it pick between stations,
-  its monitor shows trains that are stuck or deadlocked, and it can send an idle train to a depot spot (a siding or
-  a signal) that isn't a station, which Auto Trains then drives it to like any other leg.
+- **[SmartTrains](https://ficsit.app/mod/SmartTrains)** (beta) gives every consumer station trains that loop between
+  its suppliers and it, split by how much each uses. Auto Trains drives them. SmartTrains takes its travel times from
+  Auto Trains, tells it when it rewrites a timetable, and sends spare trains to depot signals, which Auto Trains
+  drives them to like any other leg.
 - **[Freight Car Control](https://ficsit.app/mod/FreightCarControl)** sets each freight car to load, unload or skip
   at every stop, so one train can fill car 1 at one station and car 2 at the next. Stations, docking and timetables
   work as usual.
@@ -213,6 +225,7 @@ Type them in the game chat. A `<train>` is its number from `/at list`, or part o
 
 | Command | What it does |
 |---|---|
+| `/at monitor` | Opens the traffic monitor (see In game). |
 | `/at list` | Every train with its number, speed, length and distance to its goal. |
 | `/at traffic status` | Every moving self-driving train, how far it may drive and what it is waiting for. The first place to look when a train seems stuck. |
 | `/at settings` | Every Auto Trains setting on the host or server, with its key and range. Settings changed from their default are marked `*`. |

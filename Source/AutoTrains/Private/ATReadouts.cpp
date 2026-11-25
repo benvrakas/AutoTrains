@@ -1,4 +1,4 @@
-// What the UI shows of Auto Trains' traffic (Docs/Architecture.md, "UI").
+// What the UI shows of Auto Trains' traffic (Docs/UI.md).
 #include "ATTrafficSubsystem.h"
 #include "ATChatCommand.h"
 #include "ATRemoteCallObject.h"

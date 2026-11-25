@@ -1188,6 +1188,32 @@ About 35 plans failed per minute in normal running.
 Watch on the next runs: `planner: ... is planned before`, `trains moved up after a failed plan` in the summary, the
 failed count, DEADLOCK and `passed through` lines, waits over 300 s in WAIT dumps.
 
+## 1.15.0: waits where nobody is in the way; in-reach ownership in the plan; UI
+
+Pair O (ST 0.50.1 + AT 1.14.0, 2026-11-24): no deadlocks, but 15-17 of 38 trains stood on the line for the second
+half of both runs. They queued behind trains docked "until full" at shared supplier platforms (SmartTrains' stop
+rule, changed in SmartTrains 0.51.0 to load once), not because of the planner. The planner's own faults in O: 17 / 28
+failed plans naming no train, 12-17 forced braking episodes.
+
+- `FPlanner::WaitsClear(Index)`: a stopped state may wait (`bCanWait`) also after the train has stood (`bHasStood`)
+  when its body there is off every switch and crossing (`IsOnJunction`) and no other train's booking on what the body
+  stands on (`ForEachOpen` resources) clears after the state's arrival, followers (`IsBehind`) aside. 1.9.0's rings came
+  from waits out on the line that others needed later; a wait on track nobody else is booked on can't be in a ring.
+- `GapAt(..., bInReach)`: for a new resource the train enters before `ForcedReach` (its braking distance at its speed
+  now), a booking counts only if it is the same way, locked or first (`bFirst`), held, committed, a Standing booking
+  or its owner stands. This is the grant rule of 1.10.0 in the plan, so a moving train's plan no longer fails on a
+  planned slot it can't stop short of; the slot's owner plans around it from the next round. Pair O's forced braking
+  came from such failed plans (e.g. 01:32:33 UTC: "over its braking curve (105 km/h, allowed 46, 48 m to go): full
+  brake" right after "no way on past switch 583 for ...").
+- Failed plans of moving trains with `StandStep < 0` and only motion rejections (`RejectedMotion`, the new first stop
+  closer than its braking allows; seen after SmartTrains rewrote a timetable mid-drive) are counted as `too close to a
+  new stop to stop` in the minute summary, not as failures naming no train: no booking is involved.
+
+Watch: failed plans per minute, failures naming no train, `forced braking` lines, `planner: ... WAIT` dumps with waits
+"before track ..." out on the line (should only be where nobody else is booked), DEADLOCK and pass-through lines.
+
+UI: Docs/UI.md.
+
 ## 1.14.0: core trim; standing-train search names its blocker; deadlock pass-through back as a safeguard
 
 Pair N (ST 0.43.0 + AT 1.13.3): STUCKPLAN reports were almost all standing trains, mostly "held up by no train named";

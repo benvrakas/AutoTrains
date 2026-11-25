@@ -5,7 +5,7 @@
 
 class AFGTrain;
 
-// What the server sends a player's locomotive menu and ride HUD about one train (Docs/Architecture.md, "UI").
+// What the server sends a player's locomotive menu and ride HUD about one train (Docs/UI.md).
 USTRUCT()
 struct AUTOTRAINS_API FATTrainView
 {

@@ -152,7 +152,8 @@ UATConfig::UATConfig()
 	for (const FNumberSetting& Setting : GetNumberSettings())
 	{
 		UConfigPropertyFloat* Property = CreateDefaultSubobject<UConfigPropertyFloat>(Setting.Key);
-		Property->DisplayName = Setting.Name;
+		// The numbers come after the switches, marked as tuning most players leave alone.
+		Property->DisplayName = FText::Format(LOCTEXT("AdvancedSetting", "Advanced · {0}"), Setting.Name);
 		Property->Tooltip = Setting.Tooltip;
 		Property->DefaultValue = Defaults.*Setting.Field;
 		Property->Value = Defaults.*Setting.Field;

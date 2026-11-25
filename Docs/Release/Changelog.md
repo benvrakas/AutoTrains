@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.15.0
+
+- **Trains plan waits where they block nobody.** A moving train used to plan at most one stop on its way (1.9.0), so
+  when it had stood once it could only find a way that never stopped again, and its plans failed far more often. It
+  may now plan to wait again wherever its whole body stands clear of switches and crossings and no other train is
+  booked on that track after it gets there. Elsewhere it still drives through, so waits can't sit in another train's
+  way.
+- **A moving train owns the track it can't stop short of, in its plan too.** The step that hands out track already
+  gave a train what it can no longer stop before (1.10.0), but its plan could still fail on another train's planned
+  slot there, and the failed plan then stopped it short with hard braking. Only a train standing there, holding it,
+  committed to it or ahead the same way now counts.
+- **New in the locomotive menu:** an Auto Trains card with the train's state, its speed and the speed its plan asks
+  for, its next stop and arrival, and what it waits for, with **Show me** (your compass marker on the train in the
+  way).
+- **New while riding:** a small strip at the top right of the screen with the same.
+- **New: `/at monitor`**, the traffic monitor: trains driving, waiting and docked, the planner's round time, jams
+  passed through, and every train in trouble or waiting long, each with Show me.
+- **Admins are told in chat** when the deadlock safeguard lets a train pass through a jam.
+- **Settings:** the numbers are marked Advanced in the Mods menu, after the switches.
+- **Log:** a moving train given a new stop too close to stop there at normal braking (its timetable changed while it
+  drove) is counted on its own in the minute summary, not as a failed plan naming no train.
+- For other mods: `ExternalGetStationQueue` and `ExternalGetTrackLoad` are gone (no mod used them).
+
 ## 1.14.0
 
 - **Trimmed to the core.** Auto Trains is now safe interval planning for many trains, made to fit how Satisfactory's

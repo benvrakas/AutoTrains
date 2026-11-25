@@ -482,7 +482,9 @@ namespace
 		// its scope there is in the way, and a train the same way is a headway ahead or
 		// behind at both ends. Sets the gap it then has to clear the resource in, else the earliest later entry that might
 		// work, the train in the way longest and whether its booking counts only because that train plans first.
-		bool GapAt(int32 Resource, int32 Exit, int32 Via, double Enter, FGap& Out, double& OutRetry, int32& OutBy, bool& bOutByRank) const
+		// bInReach: the train can't stop short of it, so it is the train's own (as the grants have it since 1.10.0): only
+		// a train that stands, holds it, is locked or committed there, or goes the same way, is in its way.
+		bool GapAt(int32 Resource, int32 Exit, int32 Via, double Enter, FGap& Out, double& OutRetry, int32& OutBy, bool& bOutByRank, bool bInReach = false) const
 		{
 			Out = FGap();
 			OutRetry = Enter;
@@ -517,6 +519,12 @@ namespace
 				{
 					continue;
 				}
+				const bool bSameWay = Exit != INDEX_NONE && Booking.Exit == Exit && Booking.Via == Via;
+				const bool bOwnerStands = Cycle.Trains.IsValidIndex(Booking.Owner) && Cycle.Trains[Booking.Owner].bStanding;
+				if (bInReach && !bSameWay && !bFirst && !Booking.bHeld && !Booking.bCommitted && !bOwnerStands && Booking.Kind != EATSippKind::Standing)
+				{
+					continue;
+				}
 				const bool bOpen = IsNever(Booking.Clear);
 				const bool bByRank = !bFirst && Booking.Kind == EATSippKind::Moving && !Booking.bHeld && !Booking.bCommitted;
 				auto LowerHi = [&](double Hi)
@@ -528,7 +536,7 @@ namespace
 						Out.bHiByRank = bByRank;
 					}
 				};
-				if (Exit != INDEX_NONE && Booking.Exit == Exit && Booking.Via == Via)
+				if (bSameWay)
 				{
 					// The same way: behind it, or ahead of it at both ends unless it goes first.
 					if (Enter >= Booking.Enter + Headway)
@@ -642,6 +650,33 @@ namespace
 				}
 			}
 			return true;
+		}
+
+		// Whether a wait at stopped state Index is in nobody's way: the body is clear of every switch and crossing, and no
+		// other train (but one following it) is booked on what the body stands on after it gets there.
+		bool WaitsClear(int32 Index) const
+		{
+			const FState& State = States[Index];
+			if (State.Step < 0 || IsOnJunction(Index))
+			{
+				return false;
+			}
+			bool bClear = true;
+			ForEachOpen(Index, State.Pos, [&](const FOpenResource& Open)
+			{
+				for (const FATSippBooking& Booking : Table.ByResource[Open.Resource])
+				{
+					if (!bClear)
+					{
+						return;
+					}
+					if (Booking.Owner != Slot && !IsBehind(Booking.Owner, Open.Resource) && (IsNever(Booking.Clear) || Booking.Clear > State.Arrive))
+					{
+						bClear = false;
+					}
+				}
+			});
+			return bClear;
 		}
 
 		// Whether the body standing at state Index is on a switch's fouling zone or a crossing zone.
@@ -1067,9 +1102,10 @@ namespace
 				AddZones(Run[Link], TrackEnd - Graph.Length[Track]);
 				TrackStart = TrackEnd;
 			}
-			// It waits only where it first stands (Docs/Debugging.md, "1.9.0"): where it stands now, or, moving now, at its first
-			// stop. Further on its plan drives through; a standing train leaves later instead (SearchLeavingLater).
-			const bool bCanWait = State.bStopped && !State.bHasStood;
+			// It waits where it first stands (Docs/Debugging.md, "1.9.0"), and further on only where the wait is in nobody's
+			// way ("1.15.0", WaitsClear); elsewhere its plan drives through, and a standing train leaves later instead
+			// (SearchLeavingLater).
+			const bool bCanWait = State.bStopped && (!State.bHasStood || WaitsClear(Index));
 			const double Earliest = State.Step < 0 ? FMath::Max3(State.Arrive, Train.MinDepart, DepartFloor) : State.Arrive;
 			// Not moving off at all: it stands where it is.
 			if (IsNever(Earliest))
@@ -1094,7 +1130,7 @@ namespace
 					double Retry = 0.0;
 					int32 By = INDEX_NONE;
 					bool bByRank = false;
-					if (!GapAt(News[New].Resource, News[New].Exit, News[New].Via, Enters[New], Gaps[New], Retry, By, bByRank))
+					if (!GapAt(News[New].Resource, News[New].Exit, News[New].Via, Enters[New], Gaps[New], Retry, By, bByRank, News[New].EnterAt <= ForcedReach))
 					{
 						NoteBlock(Index, By, News[New].Resource, bByRank, IsNever(Retry));
 						// Entered before the stop, or no waiting: no later departure helps here (a standing train may leave later).

@@ -1692,13 +1692,20 @@ void AATTrafficSubsystem::ApplyPlan(FATTrafficTrain& State, const FATSippCycle& 
 	{
 		// With no train in the way named: why the search ended.
 		const FATSippTrain& Input = Cycle.Trains[Slot];
+		const bool bTooClose = !Input.bStanding && Result.StandStep < 0 && Result.RejectedMotion > 0 && !Result.bOutOfRoom;
 		const FString Why = !Input.bGoal ? FString(TEXT("its route runs past the network copy"))
+			: bTooClose ? FString(TEXT("it is too close to its next stop to stop there at its normal braking (its timetable changed while it drove)"))
 			: Result.bOutOfRoom ? FString::Printf(TEXT("the search ran out of room (%d states over its departures) with no train named"), Result.States)
 			: FString::Printf(TEXT("no move on from route step %d"), Result.StandStep);
 		Failure = Result.BlockedAt != INDEX_NONE ? FString::Printf(TEXT("no way on past %s for %s"), *Name(Result.BlockedAt), *NameOf(TrainOf(Result.BlockedBy)))
 			: FString::Printf(TEXT("no way to its goal: %s"), *Why);
 	}
-	if (Result.bFailed && !Cycle.Trains.IsValidIndex(Result.BlockedBy))
+	const bool bNoStopInReach = Result.bFailed && !Cycle.Trains[Slot].bStanding && Result.StandStep < 0 && Result.RejectedMotion > 0 && !Result.bOutOfRoom;
+	if (bNoStopInReach)
+	{
+		++mPlanTooClose;
+	}
+	else if (Result.bFailed && !Cycle.Trains.IsValidIndex(Result.BlockedBy))
 	{
 		++mPlanUnnamed;
 		mPlanOutOfRoom += Result.bOutOfRoom ? 1 : 0;
@@ -2075,11 +2082,11 @@ void AATTrafficSubsystem::UpdatePlannedTraffic(float DeltaSeconds)
 		{
 			Bookings += Pair.Value.Num();
 		}
-		UE_LOG(LogAutoTrains, Log, TEXT("planner: last %.0f s: %d trains (%d driving), %d bookings now, %.2f ms per update; %d cycles, %.1f ms each on a worker, %d updates waited for one, %d trains moved up after a failed plan; %d plans, %d with a wait, %d failed, %d failed plans naming no train (%d out of room), %d committed conflicts, %d reroutes, %d departures predicted"),
+		UE_LOG(LogAutoTrains, Log, TEXT("planner: last %.0f s: %d trains (%d driving), %d bookings now, %.2f ms per update; %d cycles, %.1f ms each on a worker, %d updates waited for one, %d trains moved up after a failed plan; %d plans, %d with a wait, %d failed, %d failed plans naming no train (%d out of room), %d too close to a new stop to stop, %d committed conflicts, %d reroutes, %d departures predicted"),
 			PlanSummarySeconds, mStateOf.Num(), Driving.Num(), Bookings, mPlanUpdates > 0 ? mPlanSeconds * 1000.0 / mPlanUpdates : 0.0, mCycles,
-			mCycles > 0 ? mCycleMilliseconds / mCycles : 0.0, mCyclesLate, mPlanReorders, mPlans, mPlanWaits, mPlanFailures, mPlanUnnamed, mPlanOutOfRoom, mPlanCommitted,
+			mCycles > 0 ? mCycleMilliseconds / mCycles : 0.0, mCyclesLate, mPlanReorders, mPlans, mPlanWaits, mPlanFailures, mPlanUnnamed, mPlanOutOfRoom, mPlanTooClose, mPlanCommitted,
 			mPlanReroutes, mPlanPredictions);
-		mPlans = mPlanWaits = mPlanFailures = mPlanUnnamed = mPlanOutOfRoom = mPlanCommitted = mPlanReroutes = mPlanPredictions = mPlanUpdates = mCycles = mCyclesLate = mPlanReorders = 0;
+		mPlans = mPlanWaits = mPlanFailures = mPlanUnnamed = mPlanOutOfRoom = mPlanTooClose = mPlanCommitted = mPlanReroutes = mPlanPredictions = mPlanUpdates = mCycles = mCyclesLate = mPlanReorders = 0;
 		mCycleMilliseconds = 0.0;
 		mPlanSeconds = 0.0;
 		mPlanSummaryAt = Now + PlanSummarySeconds;
@@ -2483,179 +2490,6 @@ float AATTrafficSubsystem::ExternalEstimateTravelSeconds(AFGTrain* Train, AFGBui
 	const FRouteSpeed Speed = State ? GetRouteSpeed(*State) : GetFleetRouteSpeed();
 	const float Cruise = FMath::Max(Speed.Cruise, 100.f);
 	return Distance / Cruise + Cruise / (2.f * FMath::Max(Speed.Accel, 1.f)) + Cruise / (2.f * FMath::Max(Speed.Brake, 1.f));
-}
-
-float AATTrafficSubsystem::ExternalGetStationQueue(AFGBuildableRailroadStation* Station, TArray<AFGTrain*>& OutTrains)
-{
-	OutTrains.Reset();
-	const UWorld* World = GetWorld();
-	if (!Station || !World)
-	{
-		return 0.f;
-	}
-	const double Now = World->GetTimeSeconds();
-	double Free = Now;
-	bool bUnknown = false;
-	TArray<TPair<double, AFGTrain*>> Coming;
-	for (const TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Pair : mTrains)
-	{
-		const FATTrafficTrain& State = Pair.Value;
-		AFGTrain* Train = State.Train.Get();
-		if (!Train)
-		{
-			continue;
-		}
-		if (Train->IsDocked() && State.DockStation.Get() == Station)
-		{
-			OutTrains.Add(Train);
-			const double Start = State.DockedAt >= 0.0 ? State.DockedAt : Now;
-			Free = FMath::Max(Free, Start + GetExpectedStay(Train, Station, &State.DockRules, State.DockTransfer));
-			continue;
-		}
-		if (State.bManaged && State.GoalStation.Get() == Station)
-		{
-			if (State.PlanArrival < 0.0 || IsOpen(State.PlanArrival))
-			{
-				bUnknown = true;
-				Coming.Add({OpenTime, Train});
-				continue;
-			}
-			FTrainDockingRuleSet Rules;
-			const AFGRailroadTimeTable* TimeTable = Train->GetTimeTable();
-			const float Stay = GetExpectedStay(Train, Station, GetStopRules(Train, TimeTable ? TimeTable->GetCurrentStop() : INDEX_NONE, Station, Rules), -1);
-			Coming.Add({State.PlanArrival, Train});
-			Free = FMath::Max(Free, State.PlanArrival + Stay);
-		}
-	}
-	Coming.Sort([](const TPair<double, AFGTrain*>& A, const TPair<double, AFGTrain*>& B) { return A.Key < B.Key; });
-	for (const TPair<double, AFGTrain*>& Train : Coming)
-	{
-		OutTrains.Add(Train.Value);
-	}
-	return bUnknown ? -1.f : static_cast<float>(Free - Now);
-}
-
-float AATTrafficSubsystem::ExternalGetTrackLoad(AFGBuildableRailroadStation* Station, float HorizonSeconds, float ApproachMetres, TArray<AFGTrain*>& OutTrains,
-	float& OutWaitingSeconds)
-{
-	OutTrains.Reset();
-	OutWaitingSeconds = 0.f;
-	const UWorld* World = GetWorld();
-	const AFGBuildableRailroadTrack* StationTrack = Station ? Station->GetTrackPosition().Track.Get() : nullptr;
-	if (!mEnabled || !World || !StationTrack)
-	{
-		return -1.f;
-	}
-	// The tracks within reach, nearest first, walking out of both ends of the station's track.
-	constexpr int32 MaxTracks = 2000;
-	const float Reach = FMath::Max(ApproachMetres, 0.f) * 100.f;
-	TSet<const AFGBuildableRailroadTrack*> Tracks;
-	TSet<int32> Joints;
-	TSet<int32> Crossings;
-	Tracks.Add(StationTrack);
-	TArray<TPair<float, const UFGRailroadTrackConnectionComponent*>> Open;
-	const auto Less = [](const TPair<float, const UFGRailroadTrackConnectionComponent*>& A, const TPair<float, const UFGRailroadTrackConnectionComponent*>& B) { return A.Key < B.Key; };
-	for (int32 End = 0; End < 2; ++End)
-	{
-		if (const UFGRailroadTrackConnectionComponent* Connection = StationTrack->GetConnection(End))
-		{
-			Open.HeapPush({0.f, Connection}, Less);
-		}
-	}
-	while (Open.Num() > 0 && Tracks.Num() < MaxTracks)
-	{
-		TPair<float, const UFGRailroadTrackConnectionComponent*> Item;
-		Open.HeapPop(Item, Less);
-		const int32 Joint = GetJoint(Item.Value);
-		if (Joint != INDEX_NONE)
-		{
-			Joints.Add(Joint);
-		}
-		if (Item.Key >= Reach)
-		{
-			continue;
-		}
-		for (const UFGRailroadTrackConnectionComponent* Other : Item.Value->GetConnections())
-		{
-			const AFGBuildableRailroadTrack* Track = Other ? Other->GetTrack() : nullptr;
-			if (!Track || Tracks.Contains(Track))
-			{
-				continue;
-			}
-			Tracks.Add(Track);
-			if (const UFGRailroadTrackConnectionComponent* Far = Other->GetOpposite())
-			{
-				Open.HeapPush({Item.Key + Track->GetLength(), Far}, Less);
-			}
-		}
-	}
-	for (const AFGBuildableRailroadTrack* Track : Tracks)
-	{
-		for (const FATZone& Zone : GetZones(Track))
-		{
-			Crossings.Add(Zone.Crossing);
-		}
-	}
-
-	// The busiest switch or crossing: booked time in the horizon over the horizon.
-	const double Now = World->GetTimeSeconds();
-	const double Horizon = FMath::Max(HorizonSeconds, 1.f);
-	float Busiest = 0.f;
-	TSet<const AFGTrain*> Booked;
-	auto AddLoad = [&](const FResourceKey& Key)
-	{
-		const TArray<FBooking>* Bookings = mBookings.Find(Key);
-		if (!Bookings)
-		{
-			return;
-		}
-		double Used = 0.0;
-		for (const FBooking& Booking : *Bookings)
-		{
-			const double From = FMath::Max(Booking.Enter, Now);
-			const double To = IsOpen(Booking.Clear) ? Now + Horizon : FMath::Min(Booking.Clear, Now + Horizon);
-			if (To > From)
-			{
-				Used += To - From;
-				Booked.Add(Booking.Owner);
-			}
-		}
-		Busiest = FMath::Max(Busiest, static_cast<float>(Used / Horizon));
-	};
-	for (const int32 Joint : Joints)
-	{
-		FResourceKey Key;
-		Key.Joint = Joint;
-		AddLoad(Key);
-	}
-	for (const int32 Crossing : Crossings)
-	{
-		FResourceKey Key;
-		Key.Crossing = Crossing;
-		AddLoad(Key);
-	}
-
-	for (const TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Pair : mTrains)
-	{
-		const FATTrafficTrain& State = Pair.Value;
-		AFGTrain* Train = State.Train.Get();
-		if (!Train)
-		{
-			continue;
-		}
-		if (Booked.Contains(Train))
-		{
-			OutTrains.Add(Train);
-		}
-		const bool bHeldUpHere = State.WaitingSeconds > 0.f && !State.BlockedReason.IsEmpty()
-			&& ((State.BlockedAtTrack && Tracks.Contains(State.BlockedAtTrack)) || Joints.Contains(State.BlockedAtJoint) || Crossings.Contains(State.BlockedAtCrossing)
-				|| Algo::AnyOf(State.Occupied, [&Tracks](const AFGBuildableRailroadTrack* Track) { return Tracks.Contains(Track); }));
-		if (bHeldUpHere)
-		{
-			OutWaitingSeconds += State.WaitingSeconds;
-		}
-	}
-	return Busiest;
 }
 
 int32 AATTrafficSubsystem::ExternalGetTroubledTrains(TArray<AFGTrain*>& OutTrains, TArray<FString>& OutKinds, TArray<float>& OutSeconds)

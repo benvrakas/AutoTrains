@@ -67,7 +67,7 @@ public:
 	// Starts the client check that shows the strip while the local player rides a train (not on a dedicated server).
 	static void Install();
 
-	void SetTrain(AFGTrain* InTrain) { mTrain = InTrain; }
+	void SetTrain(AFGTrain* InTrain);
 
 protected:
 	virtual UWidget* WrapRoot(UVerticalBox* Root) override;

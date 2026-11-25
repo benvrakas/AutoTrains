@@ -198,6 +198,11 @@ void UATTrainPanel::Refresh(UATRemoteCallObject* RCO)
 
 //~ UATRideHud
 
+void UATRideHud::SetTrain(AFGTrain* InTrain)
+{
+	mTrain = InTrain;
+}
+
 void UATRideHud::Install()
 {
 	static FTSTicker::FDelegateHandle Handle;

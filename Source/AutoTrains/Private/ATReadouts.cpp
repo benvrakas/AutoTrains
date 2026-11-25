@@ -17,7 +17,7 @@ namespace
 	constexpr int32 MonitorRows = 40;
 	// A wait reason is cut to this length for the UI; the log has it in full.
 	constexpr int32 ReasonLength = 110;
-	constexpr float CmPerSecondToKmh = 0.036f;
+	constexpr float ViewKmhPerCmPerSecond = 0.036f;
 
 	FString StationNameOf(const AFGBuildableRailroadStation* Station)
 	{
@@ -43,8 +43,8 @@ FATTrainView AATTrafficSubsystem::MakeTrainView(AFGTrain* Train) const
 	{
 		return View;
 	}
-	View.Speed = State->Speed * CmPerSecondToKmh;
-	View.TargetSpeed = Train->mAtcData.TargetSpeed * CmPerSecondToKmh;
+	View.Speed = State->Speed * ViewKmhPerCmPerSecond;
+	View.TargetSpeed = Train->mAtcData.TargetSpeed * ViewKmhPerCmPerSecond;
 	const bool bPlanStuck = State->PlanFailedSince >= 0.0 && Now - State->PlanFailedSince >= 60.0;
 	View.State = Now < State->GhostUntil ? 5 : Train->IsDocked() ? 3 : (State->bInDeadlock || bPlanStuck) ? 4 : State->WaitingSeconds > 2.f ? 2 : State->bManaged ? 1 : 0;
 	const AFGBuildableRailroadStation* Goal = State->bManaged ? State->GoalStation.Get() : State->PredictedStation.Get();

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "ATViews.h"
 #include "ATConfig.h"
 #include "FGTrainDockingRules.h"
 #include "Curves/RichCurve.h"
@@ -327,6 +328,16 @@ public:
 	AATTrafficSubsystem();
 
 	static AATTrafficSubsystem* Get(const UObject* WorldContext);
+
+	//~ UI (ATReadouts.cpp)
+	// What the locomotive menu and the ride HUD show of Train.
+	FATTrainView MakeTrainView(AFGTrain* Train) const;
+	// The traffic monitor: counts, the planner's round time and the trains in trouble.
+	FATMonitorView MakeMonitorView() const;
+	// Puts Player's marker on the train Train waits for (or on Train); returns the chat line saying so.
+	FString MarkForPlayer(AFGTrain* Train, APlayerController* Player);
+	// Shows Text in the chat of every player who may change the world (host, server admins).
+	void AlertAdmins(const FString& Text) const;
 
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -746,6 +757,10 @@ private:
 	int32 mPlanReorders = 0;
 	int32 mCyclesLate = 0;
 	double mCycleMilliseconds = 0.0;
+	// The last planner round on a worker. [ms]
+	double mLastCycleMs = 0.0;
+	// Deadlocks passed through since the world loaded.
+	int32 mPassThroughs = 0;
 	double mPlanSeconds = 0.0;
 	double mPlanSummaryAt = 0.0;
 	double mPlanSlowLoggedAt = -1e9;

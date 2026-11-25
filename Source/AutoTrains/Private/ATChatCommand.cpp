@@ -1,4 +1,6 @@
 #include "ATChatCommand.h"
+#include "ATRemoteCallObject.h"
+#include "FGPlayerController.h"
 #include "ATConfig.h"
 #include "ATControlSubsystem.h"
 #include "ATTrafficSubsystem.h"
@@ -175,7 +177,15 @@ AATChatCommand::AATChatCommand()
 	Aliases.Add(TEXT("autotrains"));
 	MinNumberOfArguments = 1;
 	bOnlyUsableByPlayer = true;
-	Usage = NSLOCTEXT("AutoTrains", "ChatUsage", "/at traffic on|off|status | reroute on|off | list | autopilot <train|all> on|off | removesignals confirm | settings | set <setting> <value> | where [<place>|clear] | tp <place>|back   (<train> = number from /at list, or part of its name; <place> = x y z in metres, a name from the log, or a train)");
+	Usage = NSLOCTEXT("AutoTrains", "ChatUsage", "/at monitor | traffic on|off|status | reroute on|off | list | autopilot <train|all> on|off | removesignals confirm | settings | set <setting> <value> | where [<place>|clear] | tp <place>|back   (<train> = number from /at list, or part of its name; <place> = x y z in metres, a name from the log, or a train)");
+}
+
+FString AATChatCommand::MarkLocation(UWorld* World, const APlayerController* Player, const FVector& Location, const FString& Label)
+{
+	FATPlace Place;
+	Place.Location = Location;
+	Place.Label = Label;
+	return MarkPlace(World, Player, Place);
 }
 
 bool AATChatCommand::MayChangeWorld(UCommandSender* Sender)
@@ -212,7 +222,7 @@ EExecutionStatus AATChatCommand::ExecuteCommand_Implementation(UCommandSender* S
 	UE_LOG(LogAutoTrains, Log, TEXT("/at %s"), *FString::Join(Arguments, TEXT(" ")));
 
 	const FString Verb = Arguments[0].ToLower();
-	const bool bReadOnly = Verb == TEXT("list") || Verb == TEXT("settings") || Verb == TEXT("where") || (Verb == TEXT("traffic") && Arguments.Num() == 2 && Arguments[1].Equals(TEXT("status"), ESearchCase::IgnoreCase));
+	const bool bReadOnly = Verb == TEXT("monitor") || Verb == TEXT("list") || Verb == TEXT("settings") || Verb == TEXT("where") || (Verb == TEXT("traffic") && Arguments.Num() == 2 && Arguments[1].Equals(TEXT("status"), ESearchCase::IgnoreCase));
 	const bool bAdmin = MayChangeWorld(Sender);
 	if (!bReadOnly && !bAdmin)
 	{
@@ -249,6 +259,20 @@ EExecutionStatus AATChatCommand::ExecuteCommand_Implementation(UCommandSender* S
 		UE_LOG(LogAutoTrains, Log, TEXT("Settings: /at set %s %s: %s"), *Arguments[1], *Arguments[2], *Message);
 		Sender->SendChatMessage(Message, bOk ? FLinearColor::White : FLinearColor::Red);
 		return bOk ? EExecutionStatus::COMPLETED : EExecutionStatus::BAD_ARGUMENTS;
+	}
+	if (Verb == TEXT("monitor"))
+	{
+		AFGPlayerController* Controller = Cast<AFGPlayerController>(Sender ? Sender->GetPlayer() : nullptr);
+		UATRemoteCallObject* RCO = Controller ? Controller->GetRemoteCallObjectOfClass<UATRemoteCallObject>() : nullptr;
+		if (RCO)
+		{
+			RCO->Client_OpenMonitor();
+		}
+		else
+		{
+			Sender->SendChatMessage(TEXT("The monitor opens for a player in the game."));
+		}
+		return EExecutionStatus::COMPLETED;
 	}
 	if (Verb == TEXT("where"))
 	{

@@ -6,6 +6,8 @@
 #include "ATHooks.h"
 #include "ATRemoteCallObject.h"
 #include "ATTrafficSubsystem.h"
+#include "Patching/WidgetBlueprintHookManager.h"
+#include "UI/ATUIHooks.h"
 
 UATGameInstanceModule::UATGameInstanceModule()
 {
@@ -21,6 +23,12 @@ void UATGameInstanceModule::DispatchLifecycleEvent(ELifecyclePhase Phase)
 	{
 		UATConfig::UseSMLEditorClasses();
 		FATHooks::InstallHooks();
+	}
+	else if (Phase == ELifecyclePhase::POST_INITIALIZATION && mWidgetHooks.Num() == 0)
+	{
+		TArray<UWidgetBlueprintHookData*> Hooks;
+		ATUIHooks::Register(this, Hooks);
+		mWidgetHooks.Append(Hooks);
 	}
 	Super::DispatchLifecycleEvent(Phase);
 }

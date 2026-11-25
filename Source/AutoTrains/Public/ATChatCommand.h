@@ -17,6 +17,8 @@ public:
 	// player whose privilege level is Administrator.
 	static bool MayChangeWorld(UCommandSender* Sender);
 	static bool MayChangeWorld(const APlayerController* Player);
+	// Puts Player's single /at where marker at Location named Label; returns the chat line saying so.
+	static FString MarkLocation(UWorld* World, const APlayerController* Player, const FVector& Location, const FString& Label);
 
 	virtual EExecutionStatus ExecuteCommand_Implementation(UCommandSender* Sender, const TArray<FString>& Arguments, const FString& Label) override;
 

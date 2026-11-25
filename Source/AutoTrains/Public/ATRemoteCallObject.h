@@ -2,6 +2,8 @@
 
 #include "CoreMinimal.h"
 #include "FGRemoteCallObject.h"
+#include "ATViews.h"
+class AFGTrain;
 #include "ATRemoteCallObject.generated.h"
 
 // One setting changed in a client's Mods menu: its key and its value as UATConfig::Write takes it.
@@ -32,6 +34,32 @@ public:
 	UFUNCTION(Client, Reliable)
 	void Client_ShowMessage(const FString& Text);
 
+	//~ UI: the server answers each request with the matching Client_ call.
+	UFUNCTION(Server, Unreliable)
+	void Server_RequestTrain(AFGTrain* Train);
+
+	UFUNCTION(Server, Unreliable)
+	void Server_RequestMonitor();
+
+	// Puts this player's marker on the train Train waits for (or on Train).
+	UFUNCTION(Server, Reliable)
+	void Server_MarkTrain(AFGTrain* Train);
+
+	UFUNCTION(Client, Unreliable)
+	void Client_Train(const FATTrainView& View);
+
+	UFUNCTION(Client, Unreliable)
+	void Client_Monitor(const FATMonitorView& View);
+
+	// "/at monitor": opens the monitor window on this player's screen.
+	UFUNCTION(Client, Reliable)
+	void Client_OpenMonitor();
+
+	// The latest views on the client, and a number that changes whenever one arrives.
+	const FATTrainView* GetTrainView(const AFGTrain* Train) const;
+	const FATMonitorView& GetMonitorView() const { return mMonitor; }
+	uint32 GetRevision() const { return mRevision; }
+
 	// Returns the local player's instance, or nullptr (logged) if there is none.
 	static UATRemoteCallObject* GetLocal(const UObject* WorldContext);
 
@@ -46,4 +74,8 @@ private:
 
 	UPROPERTY(Replicated, Meta = (NoAutoJson))
 	bool mForceNetField_UATRemoteCallObject = false;
+
+	TMap<TWeakObjectPtr<AFGTrain>, FATTrainView> mTrainViews;
+	FATMonitorView mMonitor;
+	uint32 mRevision = 0;
 };

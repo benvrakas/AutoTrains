@@ -15,6 +15,11 @@ public:
 	UATGameInstanceModule();
 
 	virtual void DispatchLifecycleEvent(ELifecyclePhase Phase) override;
+
+private:
+	// The locomotive menu hook, kept alive for the game's lifetime.
+	UPROPERTY()
+	TArray<TObjectPtr<class UWidgetBlueprintHookData>> mWidgetHooks;
 };
 
 // Auto Trains' root game world module; registers the subsystems and the chat command.

@@ -1,6 +1,9 @@
 #include "ATRemoteCallObject.h"
 #include "ATChatCommand.h"
 #include "ATConfig.h"
+#include "ATTrafficSubsystem.h"
+#include "FGTrain.h"
+#include "UI/ATMonitorWindow.h"
 #include "AutoTrains.h"
 #include "FGChatManager.h"
 #include "FGPlayerController.h"
@@ -117,4 +120,56 @@ void UATRemoteCallObject::Server_SetSettings_Implementation(const TArray<FATSett
 	{
 		ChatManager->BroadcastChatMessage(MakeMessage(GetWorld(), Text));
 	}
+}
+
+void UATRemoteCallObject::Server_RequestTrain_Implementation(AFGTrain* Train)
+{
+	if (AATTrafficSubsystem* Traffic = AATTrafficSubsystem::Get(this); Traffic && Train)
+	{
+		Client_Train(Traffic->MakeTrainView(Train));
+	}
+}
+
+void UATRemoteCallObject::Server_RequestMonitor_Implementation()
+{
+	if (AATTrafficSubsystem* Traffic = AATTrafficSubsystem::Get(this))
+	{
+		Client_Monitor(Traffic->MakeMonitorView());
+	}
+}
+
+void UATRemoteCallObject::Server_MarkTrain_Implementation(AFGTrain* Train)
+{
+	AATTrafficSubsystem* Traffic = AATTrafficSubsystem::Get(this);
+	if (Traffic && Train)
+	{
+		const FString Line = Traffic->MarkForPlayer(Train, GetOwnerPlayerController());
+		UE_LOG(LogAutoTrains, Log, TEXT("UI: %s marked the way of %s: %s"), *GetPlayerName(), *Train->GetTrainName().ToString(), *Line);
+		Client_ShowMessage(Line);
+	}
+}
+
+void UATRemoteCallObject::Client_Train_Implementation(const FATTrainView& View)
+{
+	if (View.Train)
+	{
+		mTrainViews.Add(View.Train, View);
+		++mRevision;
+	}
+}
+
+void UATRemoteCallObject::Client_Monitor_Implementation(const FATMonitorView& View)
+{
+	mMonitor = View;
+	++mRevision;
+}
+
+void UATRemoteCallObject::Client_OpenMonitor_Implementation()
+{
+	UATMonitorWindow::Open(GetOwnerPlayerController());
+}
+
+const FATTrainView* UATRemoteCallObject::GetTrainView(const AFGTrain* Train) const
+{
+	return Train ? mTrainViews.Find(const_cast<AFGTrain*>(Train)) : nullptr;
 }

@@ -1488,6 +1488,7 @@ void AATTrafficSubsystem::ApplyPlanCycle()
 	const FATSippGraph& Graph = *Cycle->Graph;
 	++mCycles;
 	mCycleMilliseconds += Cycle->Milliseconds;
+	mLastCycleMs = Cycle->Milliseconds;
 	// The cycle's bookings replace all others.
 	mBookings.Reset();
 	mOwnerBookings.Reset();

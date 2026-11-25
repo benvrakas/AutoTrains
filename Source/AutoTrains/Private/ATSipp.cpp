@@ -49,6 +49,8 @@ namespace
 	constexpr int32 RouteSearchShare = 4;
 	// A move shorter than this is none, and a train slower than this at a track end stops there instead. [cm] [cm/s]
 	constexpr float MinMove = 1.f;
+	// How far ahead of a train without a plan its way on is kept free of standing trains at most. [cm]
+	constexpr float NoStandReach = 200000.f;
 	constexpr float MinPassSpeed = 50.f;
 	// Speeds a train may pass a track end at besides the fastest and slowest it can reach there, as shares of its
 	// cruising speed, and the number of speed bands its states there are told apart by.
@@ -226,15 +228,20 @@ namespace
 			ForcedReach = FMath::Square(Train.Speed) / (2.f * Brake);
 		}
 
-		// Plans the train along Route (bLastIsGoal: its last step is the goal). With no way there it stands for good: where it
-		// stands if it stands clear of every switch and crossing, else at its furthest stop there (Docs/Debugging.md, "1.8.0").
+		// Plans the train along Route (bLastIsGoal: its last step is the goal). With no way there it stands for good where it
+		// may stand: where it is, else at its furthest stop so (Docs/Debugging.md, "1.8.0" and "1.16.0").
 		void Plan(const TArray<int32>& InRoute, bool bLastIsGoal, FATSippResult& Out)
 		{
 			const int32 Final = SearchLeavingLater(InRoute, false, bLastIsGoal);
-			const int32 Stand = Final != INDEX_NONE ? Final : StandsClear() ? 0
-				: FurthestClear != INDEX_NONE ? FurthestClear : FurthestStopped != INDEX_NONE ? FurthestStopped : FurthestAny;
+			// With no way: where it may stand (CanStandAt), here or as far on as it gets; a train standing on another's way
+			// moves off it. Only with no such stop in reach does it stand on someone's way (logged as StandKind 5).
+			const bool bHereClear = StandsClear();
+			const bool bHereAllowed = Final == INDEX_NONE && bHereClear && CanStandAt(0);
+			const int32 Stand = Final != INDEX_NONE ? Final : bHereAllowed ? 0 : FurthestClear != INDEX_NONE ? FurthestClear : bHereClear ? 0
+				: FurthestStopped != INDEX_NONE ? FurthestStopped : FurthestAny;
 			Build(Stand, Final != INDEX_NONE, Out);
-			Out.StandKind = Final != INDEX_NONE ? 0 : Stand == 0 && StandsClear() ? 1 : Stand == FurthestClear ? 2 : Stand == FurthestStopped ? 3 : 4;
+			Out.StandKind = Final != INDEX_NONE ? 0 : Stand == 0 && bHereAllowed ? 1 : Stand == FurthestClear ? 2 : Stand == 0 && bHereClear ? 5
+				: Stand == FurthestStopped ? 3 : 4;
 			// No way: held up by the booking that ended the attempt that got furthest; with none named and the state limit
 			// reached, the search ran out of room.
 			if (Final == INDEX_NONE && BestBlockedBy != INDEX_NONE)
@@ -412,8 +419,8 @@ namespace
 			return INDEX_NONE;
 		}
 
-		// Keeps the furthest stop reached, the furthest with the body clear of every switch and crossing, and the furthest
-		// state of any kind, for a plan that can't reach the goal.
+		// Keeps the furthest stop reached, the furthest where the train may stand (CanStandAt), and the furthest state of any
+		// kind, for a plan that can't reach the goal.
 		void Note(int32 Index)
 		{
 			const FState& State = States[Index];
@@ -422,14 +429,9 @@ namespace
 			{
 				FurthestStopped = Index;
 			}
-			if (State.bStopped && Better(FurthestClear))
+			if (State.bStopped && Better(FurthestClear) && CanStandAt(Index))
 			{
-				bool bOnSwitch = false;
-				ForEachOpen(Index, State.Pos, [&](const FOpenResource& Open) { bOnSwitch = bOnSwitch || Open.Resource >= Graph.Length.Num(); });
-				if (!bOnSwitch)
-				{
-					FurthestClear = Index;
-				}
+				FurthestClear = Index;
 			}
 			if (Better(FurthestAny))
 			{
@@ -652,27 +654,42 @@ namespace
 			return true;
 		}
 
-		// Whether a wait at stopped state Index is in nobody's way: the body is clear of every switch and crossing, and no
-		// other train (but one following it) is booked on what the body stands on after it gets there.
-		bool WaitsClear(int32 Index) const
+		// Whether the train may stand (wait, or stand for good) at stopped state Index: its body is clear of every switch and
+		// crossing; no other train is booked on what it stands on after it gets there; and none of it is on the way on of a
+		// train without a plan (FATSippCycle::NoStand), which books nothing there. Trains following it, and trains ahead of
+		// it the same way, don't count (Docs/Debugging.md, "1.16.0").
+		bool CanStandAt(int32 Index) const
 		{
 			const FState& State = States[Index];
-			if (State.Step < 0 || IsOnJunction(Index))
+			if (IsOnJunction(Index))
 			{
 				return false;
 			}
+			auto IsOther = [this](int32 Owner, int32 Resource) { return Owner != Slot && !IsBehind(Owner, Resource) && !Train.First.Contains(Owner); };
 			bool bClear = true;
 			ForEachOpen(Index, State.Pos, [&](const FOpenResource& Open)
 			{
+				if (!bClear)
+				{
+					return;
+				}
 				for (const FATSippBooking& Booking : Table.ByResource[Open.Resource])
 				{
-					if (!bClear)
-					{
-						return;
-					}
-					if (Booking.Owner != Slot && !IsBehind(Booking.Owner, Open.Resource) && (IsNever(Booking.Clear) || Booking.Clear > State.Arrive))
+					if (IsOther(Booking.Owner, Open.Resource) && (IsNever(Booking.Clear) || Booking.Clear > State.Arrive))
 					{
 						bClear = false;
+						return;
+					}
+				}
+				if (const TArray<int32>* Owners = Cycle.NoStand.Find(Open.Resource))
+				{
+					for (const int32 Owner : *Owners)
+					{
+						if (IsOther(Owner, Open.Resource))
+						{
+							bClear = false;
+							return;
+						}
 					}
 				}
 			});
@@ -1105,7 +1122,7 @@ namespace
 			// It waits where it first stands (Docs/Debugging.md, "1.9.0"), and further on only where the wait is in nobody's
 			// way ("1.15.0", WaitsClear); elsewhere its plan drives through, and a standing train leaves later instead
 			// (SearchLeavingLater).
-			const bool bCanWait = State.bStopped && (!State.bHasStood || WaitsClear(Index));
+			const bool bCanWait = State.bStopped && (!State.bHasStood || (State.Step >= 0 && CanStandAt(Index)));
 			const double Earliest = State.Step < 0 ? FMath::Max3(State.Arrive, Train.MinDepart, DepartFloor) : State.Arrive;
 			// Not moving off at all: it stands where it is.
 			if (IsNever(Earliest))
@@ -1647,6 +1664,66 @@ void ATSipp::Run(FATSippCycle& Cycle)
 	if (!Cycle.Graph.IsValid())
 	{
 		return;
+	}
+	// Ways on of trains without a plan: from the front along the route, through the first switch or crossing ahead and on
+	// until the whole body could stand clear of it (or NoStandReach), where nobody else may come to a stand. A failed
+	// plan books nothing ahead of the train, so without this a train held up elsewhere could stop right on its way out
+	// and lock it in (Docs/Debugging.md, "1.16.0").
+	Cycle.NoStand.Reset();
+	const FATSippGraph& Network = *Cycle.Graph;
+	for (int32 Slot = 0; Slot < Count; ++Slot)
+	{
+		const FATSippTrain& Train = Cycle.Trains[Slot];
+		if (!Train.bNoPlan || Train.Turn != EATSippTurn::Plan)
+		{
+			continue;
+		}
+		auto Mark = [&](int32 Resource)
+		{
+			if (Resource != INDEX_NONE)
+			{
+				Cycle.NoStand.FindOrAdd(Resource).AddUnique(Slot);
+			}
+		};
+		float Ahead = 0.f;
+		float ClearRun = 0.f;
+		bool bPassed = false;
+		for (int32 Step = 0; Step < Train.Route.Num(); ++Step)
+		{
+			const int32 Exit = Train.Route[Step];
+			if (!Network.TrackOf.IsValidIndex(Exit))
+			{
+				break;
+			}
+			const int32 Track = Network.TrackOf[Exit];
+			const float Length = Step == 0 ? Train.FirstEnd : Network.Length[Track];
+			Mark(Track);
+			for (const FATSippZone& Zone : Network.ZonesOf[Track])
+			{
+				Mark(Zone.Resource);
+			}
+			Ahead += Length;
+			if (Network.ZonesOf[Track].Num() > 0)
+			{
+				bPassed = true;
+				ClearRun = 0.f;
+			}
+			else
+			{
+				ClearRun += Length;
+			}
+			if ((bPassed && ClearRun >= Train.Length) || Ahead >= NoStandReach)
+			{
+				break;
+			}
+			const int32 Joint = Network.JointOf[Exit];
+			if (Joint != INDEX_NONE)
+			{
+				Mark(Network.JointResource(Joint));
+				bPassed = true;
+				ClearRun = 0.f;
+			}
+		}
 	}
 	// Route searches first, side by side, against the bookings as the cycle starts; each new route is then planned
 	// exactly at its train's turn.

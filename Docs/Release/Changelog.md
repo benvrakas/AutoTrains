@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.16.0
+
+- **No train stops on another train's way out any more.** When a train can't get a plan, it stands at the furthest
+  spot it can reach that is clear of switches and crossings. That spot could be right where a docked or stuck train
+  has to leave by, since such a train books nothing ahead of itself; the two then locked each other for good, and on
+  the test server about 37 trains queued behind one such pair. Now a train only stands (waits, or stays after a
+  failed plan) where it is in nobody's way: clear of junctions, no train booked there later, and not on the way out
+  of a train that has no plan. A train already standing in such a way moves off it when it can.
+- **The jam safeguard passes the right train.** A ring of waiting trains is now recognised by its trains rather than
+  their names, and timed from when its longest-waiting member joined, so a ring whose members change (or which
+  another mod renames) is still passed after 60 s. It lets the core of the jam drive through, a train whose way is
+  taken by a standing train, instead of one queued behind it.
+- **Log:** the minute summary counts plans that left a train standing on another's way because no other stop was in
+  reach.
+
 ## 1.15.1
 
 - **Fixed: the ride strip never showed.** It was placed off the left edge of the screen. It now sits at the top right

@@ -85,6 +85,8 @@ namespace
 	constexpr float DeadlockShowSpeed = 50.f;
 	// A deadlock not seen for this long is over. [s]
 	constexpr double DeadlockForgetSeconds = 10.0;
+	// A train slower than this counts as standing when the safeguard picks the core of a jam. [cm/s]
+	constexpr float CoreStandSpeed = 50.f;
 	// A blocked train slower than this counts as waiting. [cm/s]
 	constexpr float PlannerWaitSpeed = 300.f;
 	// A wait ends once the train is let go for this long without a break, or once it moves faster than PlannerWaitSpeed. [s]
@@ -1437,10 +1439,17 @@ void AATTrafficSubsystem::GhostThrough(const TArray<const FATTrafficTrain*>& Cha
 	{
 		return;
 	}
-	// One train at a time, so no two run onto the same switch together: the first whose way is free of the train it
-	// waits for, else the first.
+	// One train at a time, so no two run onto the same switch together. The core of the jam goes: a train whose way is
+	// taken by a train standing there (two trains each standing on the other's way out lock for good; passing a train
+	// queued behind them only lets the queue refill). Else the first whose way is free, else the first.
+	auto IsCore = [this](const FATTrafficTrain* Member)
+	{
+		const FATTrafficTrain* Blocker = mTrains.Find(Member->BlockedBy);
+		return Blocker && IsWayTaken(*Member) && FMath::Abs(Blocker->Speed) < CoreStandSpeed;
+	};
+	const FATTrafficTrain* const* Core = Chain.FindByPredicate(IsCore);
 	const FATTrafficTrain* const* Free = Chain.FindByPredicate([this](const FATTrafficTrain* Member) { return !IsWayTaken(*Member); });
-	const FATTrafficTrain* Picked = Free ? *Free : Chain[0];
+	const FATTrafficTrain* Picked = Core ? *Core : Free ? *Free : Chain[0];
 	FATTrafficTrain* Stuck = mTrains.Find(Picked->Train);
 	if (!Stuck)
 	{
@@ -1517,18 +1526,28 @@ void AATTrafficSubsystem::LogDeadlocks()
 			continue;
 		}
 		TArray<FString> Names;
+		// The cycle by its trains (names change when another mod renames a train), and how long it has gone on: since its
+		// longest-waiting member first joined a cycle, so members coming and going don't restart the timer.
+		TArray<FString> Keys;
+		double Since = Now;
 		for (const FATTrafficTrain* Member : Chain)
 		{
 			Names.Add(TrainName(Member->Train.Get()));
+			Keys.Add(FString::Printf(TEXT("%p"), Member->Train.Get()));
 			InCycle.Add(Member);
 			if (FATTrafficTrain* Marked = mTrains.Find(Member->Train))
 			{
 				Marked->bInDeadlock = true;
+				if (Marked->InDeadlockSince < 0.0)
+				{
+					Marked->InDeadlockSince = Now;
+				}
+				Marked->InDeadlockSeenAt = Now;
+				Since = FMath::Min(Since, Marked->InDeadlockSince);
 			}
 		}
-		TArray<FString> Sorted = Names;
-		Sorted.Sort();
-		const FString Signature = FString::Join(Sorted, TEXT("|"));
+		Keys.Sort();
+		const FString Signature = FString::Join(Keys, TEXT("|"));
 		FDeadlockSeen* Seen = mDeadlocks.Find(Signature);
 		const bool bNew = !Seen;
 		if (bNew)
@@ -1536,9 +1555,9 @@ void AATTrafficSubsystem::LogDeadlocks()
 			Seen = &mDeadlocks.Add(Signature, {Now, Now});
 		}
 		Seen->Last = Now;
-		if (mSettings.bGhostDeadlocks && Now - Seen->First >= mSettings.GhostAfterSeconds)
+		if (mSettings.bGhostDeadlocks && Now - Since >= mSettings.GhostAfterSeconds)
 		{
-			GhostThrough(Chain, Now - Seen->First);
+			GhostThrough(Chain, Now - Since);
 		}
 		if (!bNew)
 		{
@@ -1608,7 +1627,7 @@ void AATTrafficSubsystem::LogDeadlocks()
 		const FATTrafficTrain* By = mTrains.Find(Root->BlockedBy);
 		const bool bParked = IsUndriven(By);
 		Root->bWaitsForParked = bParked;
-		const FString Signature = (bParked ? TEXT("parked|") : TEXT("stuck|")) + TrainName(Root->Train.Get()) + TEXT("|") + (bParked ? TrainName(By->Train.Get()) : FString());
+		const FString Signature = (bParked ? TEXT("parked|") : TEXT("stuck|")) + FString::Printf(TEXT("%p|%p"), Root->Train.Get(), bParked ? By->Train.Get() : nullptr);
 		FDeadlockSeen* Seen = mDeadlocks.Find(Signature);
 		const bool bNew = !Seen;
 		if (bNew)
@@ -1645,6 +1664,13 @@ void AATTrafficSubsystem::LogDeadlocks()
 		if (Now - It.Value().Last > DeadlockForgetSeconds)
 		{
 			It.RemoveCurrent();
+		}
+	}
+	for (TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Pair : mTrains)
+	{
+		if (Pair.Value.InDeadlockSince >= 0.0 && Now - Pair.Value.InDeadlockSeenAt > DeadlockForgetSeconds)
+		{
+			Pair.Value.InDeadlockSince = -1.0;
 		}
 	}
 	for (TPair<TWeakObjectPtr<AFGTrain>, FATTrafficTrain>& Pair : mTrains)

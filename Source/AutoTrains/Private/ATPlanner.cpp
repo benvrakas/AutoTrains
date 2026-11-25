@@ -1341,6 +1341,8 @@ void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds, bool bW
 			Out.Kind = EATSippKind::Moving;
 			Out.bRanked = true;
 			Out.MinDepart = Now;
+			// Its last plan failed: it books nothing ahead, so its way on is kept free of standing trains.
+			Out.bNoPlan = State.PlanFailedSince >= 0.0;
 			FTrainDockingRuleSet Rules;
 			const AFGRailroadTimeTable* TimeTable = Train ? Train->GetTimeTable() : nullptr;
 			// A driven-to goal: it stands there until it is sent on, and its route there isn't searched again.
@@ -1397,6 +1399,8 @@ void AATTrafficSubsystem::StartPlanCycle(double Now, float DeltaSeconds, bool bW
 				Out.Kind = EATSippKind::Predicted;
 				Out.bRanked = false;
 				Out.MinDepart = Depart;
+				// Its departure found no way last time: its way out is kept free of standing trains.
+				Out.bNoPlan = IsOpen(State.PredictedArrival);
 				FTrainDockingRuleSet Rules;
 				Out.GoalDwell = GetExpectedStay(Train, State.PredictedStation.Get(), GetStopRules(Train, State.PredictedStop, State.PredictedStation.Get(), Rules), -1);
 				continue;
@@ -1701,6 +1705,7 @@ void AATTrafficSubsystem::ApplyPlan(FATTrafficTrain& State, const FATSippCycle& 
 		Failure = Result.BlockedAt != INDEX_NONE ? FString::Printf(TEXT("no way on past %s for %s"), *Name(Result.BlockedAt), *NameOf(TrainOf(Result.BlockedBy)))
 			: FString::Printf(TEXT("no way to its goal: %s"), *Why);
 	}
+	mPlanStoodInWay += Result.bFailed && Result.StandKind == 5 ? 1 : 0;
 	const bool bNoStopInReach = Result.bFailed && !Cycle.Trains[Slot].bStanding && Result.StandStep < 0 && Result.RejectedMotion > 0 && !Result.bOutOfRoom;
 	if (bNoStopInReach)
 	{
@@ -1764,10 +1769,10 @@ void AATTrafficSubsystem::ApplyPlan(FATTrafficTrain& State, const FATSippCycle& 
 		if (!Failure.IsEmpty())
 		{
 			++mPlanFailures;
-			static const TCHAR* const Stands[] = { TEXT("at its goal"), TEXT("where it is"), TEXT("at its furthest stop clear of switches and crossings"),
-				TEXT("at its furthest stop"), TEXT("as far as it gets") };
+			static const TCHAR* const Stands[] = { TEXT("at its goal"), TEXT("where it is"), TEXT("at its furthest stop in nobody's way"),
+				TEXT("at its furthest stop"), TEXT("as far as it gets"), TEXT("where it is, on another train's way (no stop in nobody's way in reach)") };
 			UE_LOG(LogAutoTrains, Verbose, TEXT("planner: %s: %s; it stands %s until that train has passed (%d states; left out: %d moves out of its reach, %d tail windows missed, %d stays at the goal that don't fit, %d moves it would stall on a climb, %d waits across a junction)"),
-				*NameOf(Train), *Failure, Stands[FMath::Clamp(Result.StandKind, 0, 4)], Result.States, Result.RejectedMotion, Result.RejectedTail, Result.RejectedStay, Result.RejectedClimb, Result.RejectedJunction);
+				*NameOf(Train), *Failure, Stands[FMath::Clamp(Result.StandKind, 0, 5)], Result.States, Result.RejectedMotion, Result.RejectedTail, Result.RejectedStay, Result.RejectedClimb, Result.RejectedJunction);
 		}
 		State.PlanFailure = Failure;
 	}
@@ -2083,11 +2088,11 @@ void AATTrafficSubsystem::UpdatePlannedTraffic(float DeltaSeconds)
 		{
 			Bookings += Pair.Value.Num();
 		}
-		UE_LOG(LogAutoTrains, Log, TEXT("planner: last %.0f s: %d trains (%d driving), %d bookings now, %.2f ms per update; %d cycles, %.1f ms each on a worker, %d updates waited for one, %d trains moved up after a failed plan; %d plans, %d with a wait, %d failed, %d failed plans naming no train (%d out of room), %d too close to a new stop to stop, %d committed conflicts, %d reroutes, %d departures predicted"),
+		UE_LOG(LogAutoTrains, Log, TEXT("planner: last %.0f s: %d trains (%d driving), %d bookings now, %.2f ms per update; %d cycles, %.1f ms each on a worker, %d updates waited for one, %d trains moved up after a failed plan; %d plans, %d with a wait, %d failed, %d failed plans naming no train (%d out of room), %d too close to a new stop to stop, %d left standing on another train's way, %d committed conflicts, %d reroutes, %d departures predicted"),
 			PlanSummarySeconds, mStateOf.Num(), Driving.Num(), Bookings, mPlanUpdates > 0 ? mPlanSeconds * 1000.0 / mPlanUpdates : 0.0, mCycles,
-			mCycles > 0 ? mCycleMilliseconds / mCycles : 0.0, mCyclesLate, mPlanReorders, mPlans, mPlanWaits, mPlanFailures, mPlanUnnamed, mPlanOutOfRoom, mPlanTooClose, mPlanCommitted,
+			mCycles > 0 ? mCycleMilliseconds / mCycles : 0.0, mCyclesLate, mPlanReorders, mPlans, mPlanWaits, mPlanFailures, mPlanUnnamed, mPlanOutOfRoom, mPlanTooClose, mPlanStoodInWay, mPlanCommitted,
 			mPlanReroutes, mPlanPredictions);
-		mPlans = mPlanWaits = mPlanFailures = mPlanUnnamed = mPlanOutOfRoom = mPlanTooClose = mPlanCommitted = mPlanReroutes = mPlanPredictions = mPlanUpdates = mCycles = mCyclesLate = mPlanReorders = 0;
+		mPlans = mPlanWaits = mPlanFailures = mPlanUnnamed = mPlanOutOfRoom = mPlanTooClose = mPlanStoodInWay = mPlanCommitted = mPlanReroutes = mPlanPredictions = mPlanUpdates = mCycles = mCyclesLate = mPlanReorders = 0;
 		mCycleMilliseconds = 0.0;
 		mPlanSeconds = 0.0;
 		mPlanSummaryAt = Now + PlanSummarySeconds;

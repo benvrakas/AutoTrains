@@ -187,6 +187,9 @@ struct FATSippTrain
 	double GoalDwell = 0.0;
 	// Only asked about: planned after every other train, never moved up before one.
 	bool bProbe = false;
+	// Its last plan failed, so it books nothing ahead of itself: its way on along Route is kept free of standing trains
+	// (FATSippCycle::NoStand).
+	bool bNoPlan = false;
 	// Route search: whether to look for a faster route beyond route step Commit, and the gain a new one needs. [s] [%]
 	bool bSearch = false;
 	int32 Commit = 0;
@@ -214,8 +217,9 @@ struct FATSippResult
 	// BlockedBy's booking on BlockedAt (INDEX_NONE if unknown).
 	bool bFailed = false;
 	int32 StandStep = -1;
-	// Where a failed plan stands: 1 where it is (clear of every switch and crossing), 2 its furthest stop so clear, 3 its
-	// furthest stop, 4 its furthest state; 0 for a plan that reaches its goal.
+	// Where a failed plan stands: 1 where it is (it may stand there: CanStandAt), 2 its furthest stop where it may stand,
+	// 5 where it is, clear of every switch and crossing but on another train's way (no stop it may stand at in reach),
+	// 3 its furthest stop, 4 its furthest state; 0 for a plan that reaches its goal.
 	int32 StandKind = 0;
 	int32 BlockedBy = INDEX_NONE;
 	int32 BlockedAt = INDEX_NONE;
@@ -256,6 +260,9 @@ struct FATSippCycle
 	int32 MaxStates = 200000;
 	TArray<FATSippTrain> Trains;
 	FATSippTable Table;
+	// Per resource, the slots without a plan (bNoPlan) whose way on passes it: no other train comes to a stand there.
+	// Filled by Run.
+	TMap<int32, TArray<int32>> NoStand;
 	TArray<FATSippResult> Results;
 	// The order the turns were planned in, and the (train, train it goes before from the next cycle on) move.
 	TArray<int32> Order;

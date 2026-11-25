@@ -304,6 +304,10 @@ struct FATTrafficTrain
 	// Passing through a deadlock: until when at most (world seconds, -1 if not) and how far it still drives so. [cm]
 	double GhostUntil = -1.0;
 	float GhostLeft = 0.f;
+	// Since when it has been in some cycle of waiting trains (world seconds, -1 if not), and when it last was: a cycle
+	// whose members change, or whose trains are renamed, is still the same jam for the pass-through timer.
+	double InDeadlockSince = -1.0;
+	double InDeadlockSeenAt = -1.0;
 	// The track or switch the train waits at.
 	const AFGBuildableRailroadTrack* BlockedAtTrack = nullptr;
 	int32 BlockedAtJoint = INDEX_NONE;
@@ -749,6 +753,8 @@ private:
 	int32 mPlanOutOfRoom = 0;
 	// Failed plans of moving trains whose new next stop was too close to stop at with normal braking.
 	int32 mPlanTooClose = 0;
+	// Failed plans that left the train standing on another train's way, with no stop in nobody's way in reach.
+	int32 mPlanStoodInWay = 0;
 	int32 mPlanCommitted = 0;
 	int32 mPlanReroutes = 0;
 	int32 mPlanPredictions = 0;

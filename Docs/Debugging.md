@@ -1188,6 +1188,42 @@ About 35 plans failed per minute in normal running.
 Watch on the next runs: `planner: ... is planned before`, `trains moved up after a failed plan` in the summary, the
 failed count, DEADLOCK and `passed through` lines, waits over 300 s in WAIT dumps.
 
+## 1.16.0: no train stands on another train's way on; the safeguard passes the core of a jam
+
+**Seen (IB server, 2026-11-25 08:04-08:20 UTC, 1.15.1 + SmartTrains 0.53.2):** about 37 trains stood. At its core
+two trains locked each other: "Copper Ingot, Caterium Ingot, Rubber" stood at its furthest stop clear of switches and
+crossings, on track 2146688756 with its body over 2146621770, which was the docked "Rubber: Blue Crater Rubber Out 1"
+train's way out, while that train's way on ran over the first one ("no way on past track 2144778170 for ..." and
+"no way on past track 2146621770 for ..." for 754 s; every 30 s both looked for another route, none found). Trains
+queued on the Rubber train's way out then joined the ring.
+
+**Cause:** a failed plan stands the train at its furthest stop clear of switches and crossings (`Plan`, `Note`). A
+train whose own plan failed, or a docked train whose departure found no way, books nothing ahead of itself, so that
+stop could be its way out. The 1.11.0 attempt (count every planned slot) was too broad and was reverted with 1.12.0.
+1.15.0's `WaitsClear` had the same blind spot. STUCKPLAN counts rose with the traffic (SmartTrains' load-once stops and
+whole-network timetable rewrites at load and on the first join), not with 1.15's planner changes: 374 of 408 stuck
+trains stood, where the in-reach rule doesn't apply, and 402 of 407 named blockers counted whatever the order.
+
+**Rule (one check, `CanStandAt`):** a train may stand (wait, or stand for good after a failed plan) only where its body
+is clear of every switch and crossing, no other train is booked on what it stands on after it gets there, and none
+of it is on the way on of a train without a plan (`FATSippTrain::bNoPlan`: a driven train whose last plan failed, or
+a docked one whose departure found no way). That way on (`FATSippCycle::NoStand`, filled at the start of `Run`) runs
+from its front along its route through the first switch or crossing ahead and on until its whole body could stand
+clear (at most 2 km). It is not a booking: other trains still pass through it in their gaps. Trains following the
+same way and trains ahead the same way don't count. `CanStandAt` replaces `WaitsClear` (1.15.0's extra waits) and the
+junction test in `Note`; a train already standing on another's way moves on to a stop where it may stand when it can
+reach one. With none in reach it stays where it is if that is clear of junctions (StandKind 5, counted as "left
+standing on another train's way" in the minute summary).
+
+**Safeguard:** a ring is keyed by its trains, not their names (SmartTrains renames trains), and timed from when its
+longest-waiting member first joined any ring (`InDeadlockSince`), so members coming and going don't restart the 60 s.
+It passes the core of the jam: a member whose way is taken by a train standing there. Before, it passed the first
+member whose way was free, which was a train queued behind the lock three times out of four, and the queue refilled
+within 37 s.
+
+**Not done:** the in-reach rule (1.15.0) could apply only to track entered before a plan's first stop; that was found
+by reading the code, with no case in the logs.
+
 ## 1.15.0: waits where nobody is in the way; in-reach ownership in the plan; UI
 
 Pair O (ST 0.50.1 + AT 1.14.0, 2026-11-24): no deadlocks, but 15-17 of 38 trains stood on the line for the second

@@ -151,7 +151,8 @@ replanning.
   against the plan's speed, next stop and arrival, and what it waits for.
 - **`/at monitor`** opens the traffic monitor: how many trains drive, wait or are docked, the planner's round time
   against its budget, jams passed through, and every train in trouble or waiting long, each with **Show me**.
-- **Admins are told in chat** when the deadlock safeguard lets a train pass through a jam, as that is a bug to report.
+- **Jams passed through** by the deadlock safeguard are written to the log and to `Saved/AutoTrains/faults.log`, as
+  each is a bug to report; the monitor counts them.
 
 ### Settings (Mods menu)
 

@@ -1470,8 +1470,6 @@ void AATTrafficSubsystem::GhostThrough(const TArray<const FATTrafficTrain*>& Cha
 	UE_LOG(LogAutoTrains, Warning, TEXT("traffic: DEADLOCK PASSED THROUGH: %s"), *Fault);
 	WriteFault(Fault);
 	++mPassThroughs;
-	AlertAdmins(FString::Printf(TEXT("Cleared a jam of %d trains: %s drove through (beta safeguard). Please report it with Saved/AutoTrains/faults.log."),
-		Chain.Num(), *TrainName(Picked->Train.Get())));
 }
 
 bool AATTrafficSubsystem::IsWayTaken(const FATTrafficTrain& State) const

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.16.1
+
+- **No chat message when a jam is passed through any more.** Admins got a chat line each time the deadlock safeguard
+  let a train drive through a jam. It is still written to the log and to `Saved/AutoTrains/faults.log`, and the
+  monitor (`/at monitor`) still counts jams passed through.
+
 ## 1.16.0
 
 - **No train stops on another train's way out any more.** When a train can't get a plan, it stands at the furthest

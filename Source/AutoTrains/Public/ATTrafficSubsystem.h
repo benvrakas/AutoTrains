@@ -340,8 +340,6 @@ public:
 	FATMonitorView MakeMonitorView() const;
 	// Puts Player's marker on the train Train waits for (or on Train); returns the chat line saying so.
 	FString MarkForPlayer(AFGTrain* Train, APlayerController* Player);
-	// Shows Text in the chat of every player who may change the world (host, server admins).
-	void AlertAdmins(const FString& Text) const;
 
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;

@@ -135,16 +135,3 @@ FString AATTrafficSubsystem::MarkForPlayer(AFGTrain* Train, APlayerController* P
 	}
 	return AATChatCommand::MarkLocation(GetWorld(), Player, Vehicle->GetActorLocation(), Target->GetTrainName().ToString());
 }
-
-void AATTrafficSubsystem::AlertAdmins(const FString& Text) const
-{
-	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
-	{
-		AFGPlayerController* Controller = Cast<AFGPlayerController>(It->Get());
-		UATRemoteCallObject* RCO = Controller ? Controller->GetRemoteCallObjectOfClass<UATRemoteCallObject>() : nullptr;
-		if (RCO && AATChatCommand::MayChangeWorld(Controller))
-		{
-			RCO->Client_ShowMessage(Text);
-		}
-	}
-}

@@ -14,8 +14,8 @@ second while shown and refresh when a view arrives (`UATPanel`, ATPanel.h).
   card sits at 170 under it). Hidden while the train isn't self-driving. It never takes input.
 - **Monitor** (`UATMonitorWindow`, `/at monitor`): tiles and rows of `ExternalGetTroubledTrains` plus trains waiting
   120 s or more; the planner round is the last cycle's worker time (`mLastCycleMs`) against the update interval.
-- **Pass-through alert**: `GhostThrough` counts `mPassThroughs` and sends a chat line to every player who may change
-  the world (`AlertAdmins`).
+- **Pass-throughs**: `GhostThrough` counts `mPassThroughs` (the monitor's "jams passed through" tile) and writes the
+  fault to the log and `faults.log`. No chat line since 1.16.1 (it went to every admin on each pass-through).
 
 Style: `ATStyle` colours (FICSIT orange on dark panels), rounded brushes, the hexagon logo (`UATLogo`), the game's font
 copied from the menu the panel sits in (or a hidden vanilla label for the HUD), a 0.22 s fade and rise on showing.

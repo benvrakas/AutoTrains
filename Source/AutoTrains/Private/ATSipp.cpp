@@ -261,10 +261,17 @@ namespace
 
 		// The fastest way from where the train is, along its route up to step Commit, then over the whole network to the
 		// goal of its route; returns the route found (empty if none) and its arrival.
-		TArray<int32> FindRoute(const TArray<int32>& InRoute, double& OutArrival)
+		TArray<int32> FindRoute(const TArray<int32>& InRoute, double& OutArrival, FATSippResult& OutWhy)
 		{
 			const int32 Final = SearchLeavingLater(InRoute, true, true);
 			OutArrival = Final != INDEX_NONE ? States[Final].Arrive : ATSippNever;
+			OutWhy.SearchBlockedBy = BestBlockedBy;
+			OutWhy.SearchBlockedAt = BestBlockedAt;
+			OutWhy.bSearchOutOfRoom = Final == INDEX_NONE && bHitBudget;
+			OutWhy.SearchRefusedJunction = RefusedJunction;
+			OutWhy.SearchRefusedBooked = RefusedBooked;
+			OutWhy.SearchRefusedNoStand = RefusedNoStand;
+			OutWhy.SearchNoStandOwner = NoStandOwner;
 			return Final != INDEX_NONE ? RouteTo(Final) : TArray<int32>();
 		}
 
@@ -281,6 +288,8 @@ namespace
 			BestBlockedBy = INDEX_NONE;
 			BestBlockedAt = INDEX_NONE;
 			bBestBlockedByRank = false;
+			RefusedJunction = RefusedBooked = RefusedNoStand = 0;
+			NoStandOwner = INDEX_NONE;
 			int32 BestStep = -2;
 			StateBudget = bInFree ? FMath::Max(Cycle.MaxStates / RouteSearchShare, 1) : Train.bStanding ? FMath::Max(Cycle.MaxStates / DepartPasses, 1) : Cycle.MaxStates;
 			int32 Final = INDEX_NONE;
@@ -660,16 +669,24 @@ namespace
 		// it the same way, don't count (Docs/Debugging.md, "1.16.0").
 		bool CanStandAt(int32 Index) const
 		{
+			int32 Owner = INDEX_NONE;
+			return StandRefusal(Index, Owner) == EStandRefusal::None;
+		}
+
+		// Why the train may not stand at state Index (None: it may), and for a booking or a train's way out, whose.
+		enum class EStandRefusal : uint8 { None, Junction, Booked, NoStand };
+		EStandRefusal StandRefusal(int32 Index, int32& OutOwner) const
+		{
 			const FState& State = States[Index];
 			if (IsOnJunction(Index))
 			{
-				return false;
+				return EStandRefusal::Junction;
 			}
 			auto IsOther = [this](int32 Owner, int32 Resource) { return Owner != Slot && !IsBehind(Owner, Resource) && !Train.First.Contains(Owner); };
-			bool bClear = true;
+			EStandRefusal Why = EStandRefusal::None;
 			ForEachOpen(Index, State.Pos, [&](const FOpenResource& Open)
 			{
-				if (!bClear)
+				if (Why != EStandRefusal::None)
 				{
 					return;
 				}
@@ -677,7 +694,8 @@ namespace
 				{
 					if (IsOther(Booking.Owner, Open.Resource) && (IsNever(Booking.Clear) || Booking.Clear > State.Arrive))
 					{
-						bClear = false;
+						Why = EStandRefusal::Booked;
+						OutOwner = Booking.Owner;
 						return;
 					}
 				}
@@ -687,13 +705,33 @@ namespace
 					{
 						if (IsOther(Owner, Open.Resource))
 						{
-							bClear = false;
+							Why = EStandRefusal::NoStand;
+							OutOwner = Owner;
 							return;
 						}
 					}
 				}
 			});
-			return bClear;
+			return Why;
+		}
+
+		// A move from state Index left out because the train would have to wait there and may not stand there: counted by
+		// the rule that refused it, for a route search's log.
+		void NoteRefusedWait(int32 Index)
+		{
+			const FState& State = States[Index];
+			if (!bFree || !State.bStopped || !State.bHasStood || State.Step < 0)
+			{
+				return;
+			}
+			int32 Owner = INDEX_NONE;
+			switch (StandRefusal(Index, Owner))
+			{
+			case EStandRefusal::Junction: ++RefusedJunction; break;
+			case EStandRefusal::Booked: ++RefusedBooked; break;
+			case EStandRefusal::NoStand: ++RefusedNoStand; NoStandOwner = Owner; break;
+			default: break;
+			}
 		}
 
 		// Whether the body standing at state Index is on a switch's fouling zone or a crossing zone.
@@ -1156,6 +1194,7 @@ namespace
 							if (bOnMove && !bCanWait && !IsNever(Retry))
 							{
 								NoteLater(Index, Leave, Retry - Enters[New] + 1e-3);
+								NoteRefusedWait(Index);
 							}
 							return;
 						}
@@ -1203,6 +1242,7 @@ namespace
 						if (!bCanWait && Later > Leave && !IsNever(Later))
 						{
 							NoteLater(Index, Leave, Later - Leave);
+							NoteRefusedWait(Index);
 						}
 						RejectedTail += Cause == INDEX_NONE ? 1 : 0;
 						return;
@@ -1629,6 +1669,12 @@ namespace
 		int32 RejectedStay = 0;
 		int32 RejectedClimb = 0;
 		int32 RejectedJunction = 0;
+		// A route search's waits refused by CanStandAt (on a junction, where another train is booked, on a planless train's
+		// way out), and the last planless train so, for the log.
+		int32 RefusedJunction = 0;
+		int32 RefusedBooked = 0;
+		int32 RefusedNoStand = 0;
+		int32 NoStandOwner = INDEX_NONE;
 		// SearchLeavingLater: the earliest the train may leave from where it stands in this search, and the first later
 		// departure a move found would fit at. [world s]
 		double DepartFloor = 0.0;
@@ -1744,12 +1790,14 @@ void ATSipp::Run(FATSippCycle& Cycle)
 	FoundStates.Init(0, Count);
 	TArray<double> FoundMilliseconds;
 	FoundMilliseconds.Init(0.0, Count);
+	TArray<FATSippResult> FoundWhy;
+	FoundWhy.SetNum(Count);
 	ParallelFor(Searching.Num(), [&](int32 Index)
 	{
 		const int32 Slot = Searching[Index];
 		const double Start = FPlatformTime::Seconds();
 		FPlanner Planner(Cycle, Cycle.Table, Slot);
-		Found[Slot] = Planner.FindRoute(Cycle.Trains[Slot].Route, FoundArrival[Slot]);
+		Found[Slot] = Planner.FindRoute(Cycle.Trains[Slot].Route, FoundArrival[Slot], FoundWhy[Slot]);
 		FoundStates[Slot] = Planner.NumStates();
 		FoundMilliseconds[Slot] = (FPlatformTime::Seconds() - Start) * 1000.0;
 	});
@@ -1797,6 +1845,17 @@ void ATSipp::Run(FATSippCycle& Cycle)
 		}
 		Result.SearchStates = FoundStates[Slot];
 		Result.SearchMilliseconds = FoundMilliseconds[Slot];
+		if (!Result.bRerouted)
+		{
+			const FATSippResult& Why = FoundWhy[Slot];
+			Result.SearchBlockedBy = Why.SearchBlockedBy;
+			Result.SearchBlockedAt = Why.SearchBlockedAt;
+			Result.bSearchOutOfRoom = Why.bSearchOutOfRoom;
+			Result.SearchRefusedJunction = Why.SearchRefusedJunction;
+			Result.SearchRefusedBooked = Why.SearchRefusedBooked;
+			Result.SearchRefusedNoStand = Why.SearchRefusedNoStand;
+			Result.SearchNoStandOwner = Why.SearchNoStandOwner;
+		}
 		for (const FATSippPass& Pass : Result.Passes)
 		{
 			if (IsNever(Pass.Enter))

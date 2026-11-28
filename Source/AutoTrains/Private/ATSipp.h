@@ -237,6 +237,16 @@ struct FATSippResult
 	double OldArrival = ATSippNever;
 	int32 SearchStates = 0;
 	double SearchMilliseconds = 0.0;
+	// A route search that found nothing: the booking that ended the attempt that got furthest (its train's slot and the
+	// resource), whether it stopped at its state limit, and the waits it needed but may not make there (CanStandAt): on a
+	// junction, where another train is booked, on the way out of a train with no plan (the last such train's slot).
+	int32 SearchBlockedBy = INDEX_NONE;
+	int32 SearchBlockedAt = INDEX_NONE;
+	bool bSearchOutOfRoom = false;
+	int32 SearchRefusedJunction = 0;
+	int32 SearchRefusedBooked = 0;
+	int32 SearchRefusedNoStand = 0;
+	int32 SearchNoStandOwner = INDEX_NONE;
 	// The plan's search: its states, and the moves it left out because the train couldn't reach the speed, its tail
 	// couldn't keep to a window, the stay at the goal didn't fit, it would have stalled on a climb, or it would have
 	// waited long across a junction.

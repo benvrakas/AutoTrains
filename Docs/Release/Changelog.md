@@ -5,6 +5,10 @@
 - **No chat message when a jam is passed through any more.** Admins got a chat line each time the deadlock safeguard
   let a train drive through a jam. It is still written to the log and to `Saved/AutoTrains/faults.log`, and the
   monitor (`/at monitor`) still counts jams passed through.
+- **Log:** with Detailed log on, a train that searches for another route and finds none now says why: the train whose
+  booking stopped the search furthest along, whether it hit its limit, and how many of the routes tried needed a wait
+  where the train may not stand (on a junction, where another train is booked, on the way out of a train with no
+  plan). This is to find why the first train of a jam sometimes doesn't take another way out.
 
 ## 1.16.0
 

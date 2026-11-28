@@ -1605,8 +1605,20 @@ void AATTrafficSubsystem::ApplyPlan(FATTrafficTrain& State, const FATSippCycle& 
 	else if (Result.SearchStates > 0 && (Result.bFailed || IsOpen(Result.Arrival)) && Now - State.SearchNoneLoggedAt >= SearchNoneLogSeconds)
 	{
 		State.SearchNoneLoggedAt = Now;
-		UE_LOG(LogAutoTrains, Verbose, TEXT("planner: %s searched for another route to its goal, as its plan %s: none found (%d states, %.2f ms on a worker)"),
-			*NameOf(State.Train.Get()), Result.bFailed ? TEXT("finds no way") : TEXT("never gets there"), Result.SearchStates, Result.SearchMilliseconds);
+		// Why: the booking that ended the attempt that got furthest, the state limit, and the waits the routes tried needed
+		// where the train may not stand (Docs/Debugging.md, "1.16.1").
+		FString Why = Result.SearchBlockedBy != INDEX_NONE
+			? FString::Printf(TEXT("got furthest up to %s's booking on %s"), *NameOf(TrainOf(Result.SearchBlockedBy)), *Name(Result.SearchBlockedAt))
+			: TEXT("no booking named");
+		if (Result.bSearchOutOfRoom)
+		{
+			Why += TEXT(", stopped at its state limit");
+		}
+		Why += FString::Printf(TEXT("; waits it may not make: %d on a junction, %d where a train is booked, %d on the way out of a train with no plan%s"),
+			Result.SearchRefusedJunction, Result.SearchRefusedBooked, Result.SearchRefusedNoStand,
+			Result.SearchNoStandOwner != INDEX_NONE ? *FString::Printf(TEXT(" (last: %s)"), *NameOf(TrainOf(Result.SearchNoStandOwner))) : TEXT(""));
+		UE_LOG(LogAutoTrains, Verbose, TEXT("planner: %s searched for another route to its goal, as its plan %s: none found (%d states, %.2f ms on a worker): %s"),
+			*NameOf(State.Train.Get()), Result.bFailed ? TEXT("finds no way") : TEXT("never gets there"), Result.SearchStates, Result.SearchMilliseconds, *Why);
 	}
 	++mPlans;
 	State.bHasPlan = true;

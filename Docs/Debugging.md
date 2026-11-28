@@ -1188,6 +1188,25 @@ About 35 plans failed per minute in normal running.
 Watch on the next runs: `planner: ... is planned before`, `trains moved up after a failed plan` in the summary, the
 failed count, DEADLOCK and `passed through` lines, waits over 300 s in WAIT dumps.
 
+## 1.16.1: why a route search finds nothing
+
+The IB server on 1.16.0 (2026-11-25 20:48 to 2026-11-28 04:22 UTC): 101 deadlocks passed through, 227 reroutes, and
+254,121 Verbose "searched for another route to its goal ... none found" lines. Trains in a jam do search (every
+`RouteSearchStuckSeconds` once their plan fails, and a failed plan takes any route that reaches the goal), but find
+nothing, most searches after a few hundred states (a few at the 50,000 state limit of a route search). The user saw
+the first train of a jam not take another way out it had. Unproven lead: a route search may wait only where the
+train first stands or where it may stand (`CanStandAt`: off junctions, where no other train is booked, off the way
+out of a train with no plan, 1.16.0's `NoStand`). In a jam most trains have no plan, so their ways out cover much of
+the network, and a detour that needs one wait (say before merging back) finds no place for it. Not every case fits:
+in the 20:58 jam the train passed through stood behind the tail of the train ahead on its own track and had no
+physical way out.
+
+The "none found" line now ends with why (`FPlanner::FindRoute` fills `FATSippResult::Search*`): the booking that ended
+the attempt that got furthest ("got furthest up to <train>'s booking on <resource>"), "stopped at its state limit",
+and the waits refused by `CanStandAt`, counted by rule (`StandRefusal`: junction, booked, no plan, with the last
+planless train). Read it for the first trains of the next jams: many "on the way out of a train with no plan" points
+at `NoStand` blocking detours.
+
 ## 1.16.0: no train stands on another train's way on; the safeguard passes the core of a jam
 
 **Seen (IB server, 2026-11-25 08:04-08:20 UTC, 1.15.1 + SmartTrains 0.53.2):** about 37 trains stood. At its core
